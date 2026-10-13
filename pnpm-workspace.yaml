@@ -1,0 +1,14 @@
+packages:
+  - apps/*
+  - packages/*
+allowBuilds:
+  "@prisma/engines": true
+  prisma: true
+  esbuild: true
+  sharp: true
+  unrs-resolver: true
+minimumReleaseAgeExclude:
+  - zod@4.6.7
+overrides:
+  # Keep Vitest on a compatible Vite release with matching published native binaries.
+  vite: 7.1.12

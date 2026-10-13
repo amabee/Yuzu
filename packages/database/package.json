@@ -1,0 +1,29 @@
+{
+  "name": "@yuzu/database",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "generate": "prisma generate --config prisma7.config.ts",
+    "migrate": "prisma migrate dev --config prisma7.config.ts",
+    "deploy": "prisma migrate deploy --config prisma7.config.ts",
+    "check": "tsx src/check.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@prisma/client": "7.10.0",
+    "@prisma/adapter-pg": "7.10.0",
+    "pg": "8.16.3",
+    "dotenv": "17.2.3"
+  },
+  "devDependencies": {
+    "prisma": "7.10.0",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3",
+    "@types/node": "24.10.1",
+    "@types/pg": "8.15.6"
+  }
+}

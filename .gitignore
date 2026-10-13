@@ -1,1 +1,16 @@
 markdown
+node_modules/
+.next/
+out/
+coverage/
+playwright-report/
+test-results/
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+packages/database/src/generated/
+apps/web/next-env.d.ts
+artifacts/
+.claude/
+docs/

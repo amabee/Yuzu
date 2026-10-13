@@ -75,7 +75,7 @@ to build every internal system from scratch.
 The initial focus is a reliable foundation: authentication, permissions,
 workspaces, boards, flexible fields, and core collaboration.
 
-- [ ] Foundation, project setup, and database
+- [x] Foundation, project setup, and database
 - [ ] Authentication, invitations, and roles
 - [ ] Workspaces, folders, boards, groups, and items
 - [ ] Custom fields and flexible board data
@@ -94,6 +94,8 @@ workspaces, boards, flexible fields, and core collaboration.
 | Web application | Next.js App Router, React, TypeScript |
 | UI | Tailwind CSS, shadcn/ui, Lucide |
 | Data tables | TanStack Table |
+| Server data and requests | TanStack Query |
+| Client UI state | Zustand |
 | Drag and drop | dnd-kit |
 | Workflow editor | React Flow (`@xyflow/react`) |
 | Charts | Recharts |
@@ -130,20 +132,30 @@ collection of microservices.
 
 ## Getting started
 
-Yuzu is still in development, so setup instructions will be added once the
-initial application foundation is ready.
+The foundation and first-installation wizard are runnable, including a protected
+owner account, email receipt verification, and a persisted initial workspace and
+board structure. Editable tasks, invitations, approvals, and collaboration follow
+in later milestones.
 
-<details>
-<summary>What this section will cover</summary>
+Use Node.js 24, pnpm 11.9.0, and a running Docker engine. From the repository root:
 
-1. Prerequisites and environment variables.
-2. Installing dependencies.
-3. Starting PostgreSQL and other required services.
-4. Applying database migrations.
-5. Running the development server.
-6. Creating the first account and workspace.
+```powershell
+Copy-Item .env.example .env # First setup only; preserve existing configuration.
+pnpm install --frozen-lockfile
+pnpm setup:keys
+pnpm services:up
+pnpm db:generate
+pnpm db:deploy
+pnpm db:check
+pnpm dev
+```
 
-</details>
+Open [127.0.0.1:3000](http://127.0.0.1:3000). See [local development](docs/development.md)
+for checks, database changes, troubleshooting, and current limitations.
+
+Follow [first installation](docs/installation.md): copy the generated setup key
+from the server's `.env`, create the owner, and verify email delivery. No sample
+tasks are created. Invitations and task editing remain subsequent milestones.
 
 > [!CAUTION]
 > Avoid using Yuzu with important production data until deployment and recovery
