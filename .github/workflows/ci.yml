@@ -1,0 +1,36 @@
+name: Foundation checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+        env:
+          POSTGRES_USER: yuzu
+          POSTGRES_PASSWORD: yuzu-local-development
+          POSTGRES_DB: yuzu
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -U yuzu -d yuzu"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - uses: pnpm/action-setup@v4
+      - run: cp .env.example .env
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm setup:keys
+      - run: pnpm db:generate
+      - run: pnpm db:deploy
+      - run: pnpm db:check
+      - run: pnpm check
+      - run: pnpm --filter @yuzu/web exec playwright install --with-deps chromium
+      - run: pnpm test:e2e

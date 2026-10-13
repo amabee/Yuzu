@@ -1,0 +1,9 @@
+node_modules
+.next
+packages/database/src/generated
+pnpm-lock.yaml
+playwright-report
+test-results
+markdown
+docs/mockups/
+*.svg

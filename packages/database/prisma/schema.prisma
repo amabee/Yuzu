@@ -1,0 +1,178 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum SetupState {
+  UNCLAIMED
+  OWNER_CREATED
+  EMAIL_VERIFIED
+  READY
+}
+
+// Only installation metadata is introduced in the foundation milestone.
+// Identity, membership and board models follow with their permission services.
+model InstallationSettings {
+  id                         String     @id @default("installation")
+  name                       String     @default("Yuzu")
+  timezone                   String     @default("UTC")
+  defaultDateFormat          String     @default("dd MMM yyyy")
+  maxAttachmentSizeBytes     Int        @default(50000000)
+  allowedAttachmentMimeTypes String[]   @default(["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf", "text/plain", "text/csv", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.openxmlformats-officedocument.presentationml.presentation"])
+  maintenanceMode            Boolean    @default(false)
+  setupState                 SetupState @default(UNCLAIMED)
+  revision                   Int        @default(1)
+  createdAt                  DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt                  DateTime   @updatedAt @db.Timestamptz(3)
+  ownerId                    String?    @unique
+  owner                      User?      @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  emailConfig                String?
+  emailConfigRevision        Int        @default(0)
+  emailVerifiedRevision      Int?
+  verificationDigest         String?
+  verificationExpiresAt      DateTime?  @db.Timestamptz(3)
+  verificationAttempts       Int        @default(0)
+  verificationSentAt         DateTime?  @db.Timestamptz(3)
+  initialWorkspaceId         String?    @unique
+  initialBoardId             String?    @unique
+}
+
+model User {
+  id            String                @id
+  name          String
+  email         String                @unique
+  emailVerified Boolean               @default(false)
+  image         String?
+  role          String                @default("MEMBER")
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+  installation  InstallationSettings?
+  workspaces    Workspace[]
+  memberships   WorkspaceMember[]
+  boards        Board[]
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+}
+
+model SetupClaim {
+  id              String   @id @default("owner")
+  email           String
+  intentDigest    String
+  intentExpiresAt DateTime
+  createdAt       DateTime @default(now())
+}
+
+model AuthenticationAttempt {
+  id          String   @id
+  windowStart DateTime @db.Timestamptz(3)
+  count       Int
+
+  @@index([windowStart])
+}
+
+model Workspace {
+  id          String            @id @default(cuid())
+  name        String
+  createdById String
+  createdBy   User              @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  members     WorkspaceMember[]
+  boards      Board[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+}
+
+model WorkspaceMember {
+  workspaceId String
+  userId      String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, userId])
+}
+
+model Board {
+  id          String        @id @default(cuid())
+  name        String
+  workspaceId String
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  createdById String
+  createdBy   User          @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  columns     BoardColumn[]
+  groups      BoardGroup[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([workspaceId])
+}
+
+model BoardColumn {
+  id       String @id @default(cuid())
+  boardId  String
+  board    Board  @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  key      String
+  name     String
+  type     String
+  position Int
+  config   Json   @default("{}")
+
+  @@unique([boardId, key])
+}
+
+model BoardGroup {
+  id       String @id @default(cuid())
+  boardId  String
+  board    Board  @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  name     String
+  position Int
+
+  @@index([boardId])
+}
