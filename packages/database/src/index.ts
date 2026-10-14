@@ -7,7 +7,7 @@ const databaseGlobal = globalThis as unknown as {
   yuzuDatabase?: PrismaClient;
   yuzuDatabaseSchemaVersion?: string;
 };
-const schemaVersion = "appearance-v1";
+const schemaVersion = "board-engine-v3";
 
 export function getDatabase(): PrismaClient {
   if (

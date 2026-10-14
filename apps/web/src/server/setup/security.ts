@@ -68,12 +68,15 @@ export function configuredOrigin() {
   return new URL(url).origin;
 }
 
-export async function readSetupBody(request: Request): Promise<unknown> {
+export async function readSetupBody(
+  request: Request,
+  maxBytes = 16_384,
+): Promise<unknown> {
   if (request.headers.get("origin") !== configuredOrigin())
     throw new SetupError(
       403,
       "INVALID_ORIGIN",
-      "Use the installation's configured address to submit setup.",
+      "Use the installation's configured address for this request.",
     );
   if (!request.headers.get("content-type")?.startsWith("application/json"))
     throw new SetupError(415, "JSON_REQUIRED", "Send a JSON request.");
@@ -86,9 +89,9 @@ export async function readSetupBody(request: Request): Promise<unknown> {
     const { done, value } = await reader.read();
     if (done) break;
     size += value.byteLength;
-    if (size > 16_384) {
+    if (size > maxBytes) {
       await reader.cancel();
-      throw new SetupError(413, "TOO_LARGE", "The setup request is too large.");
+      throw new SetupError(413, "TOO_LARGE", "The request is too large.");
     }
     chunks.push(value);
   }

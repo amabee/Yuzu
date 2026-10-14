@@ -26,5 +26,5 @@ export const workspaceContext = cache(async () => {
     workspaces.find((item) => item.id === settings.initialWorkspaceId) ??
     workspaces[0] ??
     null;
-  return { settings, session, user, workspace };
+  return { settings, session, user, workspace, workspaces };
 });
