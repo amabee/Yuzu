@@ -13,7 +13,7 @@
     "start": "pnpm --filter @yuzu/web start",
     "lint": "pnpm --filter @yuzu/web lint",
     "typecheck": "pnpm db:generate && pnpm -r typecheck",
-    "test": "pnpm --filter @yuzu/web test",
+    "test": "pnpm --filter @yuzu/realtime-protocol test && pnpm --filter @yuzu/realtime test && pnpm --filter @yuzu/web test",
     "test:e2e": "pnpm --filter @yuzu/web test:e2e",
     "format": "prettier --write --ignore-unknown apps packages docs package.json pnpm-workspace.yaml compose.yaml .github",
     "format:check": "prettier --check --ignore-unknown apps packages docs package.json pnpm-workspace.yaml compose.yaml .github",

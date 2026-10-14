@@ -1,8 +1,12 @@
 "use client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/api-client";
+import { ApiError, apiRequest } from "@/lib/api-client";
 import {
-  boardStateSchema,
+  readBoardState,
+  saveTaskUpdate,
+  type TaskChanges,
+} from "@/lib/task-sync";
+import {
   coreKeys,
   type BoardState,
   type BoardTask,
@@ -12,8 +16,11 @@ import { OperationToast, type BoardNotice } from "./operation-toast";
 import { TaskEditor } from "./task-editor";
 import { BoardManagement } from "./board-management";
 import { Input } from "@/components/ui/input";
-import { useState, useRef } from "react";
-import { z } from "zod";
+import { useState } from "react";
+import Link from "next/link";
+import { needsApproval } from "@/lib/approval-rules";
+import { taskMutationResultSchema } from "@/lib/approval-contract";
+import { useBoardLiveSync } from "./use-board-live-sync";
 import {
   AssigneeAvatars,
   StatusIcon,
@@ -67,30 +74,34 @@ export function BoardSurface({
   const notify = (message: string, kind: BoardNotice["kind"]) =>
     setNotice({ id: crypto.randomUUID(), message, kind });
   const queryClient = useQueryClient();
-  const inlinePending = useRef(false);
   const queryKey = [
     "principal",
     initialState.currentUserId,
     "boards",
     initialState.boardId,
   ];
+  const live = useBoardLiveSync(
+    initialState.boardId,
+    initialState.currentUserId,
+  );
   const query = useQuery({
     queryKey,
     initialData: initialState,
-    queryFn: async ({ signal }) => {
-      const response = await apiRequest(
-        `/api/v1/boards/state?boardId=${initialState.boardId}`,
-        { signal, cache: "no-store" },
-      );
-      const parsed = boardStateSchema.safeParse(response.data);
-      if (!parsed.success)
-        throw new Error(
-          "Board data could not be read. Try opening the board again.",
-        );
-      return parsed.data;
+    queryFn: ({ signal }) => readBoardState(initialState.boardId, signal),
+    staleTime: 0,
+    refetchInterval: (current) => {
+      const error = current.state.error;
+      if (error instanceof ApiError && [401, 403, 404].includes(error.status))
+        return false;
+      return queryClient.isMutating({ mutationKey: queryKey })
+        ? false
+        : live.syncInterval;
     },
-    refetchOnWindowFocus: () => !inlinePending.current,
-    refetchOnReconnect: () => !inlinePending.current,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: () =>
+      queryClient.isMutating({ mutationKey: queryKey }) ? false : "always",
+    refetchOnReconnect: () =>
+      queryClient.isMutating({ mutationKey: queryKey }) ? false : "always",
   });
   const state = query.data;
   const fields = state.fields;
@@ -134,8 +145,32 @@ export function BoardSurface({
       ]
     : initialStatuses;
   const mutation = useMutation({
-    mutationFn: ({ action, input }: { action: string; input: unknown }) =>
-      apiRequest(`/api/v1/boards/${action}`, { method: "POST", json: input }),
+    mutationKey: queryKey,
+    onMutate: () => queryClient.cancelQueries({ queryKey }),
+    mutationFn: ({
+      action,
+      input,
+      base,
+    }: {
+      action: string;
+      input: unknown;
+      base?: BoardTask;
+    }) =>
+      action === "update" && base
+        ? saveTaskUpdate(
+            state.boardId,
+            input as { taskId: string; revision: number; changes: TaskChanges },
+            base,
+          )
+        : apiRequest(
+            action === "approval-policy"
+              ? "/api/v1/approvals/configure"
+              : `/api/v1/boards/${action}`,
+            {
+              method: "POST",
+              json: input,
+            },
+          ),
     onSuccess: async (_result, variables) => {
       if (
         ["create-task", "update", "archive", "restore", "editor"].includes(
@@ -145,8 +180,12 @@ export function BoardSurface({
         setCreating(false);
         setSelectedId(null);
       }
+      const result = taskMutationResultSchema.safeParse(_result.data);
+      const pendingApproval =
+        result.success && result.data.outcome === "PENDING_APPROVAL";
       const refreshed = await query.refetch();
       const labels: Record<string, string> = {
+        "approval-policy": "Approval settings saved",
         "create-task": "Task created",
         update: "Task updated",
         archive: "Task archived",
@@ -162,8 +201,14 @@ export function BoardSurface({
       notify(
         refreshed.error
           ? "Change saved, but the board could not refresh. Try opening it again."
-          : (labels[variables.action] ?? "Change saved"),
-        refreshed.error ? "error" : "success",
+          : pendingApproval
+            ? variables.action === "create-task"
+              ? "Task creation sent for approval"
+              : variables.action === "archive"
+                ? "Archive request sent for approval"
+                : "Changes sent for approval"
+            : (labels[variables.action] ?? "Change saved"),
+        refreshed.error ? "error" : pendingApproval ? "info" : "success",
       );
     },
     onError: async (error) => {
@@ -171,15 +216,26 @@ export function BoardSurface({
       await query.refetch();
     },
   });
-  const act = (action: string, input: unknown) => {
+  const act = (action: string, input: unknown, base?: BoardTask) => {
     if (!mutation.isPending && !inlineMutation.isPending) {
       inlineMutation.reset();
-      mutation.mutate({ action, input });
+      mutation.mutate({
+        action,
+        input:
+          action === "archive"
+            ? {
+                ...(input as Record<string, unknown>),
+                requestKey: crypto.randomUUID(),
+              }
+            : input,
+        base,
+      });
     }
   };
   // Inline changes update the shared table/Kanban cache before waiting for the network.
   // Cancel older reads so they cannot overwrite a move that is still being saved.
   const inlineMutation = useMutation({
+    mutationKey: queryKey,
     mutationFn: async ({
       task,
       changes,
@@ -187,31 +243,36 @@ export function BoardSurface({
       task: BoardTask;
       changes: Partial<Pick<BoardTask, "statusId" | "priority">>;
     }) => {
-      const result = await apiRequest("/api/v1/boards/update", {
-        method: "POST",
-        json: { taskId: task.id, revision: task.revision, changes },
-      });
-      return z
-        .object({ taskId: z.string(), revision: z.number().int().positive() })
-        .parse(result.data);
+      const result = await saveTaskUpdate(
+        state.boardId,
+        { taskId: task.id, revision: task.revision, changes },
+        task,
+      );
+      return taskMutationResultSchema.parse(result.data);
     },
     onMutate: async ({ task, changes }) => {
-      inlinePending.current = true;
       await queryClient.cancelQueries({ queryKey });
       const previous = queryClient.getQueryData<BoardState>(queryKey);
-      queryClient.setQueryData<BoardState>(
-        queryKey,
-        (current) =>
-          current && {
-            ...current,
-            tasks: current.tasks.map((item) =>
-              item.id === task.id ? { ...item, ...changes } : item,
-            ),
-          },
-      );
+      if (!needsApproval(state.approvalPolicy, "UPDATE", changes, state.fields))
+        queryClient.setQueryData<BoardState>(
+          queryKey,
+          (current) =>
+            current && {
+              ...current,
+              tasks: current.tasks.map((item) =>
+                item.id === task.id ? { ...item, ...changes } : item,
+              ),
+            },
+        );
       return { previous };
     },
-    onSuccess: (result) => {
+    onSuccess: (result, _variables, context) => {
+      if (result.outcome === "PENDING_APPROVAL") {
+        if (context?.previous)
+          queryClient.setQueryData(queryKey, context.previous);
+        notify("Changes sent for approval", "info");
+        return;
+      }
       notify("Task updated", "success");
       queryClient.setQueryData<BoardState>(
         queryKey,
@@ -232,11 +293,7 @@ export function BoardSurface({
         queryClient.setQueryData(queryKey, context.previous);
     },
     onSettled: async () => {
-      try {
-        await queryClient.invalidateQueries({ queryKey });
-      } finally {
-        inlinePending.current = false;
-      }
+      await queryClient.invalidateQueries({ queryKey });
     },
   });
   const busy = mutation.isPending || inlineMutation.isPending;
@@ -289,7 +346,7 @@ export function BoardSurface({
     (status) => !statusFilter || status === statusFilter,
   );
   return (
-    <section className="board-surface">
+    <section className="board-surface" data-connection={live.status}>
       <OperationToast notice={notice} />
       <div className="board-view-tabs" aria-label="Board view">
         <Button
@@ -310,10 +367,22 @@ export function BoardSurface({
           <Table2 size={16} />
           Table
         </Button>
-        <span className="ml-auto hidden text-xs text-muted-foreground sm:inline">
-          {group}
-        </span>
       </div>
+      {state.pendingApprovals.length > 0 && (
+        <div className="mb-2 flex items-center justify-between gap-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs">
+          <span>
+            {state.pendingApprovals.length} pending approval{" "}
+            {state.pendingApprovals.length === 1 ? "request" : "requests"}.
+            Current task values stay unchanged.
+          </span>
+          <Link
+            className="shrink-0 font-medium text-primary underline-offset-4 hover:underline"
+            href="/approvals"
+          >
+            Review requests
+          </Link>
+        </div>
+      )}
       <div className="board-toolbar">
         <div className="flex flex-wrap items-center gap-2">
           <select
@@ -562,7 +631,7 @@ export function BoardSurface({
                             variant="ghost"
                             size="icon"
                             className="size-7"
-                            aria-label={`Archive ${task.name}`}
+                            aria-label={`${state.approvalPolicy.enabled && state.approvalPolicy.requireArchive ? "Request archive for" : "Archive"} ${task.name}`}
                             title="Archive task"
                             disabled={busy}
                             data-no-drag
@@ -577,16 +646,46 @@ export function BoardSurface({
                           </Button>
                         )}
                       </div>
-                      <button
-                        className="task-card-title"
-                        onClick={() => {
-                          mutation.reset();
-                          setSelectedTab("details");
-                          setSelectedId(task.id);
-                        }}
-                      >
-                        {task.name}
-                      </button>
+                      <div className="task-card-heading">
+                        <button
+                          className="task-card-title"
+                          onClick={() => {
+                            mutation.reset();
+                            setSelectedTab("details");
+                            setSelectedId(task.id);
+                          }}
+                        >
+                          {task.name}
+                        </button>
+                        {task.dueDate && (
+                          <span className="task-card-target-date">
+                            <span
+                              className="task-title-divider"
+                              aria-hidden="true"
+                            >
+                              ·
+                            </span>
+                            <time
+                              className="task-card-date"
+                              dateTime={task.dueDate}
+                              title={`Target date: ${formatDueDate(task.dueDate, true)}`}
+                            >
+                              <CalendarDays size={12} />
+                              {formatDueDate(task.dueDate)}
+                            </time>
+                          </span>
+                        )}
+                      </div>
+                      {state.pendingApprovals.some(
+                        (proposal) => proposal.taskId === task.id,
+                      ) && (
+                        <Link
+                          className="mb-2 block text-xs text-muted-foreground hover:text-primary"
+                          href="/approvals"
+                        >
+                          Awaiting approval
+                        </Link>
+                      )}
                       <div className="task-card-tags">
                         <span
                           style={optionBadgeStyle(
@@ -600,12 +699,6 @@ export function BoardSurface({
                             (option) => option.id === task.priority,
                           )?.label ?? task.priority}
                         </span>
-                        {task.dueDate && (
-                          <span>
-                            <CalendarDays size={12} />
-                            {formatDueDate(task.dueDate)}
-                          </span>
-                        )}
                         {task.groupId && (
                           <span title="Task group">
                             {
@@ -682,6 +775,10 @@ export function BoardSurface({
                         </p>
                       )}
                       <div className="task-card-bottom">
+                        <AssigneeAvatars
+                          ids={task.assigneeIds}
+                          people={state.people}
+                        />
                         <button
                           type="button"
                           className="task-comment-count"
@@ -695,34 +792,6 @@ export function BoardSurface({
                           <MessageSquare size={13} />
                           {task.commentCount ?? 0}
                         </button>
-                        <AssigneeAvatars
-                          ids={task.assigneeIds}
-                          people={state.people}
-                        />
-                        {task.canEdit && (
-                          <select
-                            aria-label={`Move ${task.name}`}
-                            disabled={busy}
-                            value={task.statusId ?? ""}
-                            style={optionBadgeStyle(
-                              savedStatuses.find(
-                                (option) => option.id === task.statusId,
-                              ),
-                            )}
-                            onChange={(event) =>
-                              patch(task, {
-                                statusId: event.target.value || null,
-                              })
-                            }
-                          >
-                            <option value="">No status</option>
-                            {savedStatuses.map((option) => (
-                              <option key={option.id} value={option.id}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        )}
                       </div>
                     </article>
                   ))}
@@ -1060,11 +1129,12 @@ export function BoardSurface({
             state={state}
             task={selected}
             initialTab={selectedTab}
+            syncInterval={live.syncInterval}
             onNotice={notify}
             pending={busy}
             error={mutation.error?.message}
             onSubmit={(input) =>
-              act(selected ? "update" : "create-task", input)
+              act(selected ? "update" : "create-task", input, selected)
             }
             onAction={act}
           />

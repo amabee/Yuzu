@@ -1,0 +1,19 @@
+{
+  "name": "@yuzu/realtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test *.test.mjs"
+  },
+  "dependencies": {
+    "@yuzu/realtime-protocol": "workspace:*",
+    "socket.io": "4.8.4",
+    "@socket.io/redis-adapter": "8.3.0",
+    "redis": "6.3.0"
+  },
+  "devDependencies": {
+    "socket.io-client": "4.8.4"
+  }
+}

@@ -27,6 +27,42 @@ services:
       - "127.0.0.1:8025:8025"
     volumes:
       - mailpit_data:/data
+  redis:
+    image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  realtime:
+    build:
+      context: .
+      dockerfile: apps/realtime/Dockerfile
+    restart: unless-stopped
+    environment:
+      REALTIME_SECRET: ${REALTIME_SECRET:?Run pnpm setup:keys first}
+      REALTIME_ALLOWED_ORIGIN: ${BETTER_AUTH_URL:-http://127.0.0.1:3000}
+      REDIS_URL: redis://redis:6379
+      PORT: 3001
+    ports:
+      - "127.0.0.1:${REALTIME_PORT:-3001}:3001"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
 volumes:
   postgres_data:
   mailpit_data:

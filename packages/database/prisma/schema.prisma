@@ -45,32 +45,36 @@ model InstallationSettings {
 }
 
 model User {
-  id            String                @id @default(uuid(7))
-  name          String
-  email         String                @unique
-  emailVerified Boolean               @default(false)
-  image         String?
-  role          String                @default("MEMBER")
-  createdAt     DateTime              @default(now())
-  updatedAt     DateTime              @updatedAt
-  sessions      Session[]
-  accounts      Account[]
-  installation  InstallationSettings?
-  workspaces    Workspace[]
-  memberships   WorkspaceMember[]
-  boards        Board[]
-  invitations   Invitation[]          @relation("Inviter")
-  managedBoards BoardManager[] @relation("BoardManagerUser")
-  boardManagerGrants BoardManager[] @relation("BoardManagerGrantor")
-  boardEvents BoardEvent[]
-  tasksCreated  Task[] @relation("TaskCreator")
-  taskAssignments TaskAssignee[]
-  taskGrants TaskEditorGrant[] @relation("TaskEditor")
-  grantsIssued TaskEditorGrant[] @relation("TaskGrantor")
-  taskActivity TaskActivity[]
-  fieldPeople TaskFieldPerson[]
-  comments TaskComment[]
-  accessEvents  AccessEvent[]
+  id                      String                @id @default(uuid(7))
+  name                    String
+  email                   String                @unique
+  emailVerified           Boolean               @default(false)
+  image                   String?
+  role                    String                @default("MEMBER")
+  createdAt               DateTime              @default(now())
+  updatedAt               DateTime              @updatedAt
+  sessions                Session[]
+  accounts                Account[]
+  installation            InstallationSettings?
+  workspaces              Workspace[]
+  memberships             WorkspaceMember[]
+  boards                  Board[]
+  invitations             Invitation[]          @relation("Inviter")
+  managedBoards           BoardManager[]        @relation("BoardManagerUser")
+  boardManagerGrants      BoardManager[]        @relation("BoardManagerGrantor")
+  boardEvents             BoardEvent[]
+  tasksCreated            Task[]                @relation("TaskCreator")
+  taskAssignments         TaskAssignee[]
+  taskGrants              TaskEditorGrant[]     @relation("TaskEditor")
+  grantsIssued            TaskEditorGrant[]     @relation("TaskGrantor")
+  taskActivity            TaskActivity[]
+  fieldPeople             TaskFieldPerson[]
+  comments                TaskComment[]
+  accessEvents            AccessEvent[]
+  primaryApprovalPolicies BoardApprovalPolicy[] @relation("PrimaryApprover")
+  backupApprovalPolicies  BoardApprovalPolicy[] @relation("BackupApprover")
+  proposalsAuthored       BoardProposal[]       @relation("ProposalAuthor")
+  proposalsDecided        BoardProposal[]       @relation("ProposalDecider")
 }
 
 model Session {
@@ -187,34 +191,36 @@ model AccessEvent {
 }
 
 model Board {
-  id          String        @id @default(uuid(7))
-  name        String
-  workspaceId String
-  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  createdById String
-  createdBy   User          @relation(fields: [createdById], references: [id], onDelete: Restrict)
-  managers BoardManager[]
-  events BoardEvent[]
-  tasks       Task[]
-  columns     BoardColumn[]
-  groups      BoardGroup[]
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id             String               @id @default(uuid(7))
+  name           String
+  workspaceId    String
+  workspace      Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  createdById    String
+  createdBy      User                 @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  managers       BoardManager[]
+  events         BoardEvent[]
+  approvalPolicy BoardApprovalPolicy?
+  proposals      BoardProposal[]
+  tasks          Task[]
+  columns        BoardColumn[]
+  groups         BoardGroup[]
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
 
   @@index([workspaceId])
 }
 
 model BoardColumn {
-  id       String @id @default(uuid(7))
-  boardId  String
-  board    Board  @relation(fields: [boardId], references: [id], onDelete: Cascade)
-  key      String
-  name     String
-  type     String
-  position Int
-  config   Json   @default("{}")
-  archivedAt DateTime? @db.Timestamptz(3)
-  values TaskFieldValue[]
+  id         String           @id @default(uuid(7))
+  boardId    String
+  board      Board            @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  key        String
+  name       String
+  type       String
+  position   Int
+  config     Json             @default("{}")
+  archivedAt DateTime?        @db.Timestamptz(3)
+  values     TaskFieldValue[]
 
   @@unique([boardId, key])
 }
@@ -225,128 +231,203 @@ model BoardGroup {
   board    Board  @relation(fields: [boardId], references: [id], onDelete: Cascade)
   name     String
   position Int
-  tasks Task[]
+  tasks    Task[]
 
   @@index([boardId])
 }
 
-
 model Task {
-  id String @id @default(uuid(7))
-  boardId String
-  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
-  name String
-  description String @default("")
-  statusId String?
-  priority String @default("NORMAL")
-  dueDate DateTime? @db.Date
-  groupId String?
-  group BoardGroup? @relation(fields: [groupId], references: [id], onDelete: Restrict)
-  createdById String
-  createdBy User @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  createKey String
+  id           String            @id @default(uuid(7))
+  boardId      String
+  board        Board             @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  name         String
+  description  String            @default("")
+  statusId     String?
+  priority     String            @default("NORMAL")
+  dueDate      DateTime?         @db.Date
+  groupId      String?
+  group        BoardGroup?       @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  createdById  String
+  createdBy    User              @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createKey    String
   createDigest String
-  revision Int @default(1)
-  archivedAt DateTime? @db.Timestamptz(3)
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime @updatedAt @db.Timestamptz(3)
-  assignees TaskAssignee[]
-  editors TaskEditorGrant[]
-  values TaskFieldValue[]
-  activity TaskActivity[]
-  comments TaskComment[]
+  revision     Int               @default(1)
+  archivedAt   DateTime?         @db.Timestamptz(3)
+  createdAt    DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime          @updatedAt @db.Timestamptz(3)
+  assignees    TaskAssignee[]
+  editors      TaskEditorGrant[]
+  values       TaskFieldValue[]
+  activity     TaskActivity[]
+  comments     TaskComment[]
+  proposals    BoardProposal[]
+
   @@unique([createdById, createKey])
   @@index([boardId, archivedAt, createdAt])
   @@index([boardId, statusId])
 }
+
 model TaskAssignee {
   taskId String
   userId String
-  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@id([taskId, userId])
   @@index([userId])
 }
+
 model TaskEditorGrant {
-  taskId String
-  userId String
+  taskId      String
+  userId      String
   grantedById String
-  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  user User @relation("TaskEditor", fields: [userId], references: [id], onDelete: Cascade)
-  grantedBy User @relation("TaskGrantor", fields: [grantedById], references: [id], onDelete: Restrict)
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user        User     @relation("TaskEditor", fields: [userId], references: [id], onDelete: Cascade)
+  grantedBy   User     @relation("TaskGrantor", fields: [grantedById], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+
   @@id([taskId, userId])
 }
+
 model TaskFieldValue {
-  id String @id @default(uuid(7))
-  taskId String
-  fieldId String
-  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  field BoardColumn @relation(fields: [fieldId], references: [id], onDelete: Restrict)
-  textValue String?
-  numberValue Float?
+  id           String            @id @default(uuid(7))
+  taskId       String
+  fieldId      String
+  task         Task              @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  field        BoardColumn       @relation(fields: [fieldId], references: [id], onDelete: Restrict)
+  textValue    String?
+  numberValue  Float?
   booleanValue Boolean?
-  dateValue DateTime? @db.Date
-  choices String[] @default([])
-  people TaskFieldPerson[]
+  dateValue    DateTime?         @db.Date
+  choices      String[]          @default([])
+  people       TaskFieldPerson[]
+
   @@unique([taskId, fieldId])
   @@index([fieldId])
   @@index([fieldId, numberValue])
   @@index([fieldId, dateValue])
 }
+
 model TaskFieldPerson {
   valueId String
-  userId String
-  value TaskFieldValue @relation(fields: [valueId], references: [id], onDelete: Cascade)
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId  String
+  value   TaskFieldValue @relation(fields: [valueId], references: [id], onDelete: Cascade)
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@id([valueId, userId])
 }
+
 model TaskActivity {
-  id String @id @default(uuid(7))
-  taskId String
-  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  actorId String
-  actor User @relation(fields: [actorId], references: [id], onDelete: Restrict)
-  action String
-  revision Int
-  before Json?
-  after Json?
+  id        String   @id @default(uuid(7))
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  actorId   String
+  actor     User     @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  action    String
+  revision  Int
+  before    Json?
+  after     Json?
   createdAt DateTime @default(now()) @db.Timestamptz(3)
+
   @@unique([taskId, revision])
 }
 
-
 model BoardManager {
-  boardId String
-  userId String
+  boardId     String
+  userId      String
   grantedById String
-  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
-  user User @relation("BoardManagerUser", fields: [userId], references: [id], onDelete: Cascade)
-  grantedBy User @relation("BoardManagerGrantor", fields: [grantedById], references: [id], onDelete: Restrict)
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  board       Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  user        User     @relation("BoardManagerUser", fields: [userId], references: [id], onDelete: Cascade)
+  grantedBy   User     @relation("BoardManagerGrantor", fields: [grantedById], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+
   @@id([boardId, userId])
 }
+
 model BoardEvent {
-  id String @id @default(uuid(7))
-  boardId String
-  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
-  actorId String
-  actor User @relation(fields: [actorId], references: [id], onDelete: Restrict)
-  action String
+  id        String   @id @default(uuid(7))
+  boardId   String
+  board     Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  actorId   String
+  actor     User     @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  action    String
   subjectId String?
+  before    Json?
+  after     Json?
   createdAt DateTime @default(now()) @db.Timestamptz(3)
+
   @@index([boardId, createdAt])
 }
 
 model TaskComment {
-  id String @id @default(uuid(7))
-  taskId String
-  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  authorId String
-  author User @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  id        String   @id @default(uuid(7))
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Restrict)
   createKey String
-  body String
+  body      String
   createdAt DateTime @default(now()) @db.Timestamptz(3)
+
   @@unique([taskId, authorId, createKey])
   @@index([taskId, createdAt])
+}
+
+enum ApprovalOperation {
+  CREATE
+  UPDATE
+  ARCHIVE
+}
+
+enum ProposalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+  STALE
+}
+
+model BoardApprovalPolicy {
+  boardId           String   @id
+  board             Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  enabled           Boolean  @default(false)
+  requireCreation   Boolean  @default(false)
+  requireChanges    Boolean  @default(true)
+  requireArchive    Boolean  @default(false)
+  protectedFieldIds String[] @default([])
+  primaryApproverId String?
+  primaryApprover   User?    @relation("PrimaryApprover", fields: [primaryApproverId], references: [id], onDelete: SetNull)
+  backupApproverId  String?
+  backupApprover    User?    @relation("BackupApprover", fields: [backupApproverId], references: [id], onDelete: SetNull)
+  version           Int      @default(1)
+  updatedAt         DateTime @updatedAt @db.Timestamptz(3)
+}
+
+model BoardProposal {
+  id              String            @id @default(uuid(7))
+  boardId         String
+  board           Board             @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  taskId          String?
+  task            Task?             @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  authorId        String
+  author          User              @relation("ProposalAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  operation       ApprovalOperation
+  status          ProposalStatus    @default(PENDING)
+  requestKey      String
+  requestDigest   String
+  changes         Json
+  baseline        Json
+  policySnapshot  Json
+  policyVersion   Int
+  sourceRevision  Int?
+  appliedRevision Int?
+  decidedById     String?
+  decidedBy       User?             @relation("ProposalDecider", fields: [decidedById], references: [id], onDelete: Restrict)
+  reason          String?
+  createdAt       DateTime          @default(now()) @db.Timestamptz(3)
+  decidedAt       DateTime?         @db.Timestamptz(3)
+
+  @@unique([authorId, requestKey])
+  @@index([boardId, status, createdAt])
+  @@index([authorId, status, createdAt])
 }

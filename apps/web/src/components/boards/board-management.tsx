@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { ApprovalPolicyEditor } from "./approval-policy-editor";
 import { Button } from "@/components/ui/button";
 import { ArrowUp, ArrowDown, GripVertical } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -331,6 +332,12 @@ export function BoardManagement({
   const [manager, setManager] = useState("");
   return (
     <section className="space-y-4 border-t pt-5">
+      <ApprovalPolicyEditor
+        key={state.approvalPolicy.version}
+        state={state}
+        pending={pending}
+        onAction={onAction}
+      />
       <h3>Manage board structure</h3>
       {state.groups.map((group) => (
         <GroupConfiguration

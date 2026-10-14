@@ -1,5 +1,8 @@
 "use client";
 import { useState } from "react";
+import { needsApproval } from "@/lib/approval-rules";
+import Link from "next/link";
+import { taskDraft, reconcileTaskDraft, editTaskDraft } from "@/lib/task-sync";
 import { createStore } from "zustand/vanilla";
 import { useStore } from "zustand";
 import {
@@ -40,10 +43,12 @@ export function TaskEditor({
   onAction,
   initialTab = "details",
   onNotice,
+  syncInterval = 15_000,
 }: {
   state: BoardState;
   task?: BoardTask;
   pending: boolean;
+  syncInterval?: number;
   error?: string;
   onSubmit: (input: unknown) => void;
   onAction: (action: string, input: unknown) => void;
@@ -65,9 +70,66 @@ export function TaskEditor({
       fieldValues: task?.fieldValues ?? ({} as Record<string, FieldValue>),
     })),
   );
-  const draft = useStore(store);
-  const [createKey] = useState(() => crypto.randomUUID());
-  const [revision] = useState(task?.revision);
+  const localDraft = useStore(store);
+  const [baseline, setBaseline] = useState(() =>
+    task ? taskDraft(task) : null,
+  );
+  const merged =
+    task && baseline
+      ? reconcileTaskDraft(
+          baseline,
+          {
+            ...localDraft,
+            statusId: localDraft.statusId || null,
+            dueDate: localDraft.dueDate || null,
+            groupId: localDraft.groupId || null,
+          },
+          taskDraft(task),
+        )
+      : null;
+  const draft = merged
+    ? {
+        ...merged.draft,
+        statusId: merged.draft.statusId ?? "",
+        dueDate: merged.draft.dueDate ?? "",
+        groupId: merged.draft.groupId ?? "",
+      }
+    : localDraft;
+  const conflicts = merged?.conflicts ?? [];
+  const requiresApproval = needsApproval(
+    state.approvalPolicy,
+    task ? "UPDATE" : "CREATE",
+    merged?.changes ?? {},
+    state.fields,
+  );
+  const completionRequiresApproval = needsApproval(
+    state.approvalPolicy,
+    "UPDATE",
+    { ...merged?.changes, statusId: "done" },
+    state.fields,
+  );
+  const fieldLabels: Record<string, string> = {
+    name: "Task name",
+    description: "Description",
+    statusId: "Status",
+    priority: "Priority",
+    dueDate: "Target date",
+    groupId: "Group",
+    assigneeIds: "Assignees",
+  };
+  const acceptLatest = (keepEdits: boolean) => {
+    if (!task || !merged) return;
+    const next = keepEdits ? merged.draft : taskDraft(task);
+    setBaseline(taskDraft(task));
+    setCreateKey(crypto.randomUUID());
+    store.setState({
+      ...next,
+      statusId: next.statusId ?? "",
+      dueDate: next.dueDate ?? "",
+      groupId: next.groupId ?? "",
+    });
+  };
+  const [createKey, setCreateKey] = useState(() => crypto.randomUUID());
   const [tab, setTab] = useState<"details" | "comments" | "activity">(
     task ? initialTab : "details",
   );
@@ -94,10 +156,40 @@ export function TaskEditor({
     groupId: draft.groupId || null,
     dueDate: draft.dueDate || null,
   });
+  const editDraft = (patch: Partial<typeof localDraft>) => {
+    const current = store.getState();
+    if (task && baseline) {
+      const edited = editTaskDraft(
+        baseline,
+        {
+          ...current,
+          statusId: current.statusId || null,
+          dueDate: current.dueDate || null,
+          groupId: current.groupId || null,
+        },
+        taskDraft(task),
+        {
+          ...patch,
+          ...("statusId" in patch ? { statusId: patch.statusId || null } : {}),
+          ...("dueDate" in patch ? { dueDate: patch.dueDate || null } : {}),
+          ...("groupId" in patch ? { groupId: patch.groupId || null } : {}),
+        },
+      );
+      setBaseline(edited.baseline);
+      store.setState({
+        ...edited.local,
+        statusId: edited.local.statusId ?? "",
+        dueDate: edited.local.dueDate ?? "",
+        groupId: edited.local.groupId ?? "",
+      });
+    } else
+      store.setState({
+        ...patch,
+        fieldValues: { ...current.fieldValues, ...patch.fieldValues },
+      });
+  };
   const changeValue = (fieldId: string, value: FieldValue) =>
-    store.setState({
-      fieldValues: { ...store.getState().fieldValues, [fieldId]: value },
-    });
+    editDraft({ fieldValues: { [fieldId]: value } });
   return (
     <>
       <header className="task-sheet-header">
@@ -224,6 +316,68 @@ export function TaskEditor({
         </div>
       )}
       <div className="task-sheet-body">
+        {requiresApproval && (
+          <p className="mb-4 rounded-md border border-border bg-muted/40 p-3 text-xs leading-5">
+            This request needs one other approver. Current board values stay
+            unchanged until it is accepted.
+          </p>
+        )}
+        {task &&
+          state.pendingApprovals.some(
+            (proposal) => proposal.taskId === task.id,
+          ) && (
+            <p className="mb-4 text-xs text-muted-foreground">
+              This task has a pending request.{" "}
+              <Link className="text-primary underline" href="/approvals">
+                Open approvals
+              </Link>
+            </p>
+          )}
+        {conflicts.length > 0 && (
+          <section
+            role="status"
+            aria-label="Task edit conflict"
+            className="mb-4 space-y-3 rounded-md border border-border bg-muted/50 p-3 text-sm"
+          >
+            <p>
+              Someone changed the same fields:{" "}
+              {conflicts
+                .map(
+                  (key) =>
+                    fieldLabels[key] ??
+                    state.fields.find((field) => `field:${field.id}` === key)
+                      ?.name ??
+                    "Removed field",
+                )
+                .join(", ")}
+              . Your edits are preserved.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Use the latest values, or keep your edits to these fields before
+              saving.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={pending}
+                onClick={() => acceptLatest(false)}
+              >
+                Load latest task
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={pending || !editable}
+                onClick={() => acceptLatest(true)}
+              >
+                Keep my edits
+              </Button>
+            </div>
+          </section>
+        )}
         <form
           id="task-editor-form"
           role={task ? "tabpanel" : undefined}
@@ -232,11 +386,20 @@ export function TaskEditor({
           className="task-sheet-details space-y-5"
           onSubmit={(event) => {
             event.preventDefault();
-            const changes = submissionChanges();
+            if (
+              conflicts.length ||
+              (task && !Object.keys(merged?.changes ?? {}).length)
+            )
+              return;
             onSubmit(
               task
-                ? { taskId: task.id, revision, changes }
-                : { boardId: state.boardId, createKey, ...changes },
+                ? {
+                    taskId: task.id,
+                    revision: task.revision,
+                    requestKey: createKey,
+                    changes: merged!.changes,
+                  }
+                : { boardId: state.boardId, createKey, ...submissionChanges() },
             );
           }}
         >
@@ -250,9 +413,7 @@ export function TaskEditor({
                   required
                   maxLength={200}
                   value={draft.name}
-                  onChange={(event) =>
-                    store.setState({ name: event.target.value })
-                  }
+                  onChange={(event) => editDraft({ name: event.target.value })}
                 />
               </label>
             </details>
@@ -267,7 +428,7 @@ export function TaskEditor({
                 className="task-textarea"
                 value={draft.description}
                 onChange={(event) =>
-                  store.setState({ description: event.target.value })
+                  editDraft({ description: event.target.value })
                 }
               />
             </label>
@@ -326,7 +487,7 @@ export function TaskEditor({
                   className="task-select"
                   value={draft.statusId}
                   onChange={(event) =>
-                    store.setState({ statusId: event.target.value })
+                    editDraft({ statusId: event.target.value })
                   }
                 >
                   <option value="">No status</option>
@@ -344,7 +505,7 @@ export function TaskEditor({
                   className="task-select"
                   value={draft.priority}
                   onChange={(event) =>
-                    store.setState({ priority: event.target.value })
+                    editDraft({ priority: event.target.value })
                   }
                 >
                   {priorityChoices.map(({ id: priority, label }) => (
@@ -361,7 +522,7 @@ export function TaskEditor({
                   type="date"
                   value={draft.dueDate}
                   onChange={(event) =>
-                    store.setState({ dueDate: event.target.value })
+                    editDraft({ dueDate: event.target.value })
                   }
                 />
               </label>
@@ -372,7 +533,7 @@ export function TaskEditor({
                   className="task-select"
                   value={draft.groupId}
                   onChange={(event) =>
-                    store.setState({ groupId: event.target.value })
+                    editDraft({ groupId: event.target.value })
                   }
                 >
                   <option value="">No group</option>
@@ -542,7 +703,7 @@ export function TaskEditor({
                         aria-label={`Assign ${person.name}`}
                         checked={draft.assigneeIds.includes(person.id)}
                         onChange={(event) =>
-                          store.setState({
+                          editDraft({
                             assigneeIds: event.target.checked
                               ? [...draft.assigneeIds, person.id]
                               : draft.assigneeIds.filter(
@@ -580,6 +741,7 @@ export function TaskEditor({
                 state={state}
                 task={task}
                 active={tab === "comments"}
+                syncInterval={syncInterval}
                 onNotice={onNotice}
               />
             </div>
@@ -689,10 +851,22 @@ export function TaskEditor({
           <Button
             form="task-editor-form"
             type="submit"
-            disabled={pending}
+            disabled={
+              pending ||
+              conflicts.length > 0 ||
+              Boolean(task && !Object.keys(merged?.changes ?? {}).length)
+            }
             className="flex-1"
           >
-            {pending ? "Saving…" : task ? "Save changes" : "Create task"}
+            {pending
+              ? "Saving…"
+              : requiresApproval
+                ? task
+                  ? "Request approval"
+                  : "Submit task for approval"
+                : task
+                  ? "Save changes"
+                  : "Create task"}
           </Button>
         )}
         {task?.canEdit &&
@@ -700,18 +874,21 @@ export function TaskEditor({
           statusOptions.some((option) => option.id === "done") &&
           draft.statusId !== "done" && (
             <Button
-              disabled={pending}
+              disabled={pending || conflicts.length > 0}
               variant="outline"
               onClick={() =>
                 onSubmit({
                   taskId: task.id,
-                  revision,
-                  changes: { ...submissionChanges(), statusId: "done" },
+                  revision: task.revision,
+                  requestKey: createKey,
+                  changes: { ...merged?.changes, statusId: "done" },
                 })
               }
             >
               <Check size={14} />
-              Mark as done
+              {completionRequiresApproval
+                ? "Request completion"
+                : "Mark as done"}
             </Button>
           )}
         {task && (

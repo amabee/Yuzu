@@ -7,7 +7,7 @@ const databaseGlobal = globalThis as unknown as {
   yuzuDatabase?: PrismaClient;
   yuzuDatabaseSchemaVersion?: string;
 };
-const schemaVersion = "board-engine-v3";
+const schemaVersion = "approval-engine-v1";
 
 export function getDatabase(): PrismaClient {
   if (
@@ -33,6 +33,10 @@ export function getDatabase(): PrismaClient {
 export async function checkDatabase(): Promise<void> {
   const db = getDatabase();
   await db.$queryRaw`SELECT 1`;
-  // Verify the initial migration, not just TCP connectivity.
-  await db.installationSettings.count();
+  // Verify required feature migrations, not just TCP connectivity.
+  await Promise.all([
+    db.installationSettings.count(),
+    db.boardApprovalPolicy.findFirst({ select: { boardId: true } }),
+    db.boardProposal.findFirst({ select: { id: true } }),
+  ]);
 }

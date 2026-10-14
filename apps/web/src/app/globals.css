@@ -889,16 +889,7 @@ html.theme-ripple::view-transition-group(root) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.task-card-bottom select {
-  max-width: 110px;
-  min-width: 0;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: calc(var(--radius) / 2);
-  background: var(--card);
-  color: var(--foreground);
-  font-size: 10px;
-}
+
 .task-field-label {
   display: flex;
   flex-direction: column;
@@ -1296,4 +1287,354 @@ html.theme-ripple::view-transition-group(root) {
 .task-meta-chip {
   max-width: 100%;
   overflow-wrap: anywhere;
+}
+
+.task-card-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.task-card-heading .task-card-title {
+  min-width: 0;
+}
+.task-title-divider {
+  color: var(--muted-foreground);
+}
+.task-card-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.task-avatar:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.task-card-bottom .task-comment-count {
+  margin-left: auto;
+  padding: 4px;
+}
+
+.task-card-target-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+/* Yuzu notifications: inherited surfaces and typography, semantic variant accents. */
+.yuzu-toast {
+  --toast-tone: var(--primary);
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 66px;
+  padding: 13px 14px 13px 18px;
+  border: 1px solid color-mix(in srgb, var(--toast-tone) 27%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--toast-tone) 5%, var(--card));
+  color: var(--card-foreground);
+  box-shadow: var(--theme-card-shadow, 0 8px 24px #00000018);
+  isolation: isolate;
+}
+.yuzu-toast[data-variant="success"] {
+  --toast-tone: var(--success, #16a34a);
+}
+.yuzu-toast[data-variant="warning"] {
+  --toast-tone: var(--warning, #ca8a04);
+}
+.yuzu-toast[data-variant="error"] {
+  --toast-tone: var(--destructive);
+}
+.yuzu-toast[data-variant="neutral"] {
+  --toast-tone: var(--muted-foreground);
+}
+[data-mode="dark"] .yuzu-toast[data-variant="success"] {
+  --toast-tone: var(--success, #4ade80);
+}
+[data-mode="dark"] .yuzu-toast[data-variant="warning"] {
+  --toast-tone: var(--warning, #facc15);
+}
+.yuzu-toast-art {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: -1;
+}
+.yuzu-toast-lemon {
+  position: absolute;
+  width: 116px;
+  height: 116px;
+  right: -27px;
+  top: -22px;
+  background: url("/toasts/yuzu-lemon-slice.svg") center / contain no-repeat;
+  opacity: 0.3;
+  mask-image: linear-gradient(to left, #000 45%, transparent 100%);
+}
+.yuzu-toast-leaf {
+  position: absolute;
+  width: 80px;
+  height: 40px;
+  top: -30px;
+  left: -40px;
+  background: url("/toasts/yuzu-leaf-corner.svg") center / contain no-repeat;
+  pointer-events: none;
+}
+.yuzu-toast-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 29px;
+  height: 29px;
+  border-radius: 9px;
+  color: var(--toast-tone);
+  background: color-mix(in srgb, var(--toast-tone) 14%, transparent);
+}
+.yuzu-toast-copy {
+  flex: 1;
+  min-width: 0;
+}
+.yuzu-toast-title {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.yuzu-toast-description {
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+.yuzu-toast-controls {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 6px;
+}
+.yuzu-toast-close {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 26px;
+  border-radius: 5px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.yuzu-toast-close:hover {
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+  color: var(--foreground);
+}
+.yuzu-toast-action {
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--toast-tone) 40%, var(--border));
+  border-radius: 999px;
+  font-size: 10px;
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--toast-tone) 8%, var(--card));
+  cursor: pointer;
+}
+.yuzu-toast-close:focus-visible,
+.yuzu-toast-action:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+.yuzu-toast-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.yuzu-toast-progress progress {
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  height: 4px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--border);
+  color: var(--toast-tone);
+}
+.yuzu-toast-progress progress::-webkit-progress-bar {
+  background: var(--border);
+  border-radius: 999px;
+}
+.yuzu-toast-progress progress::-webkit-progress-value {
+  background: var(--toast-tone);
+  border-radius: 999px;
+}
+.yuzu-toast-progress progress::-moz-progress-bar {
+  background: var(--toast-tone);
+  border-radius: 999px;
+}
+.yuzu-toast-progress span {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+.yuzu-toast-viewport {
+  position: fixed;
+  top: 24px;
+  right: 20px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: 380px;
+  max-width: calc(100vw - 40px);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  outline: none;
+}
+.yuzu-toast[data-state="open"] {
+  animation: yuzu-toast-in 220ms ease-out;
+}
+.yuzu-toast[data-state="closed"] {
+  animation: yuzu-toast-out 160ms ease-in forwards;
+}
+.yuzu-toast[data-swipe="move"] {
+  transform: translateX(var(--radix-toast-swipe-move-x));
+}
+.yuzu-toast[data-swipe="cancel"] {
+  transform: translateX(0);
+  transition: transform 180ms ease-out;
+}
+.yuzu-toast[data-swipe="end"] {
+  animation: yuzu-toast-out 160ms ease-in forwards;
+}
+.yuzu-toast-spinning svg {
+  animation: yuzu-toast-spin 1.4s linear infinite;
+}
+@keyframes yuzu-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes yuzu-toast-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+@keyframes yuzu-toast-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (max-width: 600px) {
+  .yuzu-toast-viewport {
+    top: 20px;
+    right: 16px;
+    max-width: calc(100vw - 32px);
+  }
+  .yuzu-toast {
+    gap: 10px;
+    padding: 12px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .yuzu-toast[data-state],
+  .yuzu-toast-spinning svg {
+    animation: none;
+  }
+  .yuzu-toast[data-swipe="cancel"] {
+    transition: none;
+  }
+}
+
+.toast-design-preview {
+  max-width: 1080px;
+  padding: 48px 32px;
+  margin: 0 auto;
+}
+.toast-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+.toast-preview-header h1 {
+  font-size: 28px;
+  font-weight: 600;
+}
+.toast-preview-header p {
+  font-size: 14px;
+  margin-top: 8px;
+  color: var(--muted-foreground);
+}
+.toast-preview-note {
+  margin: 24px 0 32px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.toast-preview-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 250px;
+  gap: 36px;
+  align-items: start;
+}
+.toast-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px 16px;
+}
+.toast-preview-grid .yuzu-toast {
+  box-shadow: none;
+}
+.toast-preview-controls {
+  border-left: 1px solid var(--border);
+  padding-left: 24px;
+}
+.toast-preview-controls h2 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+.toast-preview-behavior {
+  margin-top: 28px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.toast-preview-behavior dt {
+  color: var(--muted-foreground);
+  margin-top: 12px;
+}
+@media (max-width: 900px) {
+  .toast-preview-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .toast-preview-controls {
+    border-left: 0;
+    padding-left: 0;
+    border-top: 1px solid var(--border);
+    padding-top: 24px;
+  }
+}
+@media (max-width: 600px) {
+  .toast-design-preview {
+    padding: 32px 20px;
+  }
+  .toast-preview-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .toast-preview-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

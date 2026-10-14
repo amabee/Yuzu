@@ -5,6 +5,17 @@ import {
 } from "@yuzu/database";
 import { z } from "zod";
 import {
+  readApprovalPolicy,
+  existingProposal,
+  submitProposal,
+} from "./approval-policy";
+import {
+  needsApproval,
+  stableJson,
+  actualApprovalChanges,
+} from "@/lib/approval-rules";
+import type { TaskMutationResult } from "@/lib/approval-contract";
+import {
   boardCreateSchema,
   boardManagerSchema,
   configureFieldSchema,
@@ -45,7 +56,7 @@ const conflict = () =>
     "TASK_CHANGED",
     "This task changed since you opened it. Reload the current task before editing again.",
   );
-async function serial<T>(
+export async function serial<T>(
   operation: (tx: DatabaseTransaction) => Promise<T>,
 ): Promise<T> {
   for (let attempt = 0; ; attempt++)
@@ -65,7 +76,7 @@ async function serial<T>(
       throw error;
     }
 }
-async function access(
+export async function access(
   tx: DatabaseTransaction,
   userId: string,
   boardId: string,
@@ -103,7 +114,10 @@ async function access(
       board.managers.some((manager) => manager.userId === user.id),
   };
 }
-async function eligiblePeople(tx: DatabaseTransaction, workspaceId: string) {
+export async function eligiblePeople(
+  tx: DatabaseTransaction,
+  workspaceId: string,
+) {
   return tx.user.findMany({
     where: {
       OR: [
@@ -128,7 +142,7 @@ function options(board: { columns: { key: string; config: unknown }[] }) {
     board.columns.find((field) => field.key === "status")?.config,
   );
 }
-function validateCore(
+export function validateCore(
   changes: {
     statusId?: string | null;
     groupId?: string | null;
@@ -245,7 +259,25 @@ function typedValue(
   }
   return empty;
 }
-async function saveValues(
+export function validateValues(
+  values: Record<string, unknown> | undefined,
+  board: Awaited<ReturnType<typeof access>>["board"],
+  people: Set<string>,
+) {
+  for (const [id, input] of Object.entries(values ?? {})) {
+    const field = board.columns.find(
+      (column) => column.id === id && !coreKeys.includes(column.key),
+    );
+    if (!field)
+      throw new SetupError(
+        422,
+        "INVALID_FIELD",
+        "Choose an active custom field from this board.",
+      );
+    typedValue(field, input, people);
+  }
+}
+export async function saveValues(
   tx: DatabaseTransaction,
   taskId: string,
   values: Record<string, unknown> | undefined,
@@ -293,10 +325,10 @@ const taskInclude = {
   },
 };
 type LoadedTask = NonNullable<Awaited<ReturnType<typeof loadTask>>>;
-async function loadTask(tx: DatabaseTransaction, id: string) {
+export async function loadTask(tx: DatabaseTransaction, id: string) {
   return tx.task.findUnique({ where: { id }, include: taskInclude });
 }
-function canEdit(
+export function canEdit(
   task: LoadedTask,
   context: Awaited<ReturnType<typeof access>>,
 ) {
@@ -307,7 +339,7 @@ function canEdit(
     task.editors.some((person) => person.userId === context.user.id)
   );
 }
-function snapshot(task: LoadedTask) {
+export function snapshot(task: LoadedTask) {
   return JSON.parse(
     JSON.stringify({
       name: task.name,
@@ -353,8 +385,39 @@ export async function boardState(
       include: taskInclude,
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
+    const policy = await readApprovalPolicy(tx, context.board);
+    const visiblePending = await tx.boardProposal.findMany({
+      where: {
+        boardId,
+        status: "PENDING",
+        ...(context.canManage ||
+        [policy.primaryApproverId, policy.backupApproverId].includes(user.id)
+          ? {}
+          : { authorId: user.id }),
+      },
+      select: {
+        id: true,
+        taskId: true,
+        operation: true,
+        authorId: true,
+        author: { select: { name: true } },
+        task: { select: { name: true } },
+        createdAt: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
     return {
       boardId,
+      approvalPolicy: policy,
+      pendingApprovals: visiblePending.map((proposal) => ({
+        id: proposal.id,
+        taskId: proposal.taskId,
+        operation: proposal.operation,
+        authorId: proposal.authorId,
+        authorName: proposal.author.name,
+        name: proposal.task?.name ?? "New task request",
+        createdAt: proposal.createdAt.toISOString(),
+      })),
       canManage: context.canManage,
       canManageManagers: isAdministrator(context.user.role),
       managerIds: context.board.managers.map((manager) => manager.userId),
@@ -393,10 +456,141 @@ export async function boardState(
     };
   });
 }
-export async function createTask(input: unknown, headers: Headers) {
+export async function createTaskRecord(
+  tx: DatabaseTransaction,
+  context: Awaited<ReturnType<typeof access>>,
+  people: Set<string>,
+  body: z.infer<typeof createTaskSchema>,
+  authorId: string,
+  inputDigest: string,
+  actorId = authorId,
+  activityAction = "Created task",
+) {
+  validateCore(body, context.board, people);
+  validateValues(body.fieldValues, context.board, people);
+  const task = await tx.task.create({
+    data: {
+      boardId: context.board.id,
+      name: body.name,
+      description: body.description ?? "",
+      statusId: body.statusId,
+      priority: body.priority ?? "NORMAL",
+      dueDate: body.dueDate ? new Date(`${body.dueDate}T00:00:00Z`) : null,
+      groupId: body.groupId,
+      createdById: authorId,
+      createKey: body.createKey,
+      createDigest: inputDigest,
+      assignees: {
+        create: (body.assigneeIds ?? []).map((userId) => ({ userId })),
+      },
+    },
+  });
+  await saveValues(tx, task.id, body.fieldValues, context.board, people);
+  await tx.taskActivity.create({
+    data: {
+      taskId: task.id,
+      actorId,
+      action: activityAction,
+      revision: 1,
+      after: snapshot((await loadTask(tx, task.id))!),
+    },
+  });
+  return {
+    outcome: "APPLIED" as const,
+    taskId: task.id,
+    revision: task.revision,
+  };
+}
+export async function applyTaskRecord(
+  tx: DatabaseTransaction,
+  task: LoadedTask,
+  context: Awaited<ReturnType<typeof access>>,
+  people: Set<string>,
+  actorId: string,
+  action: string,
+  changes?: z.infer<typeof updateTaskSchema>["changes"],
+  grant?: { userId: string; grant: boolean },
+  activityAction?: string,
+) {
+  const before = snapshot(task);
+  if (changes) {
+    validateCore(changes, context.board, people);
+    validateValues(changes.fieldValues, context.board, people);
+  }
+  const { assigneeIds, fieldValues, dueDate, ...scalar } = changes ?? {};
+  const updated = await tx.task.updateMany({
+    where: { id: task.id, revision: task.revision },
+    data: {
+      ...scalar,
+      ...(dueDate !== undefined
+        ? { dueDate: dueDate ? new Date(`${dueDate}T00:00:00Z`) : null }
+        : {}),
+      ...(action === "archive"
+        ? { archivedAt: new Date() }
+        : action === "restore"
+          ? { archivedAt: null }
+          : {}),
+      revision: { increment: 1 },
+    },
+  });
+  if (!updated.count) throw conflict();
+  if (assigneeIds) {
+    await tx.taskAssignee.deleteMany({ where: { taskId: task.id } });
+    if (assigneeIds.length)
+      await tx.taskAssignee.createMany({
+        data: assigneeIds.map((userId) => ({ taskId: task.id, userId })),
+      });
+  }
+  if (grant) {
+    if (grant.grant) ensurePeople([grant.userId], people);
+    if (grant.grant)
+      await tx.taskEditorGrant.upsert({
+        where: { taskId_userId: { taskId: task.id, userId: grant.userId } },
+        create: {
+          taskId: task.id,
+          userId: grant.userId,
+          grantedById: actorId,
+        },
+        update: {},
+      });
+    else
+      await tx.taskEditorGrant.deleteMany({
+        where: { taskId: task.id, userId: grant.userId },
+      });
+  }
+  await saveValues(tx, task.id, fieldValues, context.board, people);
+  const after = await loadTask(tx, task.id);
+  await tx.taskActivity.create({
+    data: {
+      taskId: task.id,
+      actorId,
+      action:
+        activityAction ??
+        (action === "archive"
+          ? "Archived task"
+          : action === "restore"
+            ? "Restored task"
+            : action === "editor"
+              ? "Changed task editors"
+              : "Updated task"),
+      revision: after!.revision,
+      before,
+      after: snapshot(after!),
+    },
+  });
+  return {
+    outcome: "APPLIED" as const,
+    taskId: task.id,
+    revision: after!.revision,
+  };
+}
+export async function createTask(
+  input: unknown,
+  headers: Headers,
+): Promise<TaskMutationResult> {
   const body = createTaskSchema.parse(input);
   const { user } = await requireIdentity(headers);
-  const task = await serial(async (tx) => {
+  return serial(async (tx) => {
     const context = await access(tx, user.id, body.boardId, true);
     const inputDigest = digest(
       JSON.stringify({
@@ -424,8 +618,19 @@ export async function createTask(input: unknown, headers: Headers) {
           "RETRY_CHANGED",
           "This creation key already belongs to a different task request.",
         );
-      return existing;
+      return {
+        outcome: "APPLIED",
+        taskId: existing.id,
+        revision: existing.revision,
+      };
     }
+    const cached = await existingProposal(
+      tx,
+      user.id,
+      body.createKey,
+      inputDigest,
+    );
+    if (cached) return cached;
     const people = new Set(
       (await eligiblePeople(tx, context.board.workspaceId)).map(
         (person) => person.id,
@@ -433,6 +638,11 @@ export async function createTask(input: unknown, headers: Headers) {
     );
     const initial = {
       ...body,
+      description: body.description ?? "",
+      priority: body.priority ?? "NORMAL",
+      dueDate: body.dueDate ?? null,
+      assigneeIds: body.assigneeIds ?? [],
+      fieldValues: body.fieldValues ?? {},
       statusId:
         body.statusId === undefined
           ? (options(context.board)[0]?.id ?? null)
@@ -443,42 +653,28 @@ export async function createTask(input: unknown, headers: Headers) {
           : body.groupId,
     };
     validateCore(initial, context.board, people);
-    const task = await tx.task.create({
-      data: {
+    validateValues(initial.fieldValues, context.board, people);
+    const policy = await readApprovalPolicy(tx, context.board);
+    if (needsApproval(policy, "CREATE", initial, context.board.columns))
+      return submitProposal(tx, {
         boardId: body.boardId,
-        name: body.name,
-        description: body.description ?? "",
-        statusId: initial.statusId,
-        priority: body.priority ?? "NORMAL",
-        dueDate: body.dueDate ? new Date(`${body.dueDate}T00:00:00Z`) : null,
-        groupId: initial.groupId,
-        createdById: user.id,
-        createKey: body.createKey,
-        createDigest: inputDigest,
-        assignees: {
-          create: (body.assigneeIds ?? []).map((userId) => ({ userId })),
-        },
-      },
-    });
-    await saveValues(tx, task.id, body.fieldValues, context.board, people);
-    await tx.taskActivity.create({
-      data: {
-        taskId: task.id,
-        actorId: user.id,
-        action: "Created task",
-        revision: 1,
-        after: snapshot((await loadTask(tx, task.id))!),
-      },
-    });
-    return task;
+        authorId: user.id,
+        operation: "CREATE",
+        requestKey: body.createKey,
+        requestDigest: inputDigest,
+        changes: initial,
+        baseline: {},
+        policy,
+        eligible: people,
+      });
+    return createTaskRecord(tx, context, people, initial, user.id, inputDigest);
   });
-  return { taskId: task.id, revision: task.revision };
 }
 export async function mutateTask(
   action: string,
   input: unknown,
   headers: Headers,
-) {
+): Promise<TaskMutationResult> {
   const patch = action === "update" ? updateTaskSchema.parse(input) : undefined;
   const grant =
     action === "editor" ? editorGrantSchema.parse(input) : undefined;
@@ -498,6 +694,17 @@ export async function mutateTask(
         "FORBIDDEN",
         "You do not have permission to change this task.",
       );
+    const requestDigest = digest(stableJson({ action, ...body }));
+    const requestKey = body.requestKey ?? requestDigest;
+    if (["update", "archive"].includes(action)) {
+      const cached = await existingProposal(
+        tx,
+        user.id,
+        requestKey,
+        requestDigest,
+      );
+      if (cached) return cached;
+    }
     if (task.archivedAt && action !== "restore")
       throw new SetupError(
         409,
@@ -505,75 +712,49 @@ export async function mutateTask(
         "Archived tasks are read-only. Ask a board manager to restore it first.",
       );
     if (task.revision !== body.revision) throw conflict();
-    const before = snapshot(task);
     const people = new Set(
       (await eligiblePeople(tx, context.board.workspaceId)).map(
         (person) => person.id,
       ),
     );
     const changes = patch?.changes;
-    if (changes) validateCore(changes, context.board, people);
-    const { assigneeIds, fieldValues, dueDate, ...scalar } = changes ?? {};
-    const updated = await tx.task.updateMany({
-      where: { id: task.id, revision: body.revision },
-      data: {
-        ...scalar,
-        ...(dueDate !== undefined
-          ? { dueDate: dueDate ? new Date(`${dueDate}T00:00:00Z`) : null }
-          : {}),
-        ...(action === "archive"
-          ? { archivedAt: new Date() }
-          : action === "restore"
-            ? { archivedAt: null }
-            : {}),
-        revision: { increment: 1 },
-      },
-    });
-    if (!updated.count) throw conflict();
-    if (assigneeIds) {
-      await tx.taskAssignee.deleteMany({ where: { taskId: task.id } });
-      if (assigneeIds.length)
-        await tx.taskAssignee.createMany({
-          data: assigneeIds.map((userId) => ({ taskId: task.id, userId })),
-        });
+    if (changes) {
+      validateCore(changes, context.board, people);
+      validateValues(changes.fieldValues, context.board, people);
     }
-    if (grant) {
-      ensurePeople([grant.userId], people);
-      if (grant.grant)
-        await tx.taskEditorGrant.upsert({
-          where: { taskId_userId: { taskId: task.id, userId: grant.userId } },
-          create: {
-            taskId: task.id,
-            userId: grant.userId,
-            grantedById: user.id,
-          },
-          update: {},
-        });
-      else
-        await tx.taskEditorGrant.deleteMany({
-          where: { taskId: task.id, userId: grant.userId },
-        });
-    }
-    await saveValues(tx, task.id, fieldValues, context.board, people);
-    const after = await loadTask(tx, task.id);
-    await tx.taskActivity.create({
-      data: {
+    const policy = await readApprovalPolicy(tx, context.board);
+    const operation = action === "archive" ? "ARCHIVE" : "UPDATE";
+    const proposedChanges = actualApprovalChanges(
+      snapshot(task),
+      changes ?? {},
+    );
+    if (
+      ["update", "archive"].includes(action) &&
+      needsApproval(policy, operation, proposedChanges, context.board.columns)
+    )
+      return submitProposal(tx, {
+        boardId: task.boardId,
         taskId: task.id,
-        actorId: user.id,
-        action:
-          action === "archive"
-            ? "Archived task"
-            : action === "restore"
-              ? "Restored task"
-              : action === "editor"
-                ? "Changed task editors"
-                : "Updated task",
-        revision: after!.revision,
-        before,
-        after: snapshot(after!),
-      },
-    });
-    return { taskId: task.id, revision: after!.revision };
+        authorId: user.id,
+        operation,
+        requestKey,
+        requestDigest,
+        changes: proposedChanges,
+        baseline: snapshot(task),
+        policy,
+        eligible: people,
+        sourceRevision: task.revision,
+      });
+    return applyTaskRecord(
+      tx,
+      task,
+      context,
+      people,
+      user.id,
+      action,
+      changes,
+      grant,
+    );
   });
 }
 export async function manageBoard(

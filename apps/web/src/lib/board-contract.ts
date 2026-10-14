@@ -1,11 +1,12 @@
 import { z } from "zod";
-export const recordId = z.string().uuid();
-// Existing auth identities may predate UUIDv7. Resolve them through membership, never by ID shape.
-export const personId = z
-  .string()
-  .min(1)
-  .max(128)
-  .regex(/^[A-Za-z0-9_-]+$/);
+import { recordId, personId } from "./id-contract";
+export { recordId, personId } from "./id-contract";
+import {
+  approvalPolicySchema,
+  pendingApprovalSchema,
+  type ApprovalPolicy,
+  type PendingApproval,
+} from "./approval-contract";
 export const dateOnly = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -65,6 +66,7 @@ export const createTaskSchema = changes
 export const updateTaskSchema = z
   .object({
     taskId: recordId,
+    requestKey: recordId.optional(),
     revision: z.number().int().positive(),
     changes: changes
       .partial()
@@ -75,7 +77,11 @@ export const updateTaskSchema = z
   })
   .strict();
 export const taskActionSchema = z
-  .object({ taskId: recordId, revision: z.number().int().positive() })
+  .object({
+    taskId: recordId,
+    revision: z.number().int().positive(),
+    requestKey: recordId.optional(),
+  })
   .strict();
 export const editorGrantSchema = taskActionSchema
   .extend({ userId: personId, grant: z.boolean() })
@@ -168,10 +174,14 @@ export type BoardState = {
   fields: BoardField[];
   people: { id: string; name: string; image?: string | null }[];
   tasks: BoardTask[];
+  approvalPolicy: ApprovalPolicy;
+  pendingApprovals: PendingApproval[];
 };
 
 export const boardStateSchema = z.object({
   boardId: recordId,
+  approvalPolicy: approvalPolicySchema,
+  pendingApprovals: z.array(pendingApprovalSchema),
   canManage: z.boolean(),
   canManageManagers: z.boolean(),
   managerIds: z.array(personId),

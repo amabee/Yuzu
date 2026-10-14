@@ -1,4 +1,10 @@
 "use client";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+  TooltipProvider,
+} from "@/components/ui/tooltip";
 import { Avatar as AvatarPrimitive } from "radix-ui";
 import {
   Circle,
@@ -79,47 +85,62 @@ export function AssigneeAvatars({
   if (!ids.length)
     return <span className="text-muted-foreground">Unassigned</span>;
   return (
-    <div className="task-assignees" aria-label="Assignees">
-      {ids.slice(0, 3).map((id) => {
-        const person = people.find((item) => item.id === id);
-        const name = person?.name ?? "Former member";
-        return (
-          <AvatarPrimitive.Root
-            key={id}
-            className="task-avatar"
-            title={name}
-            aria-label={name}
-          >
-            {person?.image && (
-              <AvatarPrimitive.Image src={person.image} alt="" />
-            )}
-            <AvatarPrimitive.Fallback>
-              {name
-                .trim()
-                .split(/\s+/)
-                .slice(0, 2)
-                .map((part) => part[0])
-                .join("")
-                .toUpperCase()}
-            </AvatarPrimitive.Fallback>
-          </AvatarPrimitive.Root>
-        );
-      })}
-      {ids.length > 3 && (
-        <span
-          className="task-avatar"
-          title={ids
-            .slice(3)
-            .map(
-              (id) =>
-                people.find((person) => person.id === id)?.name ??
-                "Former member",
-            )
-            .join(", ")}
-        >
-          +{ids.length - 3}
-        </span>
-      )}
-    </div>
+    <TooltipProvider delayDuration={200}>
+      <div className="task-assignees" aria-label="Assignees">
+        {ids.slice(0, 3).map((id) => {
+          const person = people.find((item) => item.id === id);
+          const name = person?.name ?? "Former member";
+          return (
+            <Tooltip key={id}>
+              <TooltipTrigger asChild>
+                <AvatarPrimitive.Root
+                  tabIndex={0}
+                  role="img"
+                  className="task-avatar"
+                  aria-label={name}
+                >
+                  {person?.image && (
+                    <AvatarPrimitive.Image src={person.image} alt="" />
+                  )}
+                  <AvatarPrimitive.Fallback>
+                    {name
+                      .trim()
+                      .split(/\s+/)
+                      .slice(0, 2)
+                      .map((part) => part[0])
+                      .join("")
+                      .toUpperCase()}
+                  </AvatarPrimitive.Fallback>
+                </AvatarPrimitive.Root>
+              </TooltipTrigger>
+              <TooltipContent>{name}</TooltipContent>
+            </Tooltip>
+          );
+        })}
+        {ids.length > 3 && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className="task-avatar"
+                tabIndex={0}
+                aria-label={`${ids.length - 3} more assignees`}
+              >
+                +{ids.length - 3}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-64">
+              {ids
+                .slice(3)
+                .map(
+                  (id) =>
+                    people.find((person) => person.id === id)?.name ??
+                    "Former member",
+                )
+                .join(", ")}
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </div>
+    </TooltipProvider>
   );
 }

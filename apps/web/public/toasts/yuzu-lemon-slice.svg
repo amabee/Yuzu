@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="320" height="320" role="img" aria-label="Lemon slice">
+  <title>Lemon slice</title>
+  <defs>
+    <!-- one segment, pointing up; rotated 8 times below -->
+    <path id="segment" d="M76.91 70.49 L63.62 29.59 A53 53 0 0 1 96.38 29.59 L83.09 70.49 Z" fill="#ffd84a" stroke="#ffd84a" stroke-width="4" stroke-linejoin="round"/>
+  </defs>
+
+  <circle cx="80" cy="80" r="72" fill="#f3b91a"/>   <!-- rind -->
+  <circle cx="80" cy="80" r="65" fill="#fff6cf"/>   <!-- pith -->
+
+  <use href="#segment"/>
+  <use href="#segment" transform="rotate(45 80 80)"/>
+  <use href="#segment" transform="rotate(90 80 80)"/>
+  <use href="#segment" transform="rotate(135 80 80)"/>
+  <use href="#segment" transform="rotate(180 80 80)"/>
+  <use href="#segment" transform="rotate(225 80 80)"/>
+  <use href="#segment" transform="rotate(270 80 80)"/>
+  <use href="#segment" transform="rotate(315 80 80)"/>
+
+  <circle cx="80" cy="80" r="7" fill="#fff6cf"/>    <!-- center -->
+</svg>
