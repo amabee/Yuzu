@@ -52,20 +52,20 @@ to build every internal system from scratch.
 > Yuzu is under active development. This list describes the intended product
 > direction; features may not be available yet.
 
-| Feature | Description |
-| --- | --- |
-| **Flexible workspaces and boards** | Organize work into workspaces, folders, boards, groups, and items. |
-| **Custom fields** | Model the information your team needs: statuses, dates, numbers, people, links, and more. |
-| **Multiple views** | Work with the same records in table and Kanban views. |
-| **Task details and collaboration** | Comments, mentions, attachments, notifications, and activity history. |
-| **Filters and saved views** | Focus on the records that matter to you. |
-| **Dashboards and reporting** | Turn work data into useful summaries and charts. |
-| **Workflow automation** | Connect triggers, conditions, and actions to reduce repetitive work. |
-| **CSV import and export** | Move data in and out with validation and clear feedback. |
-| **REST API** | Integrate Yuzu with other tools and services. |
-| **Self-hosting** | Run a separate Yuzu installation and database for your organization. |
-| **Yuzu Blueprint** *(long-term)* | Package and share reusable board structures, views, forms, dashboards, and workflow definitions. |
-| **App Builder** *(long-term)* | Build internal CRUD applications on top of structured work data. |
+| Feature                            | Description                                                                                      |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------ |
+| **Flexible workspaces and boards** | Organize work into workspaces, folders, boards, groups, and items.                               |
+| **Custom fields**                  | Model the information your team needs: statuses, dates, numbers, people, links, and more.        |
+| **Multiple views**                 | Work with the same records in table and Kanban views.                                            |
+| **Task details and collaboration** | Comments, mentions, attachments, notifications, and activity history.                            |
+| **Filters and saved views**        | Focus on the records that matter to you.                                                         |
+| **Dashboards and reporting**       | Turn work data into useful summaries and charts.                                                 |
+| **Workflow automation**            | Connect triggers, conditions, and actions to reduce repetitive work.                             |
+| **CSV import and export**          | Move data in and out with validation and clear feedback.                                         |
+| **REST API**                       | Integrate Yuzu with other tools and services.                                                    |
+| **Self-hosting**                   | Run a separate Yuzu installation and database for your organization.                             |
+| **Yuzu Blueprint** _(long-term)_   | Package and share reusable board structures, views, forms, dashboards, and workflow definitions. |
+| **App Builder** _(long-term)_      | Build internal CRUD applications on top of structured work data.                                 |
 
 ## Project status
 
@@ -75,37 +75,44 @@ to build every internal system from scratch.
 The initial focus is a reliable foundation: authentication, permissions,
 workspaces, boards, flexible fields, and core collaboration.
 
-- [x] Foundation, project setup, and database
-- [ ] Authentication, invitations, and roles
-- [ ] Workspaces, folders, boards, groups, and items
-- [ ] Custom fields and flexible board data
-- [ ] Table and Kanban views
-- [ ] Task details, comments, and activity history
-- [ ] Dashboards and CSV import/export
-- [ ] REST API and OpenAPI documentation
-- [ ] Workflow automation engine
-- [ ] Deployment, backup, restore, and security hardening
-- [ ] Yuzu Blueprint and App Builder exploration
+- [x] Foundation, database, UUIDv7 records, and responsive shadcn UI
+- [x] First installation, sign-in, invitations, and password recovery
+- [x] Global theme editor, dynamic colors/type, and personal light/dark mode
+- [x] Boards, groups, real tasks, and typed custom fields
+- [x] Table and Kanban views with task details, filtering, and sorting
+- [x] Creator/assignee/editor permissions and scoped board managers
+- [x] Revision conflict protection, task history, archive/restore
+- [x] Task comments, configurable tag/status/priority appearance, and operation toasts
+- [ ] Remaining profile/account and workspace lifecycle administration
+- [ ] Approval policies and decision queue
+- [ ] Files, inbox notifications, and saved views
+- [ ] Dashboards, CSV exchange, and complete OpenAPI documentation
+- [ ] Workflow automation and Blueprint/App Builder exploration
+- [ ] Release deployment, recovery, and pilot verification
+
+Use **Boards → Create board** or open an existing board and choose **Add task**.
+New boards use direct editing; approval policies are the next milestone.
+See [Board engine](docs/board-engine.md) for permissions and API contracts.
 
 ## Technology
 
-| Area | Planned technology |
-| --- | --- |
-| Web application | Next.js App Router, React, TypeScript |
-| UI | Tailwind CSS, shadcn/ui, Lucide |
-| Data tables | TanStack Table |
-| Server data and requests | TanStack Query |
-| Client UI state | Zustand |
-| Drag and drop | dnd-kit |
-| Workflow editor | React Flow (`@xyflow/react`) |
-| Charts | Recharts |
-| Forms and validation | React Hook Form, Zod |
-| Database | PostgreSQL |
-| ORM | Prisma |
-| API | REST, with OpenAPI documentation |
-| Background jobs | Redis and BullMQ when needed |
-| Deployment | Docker Compose |
-| Package management | pnpm |
+| Area                     | Planned technology                    |
+| ------------------------ | ------------------------------------- |
+| Web application          | Next.js App Router, React, TypeScript |
+| UI                       | Tailwind CSS, shadcn/ui, Lucide       |
+| Data tables              | TanStack Table                        |
+| Server data and requests | TanStack Query                        |
+| Client UI state          | Zustand                               |
+| Drag and drop            | dnd-kit                               |
+| Workflow editor          | React Flow (`@xyflow/react`)          |
+| Charts                   | Recharts                              |
+| Forms and validation     | React Hook Form, Zod                  |
+| Database                 | PostgreSQL                            |
+| ORM                      | Prisma                                |
+| API                      | REST, with OpenAPI documentation      |
+| Background jobs          | Redis and BullMQ when needed          |
+| Deployment               | Docker Compose                        |
+| Package management       | pnpm                                  |
 
 <sub>The stack and package choices may evolve during development.</sub>
 
@@ -212,14 +219,14 @@ matures.
 
 ## Roadmap
 
-| Phase | Focus | Scope |
-| :-: | --- | --- |
-| 1 | **Foundation** | Repository structure, database, validation, and shared components. |
-| 2 | **Core work management** | Authentication, workspaces, boards, items, custom fields, and views. |
-| 3 | **Collaboration** | Task details, comments, activity, notifications, and reporting. |
-| 4 | **Automation** | Triggers, conditions, actions, workflow execution, and monitoring. |
-| 5 | **Beta readiness** | Permissions testing, deployment documentation, backups, restore testing, and security hardening. |
-| 6 | **Extensibility** | Yuzu Blueprint, internal App Builder, and integration tooling. |
+| Phase | Focus                    | Scope                                                                                            |
+| :---: | ------------------------ | ------------------------------------------------------------------------------------------------ |
+|   1   | **Foundation**           | Repository structure, database, validation, and shared components.                               |
+|   2   | **Core work management** | Authentication, workspaces, boards, items, custom fields, and views.                             |
+|   3   | **Collaboration**        | Task details, comments, activity, notifications, and reporting.                                  |
+|   4   | **Automation**           | Triggers, conditions, actions, workflow execution, and monitoring.                               |
+|   5   | **Beta readiness**       | Permissions testing, deployment documentation, backups, restore testing, and security hardening. |
+|   6   | **Extensibility**        | Yuzu Blueprint, internal App Builder, and integration tooling.                                   |
 
 ## Security
 

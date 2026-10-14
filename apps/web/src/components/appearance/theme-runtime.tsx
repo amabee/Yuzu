@@ -1,5 +1,16 @@
 "use client";
-import { createContext, useContext, useEffect, useState } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useRef,
+  useSyncExternalStore,
+} from "react";
+import { flushSync } from "react-dom";
+import { Sun, Moon, Monitor } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
 import { useQuery } from "@tanstack/react-query";
 import { createStore } from "zustand/vanilla";
 import { useStore } from "zustand";
@@ -12,9 +23,35 @@ import {
 } from "@/lib/appearance";
 
 type Preference = { mode: Mode; setMode: (mode: Mode) => void };
-const ModeContext = createContext<ReturnType<typeof preferenceStore> | null>(
-  null,
-);
+const ModeContext = createContext<{
+  store: ReturnType<typeof preferenceStore>;
+  busy: boolean;
+  changeMode: (mode: Mode, element: HTMLElement) => void;
+} | null>(null);
+function resolvedMode(mode: Mode) {
+  return mode === "system"
+    ? matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light"
+    : mode;
+}
+function applyAppearance(appearance: PublishedTheme, mode: Mode) {
+  const resolved = resolvedMode(mode);
+  const html = document.documentElement;
+  for (const [key, value] of Object.entries(
+    themeVariables(appearance.theme, resolved),
+  ))
+    html.style.setProperty(key, value);
+  html.dataset.mode = resolved;
+  html.classList.toggle("dark", resolved === "dark");
+  html.style.colorScheme = resolved;
+}
+function subscribeDark(callback: () => void) {
+  const media = matchMedia("(prefers-color-scheme: dark)");
+  media.addEventListener("change", callback);
+  return () => media.removeEventListener("change", callback);
+}
+
 function preferenceStore(mode: Mode) {
   return createStore<Preference>((set) => ({
     mode,
@@ -40,6 +77,8 @@ export function ThemeRuntime({
 }) {
   const [store] = useState(() => preferenceStore(initialMode));
   const mode = useStore(store, (state) => state.mode);
+  const [busy, setBusy] = useState(false);
+  const running = useRef(false);
   const published = useQuery({
     queryKey: ["appearance", "published"],
     queryFn: async () =>
@@ -52,18 +91,7 @@ export function ThemeRuntime({
   });
   useEffect(() => {
     const media = matchMedia("(prefers-color-scheme: dark)");
-    const apply = () => {
-      const resolved =
-        mode === "system" ? (media.matches ? "dark" : "light") : mode;
-      const html = document.documentElement;
-      for (const [key, value] of Object.entries(
-        themeVariables(published.data.theme, resolved),
-      ))
-        html.style.setProperty(key, value);
-      html.dataset.mode = resolved;
-      html.classList.toggle("dark", resolved === "dark");
-      html.style.colorScheme = resolved;
-    };
+    const apply = () => applyAppearance(published.data, mode);
     apply();
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
@@ -79,25 +107,120 @@ export function ThemeRuntime({
     window.addEventListener("storage", sync);
     return () => window.removeEventListener("storage", sync);
   }, [store]);
-  return <ModeContext.Provider value={store}>{children}</ModeContext.Provider>;
+  function changeMode(next: Mode, element: HTMLElement) {
+    if (running.current) return;
+    const change = () => {
+      flushSync(() => store.getState().setMode(next));
+      applyAppearance(published.data, next);
+    };
+    if (
+      !document.startViewTransition ||
+      matchMedia("(prefers-reduced-motion: reduce)").matches ||
+      resolvedMode(next) === document.documentElement.dataset.mode
+    ) {
+      change();
+      return;
+    }
+    const rect = element.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const radius = Math.hypot(
+      Math.max(x, innerWidth - x),
+      Math.max(y, innerHeight - y),
+    );
+    running.current = true;
+    setBusy(true);
+    document.documentElement.classList.add("theme-ripple");
+    const transition = document.startViewTransition(change);
+    void transition.ready
+      .then(() => {
+        document.documentElement.animate(
+          {
+            clipPath: [
+              `circle(0px at ${x}px ${y}px)`,
+              `circle(${radius}px at ${x}px ${y}px)`,
+            ],
+          },
+          {
+            duration: 520,
+            easing: "cubic-bezier(.22,1,.36,1)",
+            pseudoElement: "::view-transition-new(root)",
+          },
+        );
+      })
+      .catch(() => {
+        /* A skipped transition still applies the preference. */
+      });
+    void transition.finished
+      .catch(() => {})
+      .finally(() => {
+        running.current = false;
+        setBusy(false);
+        document.documentElement.classList.remove("theme-ripple");
+      });
+  }
+  return (
+    <ModeContext.Provider value={{ store, busy, changeMode }}>
+      {children}
+    </ModeContext.Provider>
+  );
 }
 export function ModeSwitcher() {
-  const store = useContext(ModeContext);
-  if (!store) throw new Error("Theme preferences require ThemeRuntime.");
-  const { mode, setMode } = useStore(store);
+  const context = useContext(ModeContext);
+  if (!context) throw new Error("Theme preferences require ThemeRuntime.");
+  const mode = useStore(context.store, (state) => state.mode);
+  const systemDark = useSyncExternalStore(
+    subscribeDark,
+    () => matchMedia("(prefers-color-scheme: dark)").matches,
+    () => false,
+  );
+  const dark = mode === "dark" || (mode === "system" && systemDark);
+  const switchRef = useRef<HTMLButtonElement>(null);
   return (
-    <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-      <span className="sr-only">Color mode</span>
-      <select
-        aria-label="Color mode"
-        value={mode}
-        onChange={(event) => setMode(event.target.value as Mode)}
-        className="h-9 max-w-24 rounded-lg border bg-card px-2 text-foreground"
+    <div className="theme-picker" role="group" aria-label="Color mode">
+      <div className="theme-picker-track">
+        <Sun
+          size={14}
+          aria-hidden="true"
+          className={!dark ? "text-primary" : "text-muted-foreground"}
+        />
+        <Switch
+          ref={switchRef}
+          checked={dark}
+          aria-disabled={context.busy}
+          aria-label="Dark mode"
+          className="theme-mode-switch"
+          onCheckedChange={(checked) => {
+            if (switchRef.current)
+              context.changeMode(checked ? "dark" : "light", switchRef.current);
+          }}
+        />
+        <Moon
+          size={14}
+          aria-hidden="true"
+          className={dark ? "text-primary" : "text-muted-foreground"}
+        />
+      </div>
+      <Button
+        type="button"
+        size="icon"
+        variant="ghost"
+        className="theme-system-button"
+        aria-label="Follow system theme"
+        aria-pressed={mode === "system"}
+        aria-disabled={context.busy}
+        title={
+          mode === "system" ? "Following system theme" : "Follow system theme"
+        }
+        onClick={(event) =>
+          context.changeMode(
+            mode === "system" ? (dark ? "dark" : "light") : "system",
+            event.currentTarget,
+          )
+        }
       >
-        <option value="system">System</option>
-        <option value="light">Light</option>
-        <option value="dark">Dark</option>
-      </select>
-    </label>
+        <Monitor size={14} />
+      </Button>
+    </div>
   );
 }

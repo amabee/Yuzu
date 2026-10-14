@@ -1,160 +1,121 @@
 import Link from "next/link";
 import {
   ArrowRight,
-  CheckCheck,
   Columns3,
   FolderOpen,
-  Plus,
+  CheckCheck,
   Settings2,
-  Sparkles,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { getDatabase } from "@yuzu/database";
 import { workspaceContext } from "@/server/workspace-access";
 import { workspaceScope } from "@/server/team-access";
-
-const places = [
-  {
-    href: "/boards",
-    icon: Columns3,
-    title: "Keep work in view",
-    detail: "One set of tasks. The view that works for you.",
-    label: "Explore boards",
-  },
-  {
-    href: "/approvals",
-    icon: CheckCheck,
-    title: "Decide with context",
-    detail: "Clear requests, thoughtful decisions, a shared history.",
-    label: "Explore approvals",
-  },
-  {
-    href: "/settings",
-    icon: Settings2,
-    title: "Make it your space",
-    detail: "Set the foundations for the way your team works.",
-    label: "Explore settings",
-  },
-];
-
 export default async function OverviewPage() {
-  const { user } = await workspaceContext();
-  const board = await getDatabase().board.findFirst({
+  const { user, workspace, workspaces } = await workspaceContext();
+  const boards = await getDatabase().board.findMany({
     where: { workspace: workspaceScope(user) },
+    include: {
+      workspace: { select: { name: true } },
+      _count: { select: { columns: true, groups: true } },
+    },
     orderBy: { createdAt: "asc" },
   });
   return (
     <div>
-      <div className="mb-8 flex flex-wrap items-end justify-between gap-5">
-        <div>
-          <p className="mb-2 text-[11px] font-semibold tracking-[0.15em] text-brand-secondary uppercase">
-            A fresh start
-          </p>
-          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-            Good work starts here.
-          </h1>
-          <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
-            A little structure, a shared direction, and room for your team to
-            grow.
-          </p>
-        </div>
-        <Button disabled title="Board creation arrives in the board milestone">
-          <Plus size={16} />
-          Create a board
-        </Button>
+      <div className="workspace-breadcrumb">
+        <span>Workspaces</span>
+        <span>/</span>
+        <span>{workspace?.name ?? "Overview"}</span>
       </div>
-      <section className="relative overflow-hidden rounded-2xl bg-brand-cream px-6 py-8 sm:px-9 sm:py-10">
-        <div className="relative z-10 max-w-xl">
-          <span className="mb-4 inline-flex items-center gap-2 text-xs font-medium text-primary">
-            <Sparkles size={15} />
-            Your next chapter, together
-          </span>
-          <h2 className="text-2xl leading-tight font-semibold tracking-tight text-primary sm:text-3xl">
-            Don&apos;t just manage work.
-            <br />
-            Build the systems that run it.
-          </h2>
-          <p className="mt-4 max-w-md text-sm leading-6 text-foreground/75">
-            Bring tasks, conversations, and decisions into one place. Start with
-            a board. Shape it around the work that matters.
+      <div className="workspace-page-heading">
+        <div>
+          <h1 className="text-2xl sm:text-3xl">Good work starts here.</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Your projects, your people, and a shared place to move things
+            forward.
           </p>
-          <Button
-            asChild
-            variant="outline"
-            className="mt-6 border-primary/20 bg-card/60 text-primary hover:bg-card"
-          >
-            <Link href="/boards">
-              Find your starting point
-              <ArrowRight size={15} />
-            </Link>
-          </Button>
         </div>
-        <div
-          aria-hidden="true"
-          className="absolute right-10 bottom-7 hidden h-40 w-44 rotate-[-7deg] rounded-xl border border-border/70 bg-card/50 p-4 xl:block"
+        <Link
+          href="/boards"
+          className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm text-primary-foreground"
         >
-          <div className="mb-5 h-2 w-20 rounded bg-primary/20" />
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="flex gap-3">
-                <div className="size-4 rounded border border-primary/20" />
-                <div className="h-3 flex-1 rounded bg-primary/10" />
-              </div>
-            ))}
-          </div>
+          View boards
+          <ArrowRight size={15} />
+        </Link>
+      </div>
+      <div className="workspace-metrics">
+        <div>
+          <Columns3 size={20} />
+          <span>Boards</span>
+          <strong>{boards.length}</strong>
         </div>
-      </section>
-      <section aria-labelledby="boards-heading" className="mt-9">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 id="boards-heading" className="text-base font-semibold">
-            Your boards
-          </h2>
-          <Link
-            href="/boards"
-            className="flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-          >
-            View boards
-            <ArrowRight size={13} />
+        <div>
+          <FolderOpen size={20} />
+          <span>Workspaces</span>
+          <strong>{workspaces.length}</strong>
+        </div>
+        <div>
+          <Settings2 size={20} />
+          <span>Saved fields</span>
+          <strong>
+            {boards.reduce((count, board) => count + board._count.columns, 0)}
+          </strong>
+        </div>
+      </div>
+      <section className="workspace-projects">
+        <header>
+          <h2>Your boards</h2>
+          <Link href="/boards">
+            View all
+            <ArrowRight size={14} />
           </Link>
-        </div>
-        <div className="flex flex-col items-center rounded-xl border border-dashed bg-card px-5 py-10 text-center">
-          <div className="mb-4 flex size-12 items-center justify-center rounded-xl bg-secondary">
-            <FolderOpen size={23} className="text-primary" />
-          </div>
-          <h3 className="text-sm font-semibold">
-            {board?.name ?? "A clean slate for your next project"}
-          </h3>
-          <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
-            Your starter board is saved. No sample tasks have been created.
-          </p>
-          {board && (
-            <Button asChild variant="outline" className="mt-5">
-              <Link href={`/boards/${board.id}`}>
-                Open your board
-                <ArrowRight size={15} />
-              </Link>
-            </Button>
+        </header>
+        <div className="workspace-board-grid">
+          {boards.map((board) => (
+            <Link
+              href={`/boards/${board.id}`}
+              key={board.id}
+              className="workspace-board-card bg-card"
+            >
+              <div className="workspace-board-card-top">
+                <span>
+                  <Columns3 size={22} />
+                </span>
+                <ArrowRight size={16} />
+              </div>
+              <p>{board.workspace.name}</p>
+              <h3>{board.name}</h3>
+              <div className="workspace-board-card-footer">
+                <span>{board._count.columns} fields</span>
+                <span>{board._count.groups} groups</span>
+              </div>
+            </Link>
+          ))}
+          {!boards.length && (
+            <div className="workspace-empty">
+              <FolderOpen size={25} />
+              <h3>Your projects will live here</h3>
+              <p>Ask an owner or administrator for workspace access.</p>
+            </div>
           )}
         </div>
       </section>
-      <div className="mt-7 grid gap-4 md:grid-cols-3">
-        {places.map(({ href, icon: Icon, title, detail, label }) => (
-          <Link
-            key={href}
-            href={href}
-            className="group rounded-xl border bg-card p-5 transition-colors hover:border-brand-secondary/50"
-          >
-            <Icon size={20} strokeWidth={1.7} className="mb-5 text-primary" />
-            <h2 className="text-sm font-semibold">{title}</h2>
-            <p className="mt-2 text-xs leading-5 text-muted-foreground">
-              {detail}
-            </p>
-            <span className="mt-5 inline-flex items-center gap-2 text-xs font-medium text-primary">
-              {label}
-              <ArrowRight size={13} />
-            </span>
-          </Link>
-        ))}
+      <div className="workspace-quick-links">
+        <Link href="/approvals">
+          <CheckCheck size={20} />
+          <div>
+            <h2>Approvals</h2>
+            <p>Keep decisions connected to the work.</p>
+          </div>
+          <ArrowRight size={16} />
+        </Link>
+        <Link href="/settings">
+          <Settings2 size={20} />
+          <div>
+            <h2>Workspace settings</h2>
+            <p>Shape the way your team works.</p>
+          </div>
+          <ArrowRight size={16} />
+        </Link>
       </div>
     </div>
   );

@@ -1,29 +1,41 @@
 "use client";
-
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   CheckCheck,
-  ChevronRight,
-  CircleHelp,
+  FolderOpen,
+  Columns3,
+  Palette,
   Home,
   LayoutGrid,
-  Menu,
   Settings2,
   Sprout,
+  X,
 } from "lucide-react";
-import { useUiStore } from "@/components/providers";
 import { Button } from "@/components/ui/button";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet";
-import { cn } from "@/lib/utils";
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+  useSidebar,
+} from "@/components/ui/sidebar";
 import { ModeSwitcher } from "@/components/appearance/theme-runtime";
+import {
+  WorkspaceSearch,
+  type NavigationWorkspace,
+} from "@/components/workspace-search";
 import { SignOut } from "@/components/sign-out";
 
 const navigation = [
@@ -32,95 +44,203 @@ const navigation = [
   { href: "/approvals", label: "Approvals", icon: CheckCheck },
   { href: "/settings", label: "Settings", icon: Settings2 },
 ];
-
-function Sidebar({
-  close,
+function WorkspaceSidebar({
   installationName = "Yuzu",
   workspaceName = "Your team's space",
+  workspaces,
+  role,
 }: {
-  close?: () => void;
   installationName?: string;
   workspaceName?: string;
+  workspaces: NavigationWorkspace[];
+  role?: string;
 }) {
   const pathname = usePathname();
+  const { isMobile, setOpenMobile } = useSidebar();
+  const close = () => setOpenMobile(false);
+  const activeWorkspace = workspaces.find((item) =>
+    item.boards.some((board) => pathname === `/boards/${board.id}`),
+  );
   return (
-    <div className="flex h-full flex-col bg-sidebar px-5 py-7 text-sidebar-foreground">
-      <Link
-        href="/"
-        onClick={close}
-        aria-label="Yuzu overview"
-        className="mb-10 flex w-fit items-center gap-3 rounded-lg"
-      >
-        <Image src="/logo.svg" alt="" width={36} height={36} priority />
-        <span className="text-2xl font-semibold tracking-tight">
-          yuzu<span className="text-brand-highlight">.</span>
-        </span>
-      </Link>
-      <div className="mb-7 rounded-xl border border-sidebar-foreground/15 bg-sidebar-foreground/8 px-3 py-3">
-        <p className="text-[10px] font-semibold tracking-[0.14em] text-sidebar-foreground/65 uppercase">
-          Workspace
-        </p>
-        <p className="mt-1 truncate text-sm font-medium">{workspaceName}</p>
-      </div>
-      <p className="mb-3 px-3 text-[10px] font-semibold tracking-[0.14em] text-sidebar-foreground/65 uppercase">
-        Make work flow
-      </p>
-      <nav aria-label="Main navigation" className="space-y-1.5">
-        {navigation.map(({ href, label, icon: Icon }) => (
+    <Sidebar collapsible="icon" className="border-sidebar-border">
+      <SidebarHeader className="gap-5 p-4 group-data-[collapsible=icon]:p-2">
+        <div className="flex items-center justify-between">
           <Link
-            key={href}
-            href={href}
+            href="/"
             onClick={close}
-            aria-current={
-              pathname === href ||
-              (href !== "/" && pathname.startsWith(`${href}/`))
-                ? "page"
-                : undefined
-            }
-            className={cn(
-              "flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium transition-colors hover:bg-sidebar-foreground/10 focus-visible:outline-sidebar-foreground",
-              pathname === href ||
-                (href !== "/" && pathname.startsWith(`${href}/`))
-                ? "bg-sidebar-foreground/15 text-sidebar-foreground shadow-sm hover:bg-sidebar-foreground/20"
-                : "text-sidebar-foreground/85",
-            )}
+            aria-label="Yuzu overview"
+            className="flex min-w-0 items-center gap-3 rounded-lg"
           >
-            <Icon size={18} strokeWidth={1.8} />
-            {label}
+            <Image
+              src="/logo.svg"
+              alt=""
+              width={32}
+              height={32}
+              priority
+              className="shrink-0"
+            />
+            <span className="text-2xl font-semibold tracking-tight group-data-[collapsible=icon]:hidden">
+              yuzu.
+            </span>
           </Link>
-        ))}
-      </nav>
-      <div className="mt-auto pt-10">
-        <div className="rounded-xl bg-sidebar-foreground/8 p-4">
-          <Sprout size={21} className="mb-3 text-sidebar-foreground/80" />
+          {isMobile && (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Close navigation"
+              onClick={close}
+            >
+              <X size={18} />
+            </Button>
+          )}
+        </div>
+        <div className="workspace-identity group-data-[collapsible=icon]:hidden">
+          <span className="workspace-identity-icon">
+            <FolderOpen size={18} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium">{installationName}</p>
+            <p className="mt-0.5 truncate text-xs text-sidebar-foreground/70">
+              {activeWorkspace?.name ?? workspaceName}
+            </p>
+          </div>
+        </div>
+      </SidebarHeader>
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/65">
+            Your workspace
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <nav aria-label="Main navigation">
+              <SidebarMenu>
+                {navigation.map(({ href, label, icon: Icon }) => {
+                  const active =
+                    pathname === href ||
+                    (href !== "/" && pathname.startsWith(`${href}/`));
+                  return (
+                    <SidebarMenuItem key={href}>
+                      <SidebarMenuButton
+                        asChild
+                        isActive={active}
+                        tooltip={label}
+                        className="h-9"
+                      >
+                        <Link
+                          href={href}
+                          onClick={close}
+                          aria-current={active ? "page" : undefined}
+                        >
+                          <Icon size={18} />
+                          <span>{label}</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </nav>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/65">
+            Workspaces
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <nav aria-label="Workspace boards">
+              <SidebarMenu>
+                {workspaces.map((workspace) => (
+                  <SidebarMenuItem key={workspace.id}>
+                    <div className="workspace-nav-label group-data-[collapsible=icon]:hidden">
+                      <FolderOpen size={14} />
+                      {workspace.name}
+                    </div>
+                    {workspace.boards.map((board) => (
+                      <SidebarMenuButton
+                        key={board.id}
+                        asChild
+                        tooltip={board.name}
+                        isActive={pathname === `/boards/${board.id}`}
+                        className="h-9"
+                      >
+                        <Link
+                          href={`/boards/${board.id}`}
+                          onClick={close}
+                          aria-current={
+                            pathname === `/boards/${board.id}`
+                              ? "page"
+                              : undefined
+                          }
+                        >
+                          <Columns3 size={16} />
+                          <span>{board.name}</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    ))}
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </nav>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        {(role === "OWNER" || role === "ADMIN") && (
+          <SidebarGroup>
+            <SidebarGroupLabel className="text-sidebar-foreground/65">
+              Administration
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    tooltip="Appearance"
+                    isActive={pathname === "/settings/appearance"}
+                  >
+                    <Link href="/settings/appearance" onClick={close}>
+                      <Palette size={16} />
+                      <span>Appearance</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+      </SidebarContent>
+      <SidebarFooter className="p-4 group-data-[collapsible=icon]:p-2">
+        <div className="rounded-xl bg-sidebar-accent p-4 group-data-[collapsible=icon]:hidden">
+          <Sprout size={20} className="mb-3 text-sidebar-foreground/80" />
           <p className="text-sm font-medium">Room to grow.</p>
-          <p className="mt-1.5 text-xs leading-relaxed text-sidebar-foreground/75">
+          <p className="mt-2 text-xs leading-relaxed text-sidebar-foreground/75">
             A workspace shaped around your team, one project at a time.
           </p>
         </div>
-        <div className="mt-5 flex items-center gap-2 px-1 text-xs text-sidebar-foreground/65">
-          <CircleHelp size={15} />
+        <p className="mt-2 truncate text-xs text-sidebar-foreground/65 group-data-[collapsible=icon]:hidden">
           {installationName}
-        </div>
-      </div>
-    </div>
+        </p>
+      </SidebarFooter>
+      <SidebarRail />
+    </Sidebar>
   );
 }
-
 export function AppShell({
   children,
   installationName,
   workspaceName,
   ownerName,
+  sidebarDefaultOpen = true,
+  workspaces = [],
+  role,
 }: {
   children: React.ReactNode;
   installationName?: string;
   workspaceName?: string;
   ownerName?: string;
+  sidebarDefaultOpen?: boolean;
+  workspaces?: NavigationWorkspace[];
+  role?: string;
 }) {
   const pathname = usePathname();
-  const mobileOpen = useUiStore((state) => state.mobileNavigationOpen);
-  const setMobileOpen = useUiStore((state) => state.setMobileNavigationOpen);
   const title =
     navigation.find(
       (item) =>
@@ -128,81 +248,66 @@ export function AppShell({
         (item.href !== "/" && pathname.startsWith(`${item.href}/`)),
     )?.label ?? "Workspace";
   return (
-    <div className="min-h-svh yuzu-workspace">
+    <SidebarProvider
+      defaultOpen={sidebarDefaultOpen}
+      className="yuzu-workspace"
+      style={
+        {
+          "--sidebar-width": "16rem",
+          "--sidebar-width-icon": "3.5rem",
+        } as React.CSSProperties
+      }
+    >
       <a
         href="#main-content"
-        className="sr-only z-50 rounded bg-sidebar-foreground p-3 text-primary focus:not-sr-only focus:fixed focus:top-3 focus:left-3"
+        className="sr-only z-50 rounded bg-card p-3 text-primary focus:not-sr-only focus:fixed focus:top-3 focus:left-3"
       >
         Skip to content
       </a>
-      <aside className="fixed inset-y-0 left-0 hidden w-56 lg:block">
-        <Sidebar
-          installationName={installationName}
-          workspaceName={workspaceName}
-        />
-      </aside>
-      <div className="lg:pl-56">
-        <header className="yuzu-topbar sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b bg-card px-5 sm:px-9 lg:px-8">
+      <WorkspaceSidebar
+        installationName={installationName}
+        workspaceName={workspaceName}
+        workspaces={workspaces}
+        role={role}
+      />
+      <SidebarInset className="min-w-0 bg-transparent">
+        <header className="yuzu-topbar sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b px-4 sm:px-8">
           <div className="flex min-w-0 items-center gap-3">
-            <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-              <SheetTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="lg:hidden"
-                  aria-label="Open navigation"
-                >
-                  <Menu size={20} />
-                </Button>
-              </SheetTrigger>
-              <SheetContent
-                side="left"
-                className="w-72 border-0 p-0 text-sidebar-foreground"
-                showCloseButton={true}
-              >
-                <SheetTitle className="sr-only">
-                  Workspace navigation
-                </SheetTitle>
-                <SheetDescription className="sr-only">
-                  Navigate between workspace overview, boards, approvals, and
-                  settings.
-                </SheetDescription>
-                <Sidebar
-                  close={() => setMobileOpen(false)}
-                  installationName={installationName}
-                  workspaceName={workspaceName}
-                />
-              </SheetContent>
-            </Sheet>
-            <span className="hidden text-sm text-muted-foreground sm:inline">
-              Workspace
-            </span>
-            <ChevronRight
-              size={14}
-              className="hidden text-muted-foreground/60 sm:block"
-            />
-            <span className="truncate text-sm font-medium">{title}</span>
+            <SidebarTrigger aria-label="Toggle navigation" />
+            <WorkspaceSearch workspaces={workspaces} />
+            <span className="sr-only">{title}</span>
           </div>
-          <div className="flex items-center gap-2 sm:gap-4">
-            <SignOut />
+          <div className="flex shrink-0 items-center gap-2 sm:gap-4">
             <ModeSwitcher />
-            <div className="hidden h-8 w-px bg-border sm:block" />
+            <SignOut />
             <div
               aria-label="Yuzu workspace"
-              className="flex size-9 items-center justify-center rounded-full bg-brand-cream text-sm font-semibold text-primary"
+              className="hidden size-9 items-center justify-center rounded-full bg-secondary text-sm font-semibold text-primary sm:flex"
             >
               {ownerName?.charAt(0).toUpperCase() ?? "Y"}
+            </div>
+            <div className="hidden min-w-0 lg:block">
+              <p className="max-w-40 truncate text-xs font-medium">
+                {ownerName}
+              </p>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                {role === "OWNER"
+                  ? "Workspace owner"
+                  : role === "ADMIN"
+                    ? "Administrator"
+                    : "Team member"}
+              </p>
             </div>
           </div>
         </header>
         <main
           id="main-content"
           tabIndex={-1}
-          className="mx-auto max-w-[1440px] px-5 py-8 outline-none sm:px-9 sm:py-10 lg:px-8"
+          className="workspace-content mx-auto w-full max-w-[1600px] px-5 py-6 outline-none sm:px-7"
         >
           {children}
         </main>
-      </div>
-    </div>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }

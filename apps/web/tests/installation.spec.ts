@@ -41,6 +41,7 @@ test.beforeEach(async () => {
   await db.accessEvent.deleteMany();
   await db.invitation.deleteMany();
   await db.setupClaim.deleteMany();
+  await db.task.deleteMany();
   await db.board.deleteMany();
   await db.workspaceMember.deleteMany();
   await db.workspace.deleteMany();
@@ -1452,13 +1453,13 @@ test("global themes persist, drafts stay scoped, modes remain personal, and prev
     page.getByRole("status").filter({ hasText: "revision 1" }),
   ).toBeVisible();
   expect(await rootPrimary()).toBe(presets[1].light.primary);
-  await page.getByLabel("Color mode", { exact: true }).selectOption("dark");
+  await page.getByRole("switch", { name: "Dark mode" }).click();
+  await expect(page.getByRole("switch", { name: "Dark mode" })).toBeChecked();
+  await expect(page.getByRole("switch", { name: "Dark mode" })).toBeEnabled();
   await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
   expect(await rootPrimary()).toBe(presets[1].dark.primary);
   await page.reload();
-  await expect(page.getByLabel("Color mode", { exact: true })).toHaveValue(
-    "dark",
-  );
+  await expect(page.getByRole("switch", { name: "Dark mode" })).toBeChecked();
   expect(await rootPrimary()).toBe(presets[1].dark.primary);
   await page
     .getByRole("button", { name: "Restore previous", exact: true })
@@ -1494,12 +1495,20 @@ test("global themes persist, drafts stay scoped, modes remain personal, and prev
     await visitor.request.get("/api/v1/appearance/published")
   ).json();
   expect(Object.keys(publicTheme.data).sort()).toEqual(["revision", "theme"]);
-  await visitor.getByLabel("Color mode").selectOption("system");
+  await expect(
+    visitor.getByRole("button", { name: "Follow system theme" }),
+  ).toHaveAttribute("aria-pressed", "true");
   await visitor.emulateMedia({ colorScheme: "dark" });
   await expect(visitor.locator("html")).toHaveAttribute("data-mode", "dark");
   await visitor.emulateMedia({ colorScheme: "light" });
   await expect(visitor.locator("html")).toHaveAttribute("data-mode", "light");
-  await visitor.getByLabel("Color mode").selectOption("dark");
+  await visitor.getByRole("switch", { name: "Dark mode" }).click();
+  await expect(
+    visitor.getByRole("switch", { name: "Dark mode" }),
+  ).toBeChecked();
+  await expect(
+    visitor.getByRole("switch", { name: "Dark mode" }),
+  ).toBeEnabled();
   await visitor.screenshot({
     path: "../../artifacts/phase-0.5/applied-sign-in-dark.png",
     fullPage: true,
@@ -1529,7 +1538,7 @@ test("global themes persist, drafts stay scoped, modes remain personal, and prev
   });
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page).toHaveURL(/\/sign-in$/);
-  await expect(page.getByLabel("Color mode")).toHaveValue("dark");
+  await expect(page.getByRole("switch", { name: "Dark mode" })).toBeChecked();
   await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
 });
 
@@ -1640,4 +1649,1722 @@ test("appearance writes reject members, malformed themes, cross-origin requests 
   expect(computed.shadow).toBe("none");
   expect(computed.heading).toContain("Fraunces");
   expect(computed.body).toContain("Manrope");
+});
+
+test("shadcn sidebar collapses and theme switch animates with accessible fallbacks", async ({
+  page,
+}) => {
+  await readyTeam(page);
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: "Good work starts here." }),
+  ).toBeVisible();
+  const sidebar = page.locator("[data-collapsible]");
+  await expect(sidebar).toHaveAttribute("data-state", "expanded");
+  await page
+    .getByRole("button", { name: "Toggle navigation", exact: true })
+    .click();
+  await expect(sidebar).toHaveAttribute("data-state", "collapsed");
+  await page.reload();
+  await expect(sidebar).toHaveAttribute("data-state", "collapsed");
+  await page
+    .getByRole("button", { name: "Toggle navigation", exact: true })
+    .click();
+  await expect(sidebar).toHaveAttribute("data-state", "expanded");
+  await page.keyboard.press("Control+b");
+  await expect(sidebar).toHaveAttribute("data-state", "collapsed");
+  await page.keyboard.press("Control+b");
+  await expect(sidebar).toHaveAttribute("data-state", "expanded");
+  await page.emulateMedia({
+    reducedMotion: "no-preference",
+    colorScheme: "light",
+  });
+  await page.evaluate(() => {
+    const original = document.startViewTransition.bind(document);
+    Object.assign(window, { themeTransitionCount: 0 });
+    document.startViewTransition = ((...args: Parameters<typeof original>) => {
+      Object.assign(window, {
+        themeTransitionCount:
+          (window as unknown as { themeTransitionCount: number })
+            .themeTransitionCount + 1,
+      });
+      return original(...args);
+    }) as typeof document.startViewTransition;
+  });
+  const toggle = page.getByRole("switch", { name: "Dark mode" });
+  await toggle.focus();
+  await page.keyboard.press("Space");
+  await expect(toggle).toBeChecked();
+  await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { themeTransitionCount: number })
+            .themeTransitionCount,
+      ),
+    )
+    .toBe(1);
+  await expect(toggle).toBeEnabled();
+  await expect(page.locator("html")).not.toHaveClass(/theme-ripple/);
+  await page.screenshot({
+    path: "../../artifacts/phase-0.5/sidebar-switch-dark.png",
+    fullPage: true,
+  });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await toggle.uncheck();
+  await expect(page.locator("html")).toHaveAttribute("data-mode", "light");
+  expect(
+    await page.evaluate(
+      () =>
+        (window as unknown as { themeTransitionCount: number })
+          .themeTransitionCount,
+    ),
+  ).toBe(1);
+  await page.getByRole("button", { name: "Follow system theme" }).click();
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(toggle).toBeChecked();
+  await page.evaluate(() => {
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: undefined,
+    });
+  });
+  await toggle.uncheck();
+  await expect(page.locator("html")).toHaveAttribute("data-mode", "light");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page
+    .getByRole("button", { name: "Toggle navigation", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page
+    .getByRole("dialog")
+    .getByRole("link", { name: "Boards", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/boards$/);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "../../artifacts/phase-0.5/sidebar-switch-mobile.png",
+    fullPage: true,
+  });
+});
+
+test("reference workspace search, board lanes and details use saved structure", async ({
+  page,
+}) => {
+  const { board } = await readyTeam(page);
+  const db = getDatabase();
+  await db.boardColumn.createMany({
+    data: [
+      {
+        boardId: board.id,
+        name: "Task",
+        key: "name",
+        type: "TEXT",
+        position: 0,
+      },
+      {
+        boardId: board.id,
+        name: "Status",
+        key: "status",
+        type: "STATUS",
+        position: 1,
+        config: {
+          options: [
+            { label: "To do" },
+            { label: "In progress" },
+            { label: "Done" },
+          ],
+        },
+      },
+    ],
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Search workspace" }).click();
+  await page.getByLabel("Search boards", { exact: true }).fill("Team project");
+  await expect(
+    page.getByRole("dialog").getByText("Restricted project", { exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByRole("dialog")
+    .getByRole("link", { name: /Team project/ })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`/boards/${board.id}$`));
+  await expect(
+    page.getByRole("heading", { name: "Team project", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".board-lane")).toHaveCount(3);
+  await page.getByRole("button", { name: "Filter", exact: true }).click();
+  await page.getByLabel("Filter board status").selectOption("In progress");
+  await expect(page.locator(".board-lane")).toHaveCount(1);
+  await page.getByRole("button", { name: "Clear filter" }).click();
+  await expect(page.locator(".board-lane")).toHaveCount(3);
+  await page
+    .getByRole("button", { name: "Board details", exact: true })
+    .click();
+  const panel = page.getByRole("dialog");
+  await expect(
+    panel.getByRole("heading", { name: "Team project", exact: true }),
+  ).toBeVisible();
+  await expect(
+    panel
+      .locator(".board-details-meta")
+      .getByText("Team Owner", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    panel.locator(".board-field-list").getByText("Status", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: "../../artifacts/phase-0.5/reference-board-detail.png",
+    fullPage: true,
+  });
+  await panel.getByRole("button", { name: "Back to board" }).click();
+  await page.getByRole("switch", { name: "Dark mode" }).click();
+  await expect(page.getByRole("switch", { name: "Dark mode" })).toBeChecked();
+  await expect(page.getByRole("switch", { name: "Dark mode" })).toBeEnabled();
+  await page.screenshot({
+    path: "../../artifacts/phase-0.5/reference-board-dark.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page
+    .getByRole("button", { name: "Board details", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.screenshot({
+    path: "../../artifacts/phase-0.5/reference-board-mobile.png",
+    fullPage: true,
+  });
+});
+
+const postBoard = (page: Page, action: string, data: unknown) =>
+  page.request.post(`/api/v1/boards/${action}`, {
+    headers: { origin: "http://127.0.0.1:3100" },
+    data,
+  });
+test("board engine creates typed tasks, shares records between views, and restores archives", async ({
+  page,
+}) => {
+  const { workspace } = await readyTeam(page);
+  await page.goto("/boards");
+  await page.getByRole("button", { name: "Create board", exact: true }).click();
+  await page.getByLabel("Board name", { exact: true }).fill("Release planning");
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Create board", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Release planning", exact: true }),
+  ).toBeVisible();
+  const board = await getDatabase().board.findFirstOrThrow({
+    where: { name: "Release planning", workspaceId: workspace.id },
+  });
+  const numberField = await postBoard(page, "field", {
+    boardId: board.id,
+    name: "Estimate",
+    type: "NUMBER",
+  });
+  expect(numberField.status()).toBe(200);
+  const checkboxField = await postBoard(page, "field", {
+    boardId: board.id,
+    name: "Reviewed",
+    type: "CHECKBOX",
+  });
+  expect(checkboxField.status()).toBe(200);
+  await page.reload();
+  await page.getByRole("button", { name: "Add task", exact: true }).click();
+  await page
+    .getByLabel("Task name", { exact: true })
+    .fill("Ship the board engine");
+  await page
+    .getByLabel("Task description", { exact: true })
+    .fill("One task shared by table and Kanban.");
+  await page.getByLabel("Task priority", { exact: true }).selectOption("HIGH");
+  await page.getByLabel("Task due date", { exact: true }).fill("2026-10-25");
+  await page.getByLabel("Estimate", { exact: true }).fill("0");
+  await page.getByLabel("Reviewed", { exact: true }).uncheck();
+  await page.getByRole("button", { name: "Create task", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Ship the board engine", exact: true }),
+  ).toBeVisible();
+  const doneLane = page
+    .locator(".board-lane")
+    .filter({ has: page.getByRole("heading", { name: "Done", exact: true }) });
+  await page
+    .locator(".task-card")
+    .filter({
+      has: page.getByRole("button", {
+        name: "Ship the board engine",
+        exact: true,
+      }),
+    })
+    .getByRole("button", { name: "Drag Ship the board engine", exact: true })
+    .dragTo(doneLane);
+  await expect(
+    doneLane.getByRole("button", {
+      name: "Ship the board engine",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page
+    .getByLabel("Move Ship the board engine", { exact: true })
+    .selectOption("in_progress");
+  await expect(
+    page
+      .locator(".board-lane")
+      .filter({
+        has: page.getByRole("heading", { name: "In progress", exact: true }),
+      })
+      .getByRole("button", { name: "Ship the board engine", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Table", exact: true }).click();
+  await expect(page.getByLabel("Status for Ship the board engine")).toHaveValue(
+    "in_progress",
+  );
+  await page
+    .getByLabel("Priority for Ship the board engine")
+    .selectOption("URGENT");
+  await expect(
+    page.getByLabel("Priority for Ship the board engine"),
+  ).toHaveValue("URGENT");
+  // Optimistic values are visible before persistence; wait for the saving controls to unlock.
+  await expect(
+    page.getByLabel("Priority for Ship the board engine"),
+  ).toBeEnabled();
+  const stored = await getDatabase().task.findFirstOrThrow({
+    where: { boardId: board.id },
+    include: { values: { include: { field: true } } },
+  });
+  expect(
+    stored.values.find((value) => value.field.name === "Estimate")?.numberValue,
+  ).toBe(0);
+  // Explicit false is preserved rather than collapsed into an empty value.
+  const reviewed = await getDatabase().boardColumn.findFirstOrThrow({
+    where: { boardId: board.id, name: "Reviewed" },
+  });
+  const current = await getDatabase().task.findUniqueOrThrow({
+    where: { id: stored.id },
+  });
+  expect(
+    (
+      await postBoard(page, "update", {
+        taskId: stored.id,
+        revision: current.revision,
+        changes: { fieldValues: { [reviewed.id]: false } },
+      })
+    ).status(),
+  ).toBe(200);
+  await page.reload();
+  await page
+    .getByRole("button", { name: "Ship the board engine", exact: true })
+    .click();
+  await expect(page.getByLabel("Task description")).toHaveValue(
+    "One task shared by table and Kanban.",
+  );
+  await expect(page.getByLabel("Task priority")).toHaveValue("URGENT");
+  await expect(page.getByLabel("Reviewed", { exact: true })).not.toBeChecked();
+  await page.screenshot({
+    path: "../../artifacts/phase-2/task-details.png",
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "Archive task", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Ship the board engine", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Archived", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Ship the board engine", exact: true })
+    .click();
+  await expect(page.getByLabel("Task name")).toBeDisabled();
+  await page.getByRole("button", { name: "Restore task", exact: true }).click();
+  await page.getByRole("button", { name: "Active tasks", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Ship the board engine", exact: true }),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "../../artifacts/phase-2/board-mobile.png",
+    fullPage: true,
+  });
+});
+
+test("task APIs enforce creator/assignee/editor rights, retries, scope and revision conflicts", async ({
+  page,
+  browser,
+  request,
+}) => {
+  const { workspace, board, otherBoard } = await readyTeam(page);
+  const db = getDatabase();
+  const memberId = createRecordId();
+  const member = await db.user.create({
+    data: {
+      id: memberId,
+      name: "Task Member",
+      email: "tasks@example.test",
+      emailVerified: true,
+      accounts: {
+        create: {
+          accountId: memberId,
+          providerId: "credential",
+          password: await (
+            await import("better-auth/crypto")
+          ).hashPassword("task-member-password-123"),
+        },
+      },
+    },
+  });
+  await db.workspaceMember.create({
+    data: { userId: member.id, workspaceId: workspace.id },
+  });
+  const context = await browser.newContext();
+  const memberPage = await context.newPage();
+  try {
+    expect(
+      (
+        await memberPage.request.post("/api/v1/session/sign-in", {
+          headers: { origin: "http://127.0.0.1:3100" },
+          data: { email: member.email, password: "task-member-password-123" },
+        })
+      ).status(),
+    ).toBe(200);
+    const payload = {
+      boardId: board.id,
+      createKey: crypto.randomUUID(),
+      name: "Owner-only task",
+    };
+    const created = await postBoard(page, "create-task", payload);
+    expect(created.status()).toBe(200);
+    const taskId = (await created.json()).data.taskId;
+    const retries = await Promise.all([
+      postBoard(page, "create-task", payload),
+      postBoard(page, "create-task", payload),
+    ]);
+    for (const response of retries) expect(response.status()).toBe(200);
+    expect(await db.task.count({ where: { id: taskId } })).toBe(1);
+    expect(
+      (
+        await postBoard(page, "create-task", {
+          ...payload,
+          name: "Changed retry",
+        })
+      ).status(),
+    ).toBe(409);
+    expect(
+      (await request.get(`/api/v1/boards/state?boardId=${board.id}`)).status(),
+    ).toBe(401);
+    expect(
+      (
+        await memberPage.request.get(
+          `/api/v1/boards/state?boardId=${otherBoard.id}`,
+        )
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await postBoard(memberPage, "update", {
+          taskId,
+          revision: 1,
+          changes: { name: "Unauthorized" },
+        })
+      ).status(),
+    ).toBe(403);
+    expect(
+      (
+        await postBoard(memberPage, "field", {
+          boardId: board.id,
+          name: "Forbidden field",
+          type: "TEXT",
+        })
+      ).status(),
+    ).toBe(403);
+    expect(
+      (
+        await postBoard(memberPage, "editor", {
+          taskId,
+          revision: 1,
+          userId: member.id,
+          grant: true,
+        })
+      ).status(),
+    ).toBe(403);
+    expect(
+      (
+        await postBoard(page, "update", {
+          taskId,
+          revision: 1,
+          changes: { assigneeIds: [member.id] },
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postBoard(memberPage, "update", {
+          taskId,
+          revision: 2,
+          changes: { description: "Assigned member edited this." },
+        })
+      ).status(),
+    ).toBe(200);
+    const race = await Promise.all([
+      postBoard(page, "update", {
+        taskId,
+        revision: 3,
+        changes: { name: "First edit" },
+      }),
+      postBoard(memberPage, "update", {
+        taskId,
+        revision: 3,
+        changes: { name: "Second edit" },
+      }),
+    ]);
+    expect(race.map((response) => response.status()).sort()).toEqual([
+      200, 409,
+    ]);
+    expect(
+      (
+        await postBoard(page, "update", {
+          taskId,
+          revision: 4,
+          changes: { assigneeIds: [] },
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postBoard(memberPage, "update", {
+          taskId,
+          revision: 5,
+          changes: { name: "No longer assigned" },
+        })
+      ).status(),
+    ).toBe(403);
+    expect(
+      (
+        await postBoard(page, "editor", {
+          taskId,
+          revision: 5,
+          userId: member.id,
+          grant: true,
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postBoard(memberPage, "update", {
+          taskId,
+          revision: 6,
+          changes: { name: "Explicit editor" },
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postBoard(page, "editor", {
+          taskId,
+          revision: 7,
+          userId: member.id,
+          grant: false,
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postBoard(memberPage, "update", {
+          taskId,
+          revision: 8,
+          changes: { name: "Revoked editor" },
+        })
+      ).status(),
+    ).toBe(403);
+    const customPeople = await postBoard(page, "field", {
+      boardId: board.id,
+      name: "Reviewers",
+      type: "PEOPLE",
+    });
+    const peopleField = (await customPeople.json()).data.id;
+    expect(
+      (
+        await postBoard(page, "update", {
+          taskId,
+          revision: 8,
+          changes: { fieldValues: { [peopleField]: [member.id] } },
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postBoard(memberPage, "update", {
+          taskId,
+          revision: 9,
+          changes: { name: "Custom people cannot edit" },
+        })
+      ).status(),
+    ).toBe(403);
+    expect(
+      (
+        await postBoard(memberPage, "create-task", {
+          boardId: board.id,
+          createKey: crypto.randomUUID(),
+          name: "Member's own task",
+        })
+      ).status(),
+    ).toBe(200);
+    const outsider = await db.user.create({
+      data: { name: "Outsider", email: "outsider@tasks.test" },
+    });
+    expect(
+      (
+        await postBoard(page, "update", {
+          taskId,
+          revision: 9,
+          changes: { assigneeIds: [outsider.id] },
+        })
+      ).status(),
+    ).toBe(422);
+    expect(
+      (
+        await postBoard(page, "update", {
+          taskId,
+          revision: 9,
+          changes: { statusId: "invented-status" },
+        })
+      ).status(),
+    ).toBe(422);
+    expect(
+      (
+        await postBoard(page, "update", {
+          taskId,
+          revision: 9,
+          changes: { fieldValues: { [crypto.randomUUID()]: "unknown" } },
+        })
+      ).status(),
+    ).toBe(422);
+    expect(
+      (
+        await postBoard(page, "update", {
+          taskId,
+          revision: 9,
+          changes: { dueDate: "2026-02-30" },
+        })
+      ).status(),
+    ).toBe(422);
+    const number = await postBoard(page, "field", {
+      boardId: board.id,
+      name: "Cost",
+      type: "NUMBER",
+    });
+    const numberId = (await number.json()).data.id;
+    const costField = (
+      await (
+        await page.request.get(`/api/v1/boards/state?boardId=${board.id}`)
+      ).json()
+    ).data.fields.find((field: { id: string }) => field.id === numberId);
+    expect(
+      (
+        await postBoard(memberPage, "remove-field", {
+          boardId: board.id,
+          fieldId: numberId,
+          version: costField.version,
+        })
+      ).status(),
+    ).toBe(403);
+    expect(
+      (
+        await postBoard(page, "update", {
+          taskId,
+          revision: 9,
+          changes: { fieldValues: { [numberId]: "bad-number" } },
+        })
+      ).status(),
+    ).toBe(422);
+    expect(
+      (await db.task.findUniqueOrThrow({ where: { id: taskId } })).revision,
+    ).toBe(9);
+    const badOrigin = await page.request.post("/api/v1/boards/update", {
+      headers: { origin: "https://elsewhere.test" },
+      data: { taskId, revision: 9, changes: { name: "Bad origin" } },
+    });
+    expect(badOrigin.status()).toBe(403);
+    await db.workspaceMember.delete({
+      where: {
+        workspaceId_userId: { workspaceId: workspace.id, userId: member.id },
+      },
+    });
+    expect(
+      (
+        await memberPage.request.get(`/api/v1/boards/state?boardId=${board.id}`)
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await postBoard(memberPage, "create-task", {
+          boardId: board.id,
+          createKey: crypto.randomUUID(),
+          name: "Revoked workspace",
+        })
+      ).status(),
+    ).toBe(404);
+    await db.installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: true },
+    });
+    expect(
+      (
+        await postBoard(page, "update", {
+          taskId,
+          revision: 9,
+          changes: { name: "Maintenance" },
+        })
+      ).status(),
+    ).toBe(503);
+    expect(await db.taskActivity.count({ where: { taskId } })).toBe(9);
+  } finally {
+    await context.close();
+  }
+});
+
+test("field configuration preserves option references and rejects stale board structure edits", async ({
+  page,
+}) => {
+  const { workspace } = await readyTeam(page);
+  const made = await postBoard(page, "create-board", {
+    workspaceId: workspace.id,
+    name: "Options test",
+  });
+  const boardId = (await made.json()).data.id;
+  const created = await postBoard(page, "create-task", {
+    boardId,
+    createKey: crypto.randomUUID(),
+    name: "Existing option reference",
+  });
+  expect(created.status()).toBe(200);
+  const before = (
+    await (
+      await page.request.get(`/api/v1/boards/state?boardId=${boardId}`)
+    ).json()
+  ).data;
+  const status = before.fields.find(
+    (field: { key: string }) => field.key === "status",
+  );
+  expect(
+    (
+      await postBoard(page, "configure-field", {
+        boardId,
+        fieldId: status.id,
+        version: status.version,
+        name: "Status",
+        options: status.options.filter(
+          (option: { id: string }) => option.id !== "todo",
+        ),
+      })
+    ).status(),
+  ).toBe(409);
+  const renamed = status.options.map((option: { id: string; label: string }) =>
+    option.id === "todo" ? { ...option, label: "Inbox" } : option,
+  );
+  expect(
+    (
+      await postBoard(page, "configure-field", {
+        boardId,
+        fieldId: status.id,
+        version: status.version,
+        name: "Workflow",
+        options: renamed,
+      })
+    ).status(),
+  ).toBe(200);
+  expect(
+    (
+      await postBoard(page, "configure-field", {
+        boardId,
+        fieldId: status.id,
+        version: status.version,
+        name: "Stale rename",
+        options: renamed,
+      })
+    ).status(),
+  ).toBe(409);
+  const after = (
+    await (
+      await page.request.get(`/api/v1/boards/state?boardId=${boardId}`)
+    ).json()
+  ).data;
+  expect(after.tasks[0].statusId).toBe("todo");
+  expect(
+    after.fields.find((field: { id: string }) => field.id === status.id)
+      .options[0].label,
+  ).toBe("Inbox");
+});
+
+test("delegated board managers stay scoped, cannot appoint managers, and lose grants immediately", async ({
+  page,
+  browser,
+}) => {
+  const { workspace, board, otherBoard } = await readyTeam(page);
+  const db = getDatabase();
+  const memberId = createRecordId();
+  const member = await db.user.create({
+    data: {
+      id: memberId,
+      name: "Board Manager",
+      email: "manager@example.test",
+      emailVerified: true,
+      accounts: {
+        create: {
+          accountId: memberId,
+          providerId: "credential",
+          password: await (
+            await import("better-auth/crypto")
+          ).hashPassword("manager-password-123"),
+        },
+      },
+    },
+  });
+  await db.workspaceMember.create({
+    data: { workspaceId: workspace.id, userId: member.id },
+  });
+  const context = await browser.newContext();
+  const managerPage = await context.newPage();
+  try {
+    expect(
+      (
+        await managerPage.request.post("/api/v1/session/sign-in", {
+          headers: { origin: "http://127.0.0.1:3100" },
+          data: { email: member.email, password: "manager-password-123" },
+        })
+      ).status(),
+    ).toBe(200);
+    const made = await postBoard(page, "create-task", {
+      boardId: board.id,
+      createKey: crypto.randomUUID(),
+      name: "Managed task",
+    });
+    const taskId = (await made.json()).data.taskId;
+    expect(
+      (
+        await postBoard(managerPage, "update", {
+          taskId,
+          revision: 1,
+          changes: { name: "Denied" },
+        })
+      ).status(),
+    ).toBe(403);
+    expect(
+      (
+        await postBoard(page, "manager", {
+          boardId: board.id,
+          userId: member.id,
+          grant: true,
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postBoard(managerPage, "update", {
+          taskId,
+          revision: 1,
+          changes: { name: "Manager can edit" },
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postBoard(managerPage, "field", {
+          boardId: board.id,
+          name: "Managed field",
+          type: "TEXT",
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postBoard(managerPage, "field", {
+          boardId: otherBoard.id,
+          name: "Other workspace",
+          type: "TEXT",
+        })
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await postBoard(managerPage, "manager", {
+          boardId: board.id,
+          userId: member.id,
+          grant: false,
+        })
+      ).status(),
+    ).toBe(403);
+    expect(
+      (
+        await postBoard(managerPage, "create-board", {
+          workspaceId: workspace.id,
+          name: "Created by a manager",
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postBoard(page, "manager", {
+          boardId: board.id,
+          userId: member.id,
+          grant: false,
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postBoard(managerPage, "update", {
+          taskId,
+          revision: 2,
+          changes: { name: "Grant revoked" },
+        })
+      ).status(),
+    ).toBe(403);
+    expect(await db.boardEvent.count({ where: { boardId: board.id } })).toBe(2);
+    await db.workspaceMember.delete({
+      where: {
+        workspaceId_userId: { workspaceId: workspace.id, userId: member.id },
+      },
+    });
+    expect(
+      (
+        await postBoard(managerPage, "create-board", {
+          workspaceId: workspace.id,
+          name: "Revoked membership",
+        })
+      ).status(),
+    ).toBe(404);
+  } finally {
+    await context.close();
+  }
+});
+
+test("long custom text can be stored alongside a full task description", async ({
+  page,
+}) => {
+  const { board } = await readyTeam(page);
+  const field = await postBoard(page, "field", {
+    boardId: board.id,
+    name: "Detailed notes",
+    type: "LONG_TEXT",
+  });
+  const fieldId = (await field.json()).data.id;
+  const notes = (await import("node:crypto"))
+    .randomBytes(6000)
+    .toString("base64");
+  const response = await postBoard(page, "create-task", {
+    boardId: board.id,
+    createKey: crypto.randomUUID(),
+    name: "Long text storage",
+    description: "d".repeat(10000),
+    fieldValues: { [fieldId]: notes },
+  });
+  expect(response.status()).toBe(200);
+  const task = await getDatabase().task.findFirstOrThrow({
+    where: { name: "Long text storage" },
+    include: { values: true },
+  });
+  expect(task.description.length).toBe(10000);
+  expect(task.values[0].textValue).toBe(notes);
+});
+
+test("board moves immediately, rolls back failed saves, and exposes option order, fields and groups", async ({
+  page,
+}) => {
+  const { workspace } = await readyTeam(page);
+  const made = await postBoard(page, "create-board", {
+    workspaceId: workspace.id,
+    name: "Interactive board",
+  });
+  const boardId = (await made.json()).data.id;
+  const before = (
+    await (
+      await page.request.get(`/api/v1/boards/state?boardId=${boardId}`)
+    ).json()
+  ).data;
+  const created = await postBoard(page, "create-task", {
+    boardId,
+    createKey: crypto.randomUUID(),
+    name: "Move without refreshing",
+    assigneeIds: [before.currentUserId],
+  });
+  expect(created.status()).toBe(200);
+  await page.goto(`/boards/${boardId}`);
+  const lane = (name: string) =>
+    page
+      .locator(".board-lane")
+      .filter({ has: page.getByRole("heading", { name, exact: true }) });
+  const title = () =>
+    page.getByRole("button", { name: "Move without refreshing", exact: true });
+  await expect(title()).toBeVisible();
+  await expect(page.locator(".task-avatar").first()).toHaveAttribute(
+    "aria-label",
+    "Team Owner",
+  );
+  let releaseSave!: () => void;
+  const saving = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  await page.route("**/api/v1/boards/update", async (route) => {
+    await saving;
+    await route.continue();
+  });
+  await page
+    .getByRole("button", { name: "Drag Move without refreshing", exact: true })
+    .dragTo(lane("In progress"));
+  // The card moves while its POST is blocked, before any successful refetch.
+  await expect(
+    lane("In progress").getByRole("button", {
+      name: "Move without refreshing",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel("Move Move without refreshing", { exact: true }),
+  ).toBeDisabled();
+  releaseSave();
+  await expect(
+    page.getByLabel("Move Move without refreshing", { exact: true }),
+  ).toBeEnabled();
+  await page.unroute("**/api/v1/boards/update");
+  await page.route("**/api/v1/boards/update", async (route) => {
+    await route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: {
+          code: "CONFLICT",
+          message: "Task changed. Refresh and try again.",
+        },
+        requestId: "test-conflict",
+      }),
+    });
+  });
+  await page
+    .getByLabel("Move Move without refreshing", { exact: true })
+    .selectOption("done");
+  await expect(page.locator(".board-surface").getByRole("alert")).toContainText(
+    "Task changed",
+  );
+  await expect(
+    lane("In progress").getByRole("button", {
+      name: "Move without refreshing",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.unroute("**/api/v1/boards/update");
+  await page
+    .getByRole("button", { name: "Board details", exact: true })
+    .click();
+  await page.getByLabel("New field name").fill("Release link");
+  await page.getByLabel("New field type").selectOption("URL");
+  await page.getByRole("button", { name: "Add field", exact: true }).click();
+  await expect(page.locator(".board-field-list")).toContainText("Release link");
+  const statusConfiguration = page.locator("details").filter({
+    has: page.locator("summary").filter({ hasText: "Status · status" }),
+  });
+  await statusConfiguration.locator("summary").click();
+  await statusConfiguration
+    .getByRole("button", { name: "Add option", exact: true })
+    .click();
+  await statusConfiguration
+    .getByLabel("Option New option", { exact: true })
+    .fill("Return");
+  await statusConfiguration
+    .getByRole("button", { name: "Move Return option up", exact: true })
+    .click();
+  await statusConfiguration
+    .getByRole("button", { name: "Save field", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Add group", exact: true }),
+  ).toBeEnabled();
+  await page.getByLabel("New group name").fill("Sprint 1");
+  await page.getByRole("button", { name: "Add group", exact: true }).click();
+  await expect(page.getByLabel("Rename Sprint 1 group")).toBeVisible();
+  await page
+    .getByRole("button", { name: "Back to board", exact: true })
+    .click();
+  await expect(page.locator(".board-lane-header h2")).toHaveText([
+    "To do",
+    "In progress",
+    "Return",
+    "Done",
+  ]);
+  await title().click();
+  await expect(page.getByLabel("Release link", { exact: true })).toBeVisible();
+  await page
+    .getByLabel("Task group", { exact: true })
+    .selectOption({ label: "Sprint 1" });
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page
+    .getByLabel("Filter task group", { exact: true })
+    .selectOption({ label: "Sprint 1" });
+  await expect(page.locator(".task-card-tags").first()).toContainText(
+    "Sprint 1",
+  );
+  await page.screenshot({
+    path: "../../artifacts/phase-2/board-card-controls.png",
+    fullPage: true,
+  });
+  await page.reload();
+  await expect(page.locator(".board-lane-header h2")).toHaveText([
+    "To do",
+    "In progress",
+    "Return",
+    "Done",
+  ]);
+  await page
+    .getByRole("button", {
+      name: "Archive Move without refreshing",
+      exact: true,
+    })
+    .click();
+  await expect(title()).toHaveCount(0);
+  await page.getByRole("button", { name: "Archived", exact: true }).click();
+  await expect(title()).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: "Drag Move without refreshing",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+});
+
+test("existing auth IDs refresh correctly, whole cards open sheets and drag, tags stack, and removed fields preserve data", async ({
+  page,
+}) => {
+  const { workspace } = await readyTeam(page);
+  const db = getDatabase();
+  const owner = await db.user.findUniqueOrThrow({
+    where: { email: "owner@example.test" },
+  });
+  const legacyId = "existingAuthIdentity_before_uuid";
+  await db.user.update({ where: { id: owner.id }, data: { id: legacyId } });
+  await db.account.updateMany({
+    where: { userId: legacyId, providerId: "credential" },
+    data: { accountId: legacyId },
+  });
+  const member = await db.user.create({
+    data: {
+      name: "Another Assignee",
+      email: "assignee@example.test",
+      role: "MEMBER",
+      memberships: { create: { workspaceId: workspace.id } },
+    },
+  });
+  const made = await postBoard(page, "create-board", {
+    workspaceId: workspace.id,
+    name: "Existing identities",
+  });
+  expect(made.status()).toBe(200);
+  const boardId = (await made.json()).data.id;
+  const created = await postBoard(page, "create-task", {
+    boardId,
+    createKey: crypto.randomUUID(),
+    name: "Card interactions",
+    description: "Click this card body",
+    assigneeIds: [legacyId, member.id],
+  });
+  expect(created.status()).toBe(200);
+  const taskId = (await created.json()).data.taskId;
+  await page.goto(`/boards/${boardId}`);
+  await page
+    .getByRole("button", { name: "Board details", exact: true })
+    .click();
+  await page.getByLabel("New field name").fill("Labels");
+  await page.getByLabel("New field type").selectOption("TAGS");
+  await page.getByLabel("Field options").fill("Design, Backend, Urgent");
+  await page.getByRole("button", { name: "Add field", exact: true }).click();
+  await expect(page.locator('[data-slot="board-notification"]')).toContainText(
+    "Custom field added",
+  );
+  await expect(page.locator(".board-field-list")).toContainText("Labels");
+  await page.getByLabel("New field name").fill("Checks");
+  await page.getByLabel("New field type").selectOption("MULTI_SELECT");
+  await page.getByLabel("Field options").fill("Stage A, Stage B, Stage C");
+  await page.getByRole("button", { name: "Add field", exact: true }).click();
+  await expect(page.locator(".board-field-list")).toContainText("Checks");
+  await page
+    .getByRole("button", { name: "Back to board", exact: true })
+    .click();
+  const card = page.locator(".task-card").filter({
+    has: page.getByRole("button", { name: "Card interactions", exact: true }),
+  });
+  await expect(card.locator(".task-avatar")).toHaveCount(2);
+  const avatars = await card.locator(".task-avatar").evaluateAll((elements) =>
+    elements.map((element) => ({
+      left: element.getBoundingClientRect().left,
+      right: element.getBoundingClientRect().right,
+    })),
+  );
+  expect(avatars[1]!.left).toBeLessThan(avatars[0]!.right);
+  const handle = await card
+    .getByRole("button", { name: "Drag Card interactions", exact: true })
+    .boundingBox();
+  const archive = await card
+    .getByRole("button", { name: "Archive Card interactions", exact: true })
+    .boundingBox();
+  expect(handle!.x).toBeLessThan(archive!.x);
+  await card.getByText("Click this card body", { exact: true }).click();
+  await expect(page.locator('[data-slot="sheet-content"]')).toBeVisible();
+  await page.getByRole("button", { name: "Design", exact: true }).click();
+  await page.getByRole("button", { name: "Backend", exact: true }).click();
+  await expect(
+    page
+      .getByRole("group", { name: "Labels", exact: true })
+      .getByRole("checkbox"),
+  ).toHaveCount(0);
+  const checks = page.getByRole("group", { name: "Checks", exact: true });
+  await expect(checks.getByRole("checkbox")).toHaveCount(3);
+  await checks.getByRole("checkbox", { name: "Stage A", exact: true }).check();
+  await page.screenshot({
+    path: "../../artifacts/phase-2/task-tag-picker.png",
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.locator('[data-slot="board-notification"]')).toContainText(
+    "Task updated",
+  );
+  await expect(card.locator(".task-custom-tags")).toContainText("Design");
+  await expect(card.locator(".task-custom-tags")).toContainText("Backend");
+  await expect(card.locator(".task-custom-tags")).not.toContainText("Stage A");
+  await expect(card.locator(".task-checklist-summary")).toContainText(
+    "Checks1/3",
+  );
+  await page.screenshot({
+    path: "../../artifacts/phase-2/stacked-avatars-and-tags.png",
+    fullPage: true,
+  });
+  const doneLane = page
+    .locator(".board-lane")
+    .filter({ has: page.getByRole("heading", { name: "Done", exact: true }) });
+  // Drag from the entire article, rather than its dedicated handle.
+  await card.dragTo(doneLane);
+  await expect(
+    doneLane.getByRole("button", { name: "Card interactions", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel("Move Card interactions", { exact: true }),
+  ).toBeEnabled();
+  await expect(page.locator(".board-surface").getByRole("alert")).toHaveCount(
+    0,
+  );
+  const snapshot = (
+    await (
+      await page.request.get(`/api/v1/boards/state?boardId=${boardId}`)
+    ).json()
+  ).data;
+  const status = snapshot.fields.find(
+    (field: { key: string }) => field.key === "status",
+  );
+  expect(
+    (
+      await postBoard(page, "remove-field", {
+        boardId,
+        fieldId: status.id,
+        version: status.version,
+      })
+    ).status(),
+  ).toBe(422);
+  const labels = snapshot.fields.find(
+    (field: { name: string }) => field.name === "Labels",
+  );
+  const savedTask = snapshot.tasks.find(
+    (task: { id: string }) => task.id === taskId,
+  );
+  expect(
+    (
+      await postBoard(page, "update", {
+        taskId,
+        revision: savedTask.revision,
+        changes: { fieldValues: { [labels.id]: ["not-a-saved-tag"] } },
+      })
+    ).status(),
+  ).toBe(422);
+  expect(
+    (
+      await postBoard(page, "configure-field", {
+        boardId,
+        fieldId: labels.id,
+        version: labels.version,
+        name: labels.name,
+        options: labels.options.filter(
+          (option: { label: string }) => option.label !== "Design",
+        ),
+      })
+    ).status(),
+  ).toBe(409);
+
+  await page
+    .getByRole("button", { name: "Board details", exact: true })
+    .click();
+  const configuration = page.locator("details").filter({
+    has: page.locator("summary").filter({ hasText: "Labels · tags" }),
+  });
+  await configuration.locator("summary").click();
+  // Another editor changes metadata while this sheet is open; removal must reject that stale version.
+  await db.boardColumn.update({
+    where: { id: labels.id },
+    data: { name: "Updated labels" },
+  });
+  await configuration
+    .getByRole("button", { name: "Remove field", exact: true })
+    .click();
+  await expect(page.locator('[data-slot="board-notification"]')).toContainText(
+    "This field changed",
+  );
+  await expect(
+    page.getByRole("button", { name: "Back to board", exact: true }),
+  ).toBeEnabled();
+  await page
+    .getByRole("button", { name: "Back to board", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Board details", exact: true })
+    .click();
+  const updatedConfiguration = page.locator("details").filter({
+    has: page.locator("summary").filter({ hasText: "Updated labels · tags" }),
+  });
+  await updatedConfiguration.locator("summary").click();
+  await updatedConfiguration
+    .getByRole("button", { name: "Remove field", exact: true })
+    .click();
+  await expect(page.locator('[data-slot="board-notification"]')).toContainText(
+    "Field removed",
+  );
+  await expect(page.locator(".board-field-list")).not.toContainText(
+    "Updated labels",
+  );
+  await page
+    .getByRole("button", { name: "Back to board", exact: true })
+    .click();
+  await expect(card.locator(".task-custom-tags")).not.toContainText("Design");
+  const preserved = await db.taskFieldValue.findFirstOrThrow({
+    where: { taskId, fieldId: labels.id },
+  });
+  expect(preserved.choices).toHaveLength(2);
+  await card.getByText("Click this card body", { exact: true }).click();
+  await expect(
+    page
+      .getByRole("group", { name: "Checks", exact: true })
+      .getByRole("checkbox", { name: "Stage A", exact: true }),
+  ).toBeChecked();
+  await expect(page.getByLabel("Updated labels", { exact: true })).toHaveCount(
+    0,
+  );
+  await page.screenshot({
+    path: "../../artifacts/phase-2/card-sheet-and-tags.png",
+    fullPage: true,
+  });
+});
+
+test("task reference sheet persists option appearance, formats dates and shows real comments", async ({
+  page,
+}) => {
+  const { workspace } = await readyTeam(page);
+  const made = await postBoard(page, "create-board", {
+    workspaceId: workspace.id,
+    name: "Product development",
+  });
+  const boardId = (await made.json()).data.id;
+  const tag = await postBoard(page, "field", {
+    boardId,
+    name: "Tags",
+    type: "TAGS",
+    options: ["Development", "Feature"],
+  });
+  const tagId = (await tag.json()).data.id;
+  const checklist = await postBoard(page, "field", {
+    boardId,
+    name: "Checklist",
+    type: "MULTI_SELECT",
+    options: ["Set up project", "Build board", "Review changes"],
+  });
+  const checklistId = (await checklist.json()).data.id;
+  const before = (
+    await (
+      await page.request.get(`/api/v1/boards/state?boardId=${boardId}`)
+    ).json()
+  ).data;
+  const tagField = before.fields.find(
+    (field: { id: string }) => field.id === tagId,
+  );
+  const checklistField = before.fields.find(
+    (field: { id: string }) => field.id === checklistId,
+  );
+  const madeTask = await postBoard(page, "create-task", {
+    boardId,
+    createKey: crypto.randomUUID(),
+    name: "Develop core features",
+    description: "Build the features our team needs to plan and ship together.",
+    statusId: "in_progress",
+    priority: "HIGH",
+    dueDate: "2026-04-16",
+    assigneeIds: [before.currentUserId],
+    fieldValues: {
+      [tagId]: [tagField.options[0].id],
+      [checklistId]: [checklistField.options[0].id],
+    },
+  });
+  const taskId = (await madeTask.json()).data.taskId;
+  await page.goto(`/boards/${boardId}`);
+  await page
+    .getByRole("button", { name: "Board details", exact: true })
+    .click();
+  const setColor = async (label: string, color: string) => {
+    await page.getByLabel(label, { exact: true }).evaluate((element, color) => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(element, color);
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+    }, color);
+  };
+  const configuration = (summary: string) =>
+    page
+      .locator("details")
+      .filter({ has: page.locator("summary").filter({ hasText: summary }) });
+  const tags = configuration("Tags · tags");
+  await tags.locator("summary").click();
+  await setColor("Tags Development color", "#a855f7");
+  await tags.getByRole("button", { name: "Save field", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Add field", exact: true }),
+  ).toBeEnabled();
+  const status = configuration("Status · status");
+  await status.locator("summary").click();
+  await setColor("Status In progress color", "#0ea5e9");
+  await page
+    .getByLabel("Status In progress icon", { exact: true })
+    .selectOption("clock");
+  await status.getByRole("button", { name: "Save field", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Add field", exact: true }),
+  ).toBeEnabled();
+  const priority = configuration("Priority · priority");
+  await priority.locator("summary").click();
+  await setColor("Priority High color", "#f59e0b");
+  await priority
+    .getByRole("button", { name: "Save field", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Add field", exact: true }),
+  ).toBeEnabled();
+  await page
+    .getByRole("button", { name: "Back to board", exact: true })
+    .click();
+  const card = page.locator(".task-card").filter({
+    has: page.getByRole("button", {
+      name: "Develop core features",
+      exact: true,
+    }),
+  });
+  await expect(card.locator(".task-custom-tags > span")).toHaveText(
+    "Development",
+  );
+  await expect(card.locator(".task-custom-tags > span")).toHaveCSS(
+    "background-color",
+    "rgb(168, 85, 247)",
+  );
+  await expect(
+    card.locator(".task-card-tags > span").filter({ hasText: "High" }),
+  ).toHaveCSS("background-color", "rgb(245, 158, 11)");
+  await expect(card.getByText("Apr 16", { exact: true })).toBeVisible();
+  await expect(
+    card.getByText("Apr 16", { exact: true }).locator("svg"),
+  ).toHaveCount(1);
+  await expect(
+    page
+      .locator(".board-lane-header")
+      .filter({ hasText: "In progress" })
+      .locator(".lucide-clock"),
+  ).toHaveCount(1);
+  await card
+    .getByRole("button", { name: "Develop core features", exact: true })
+    .click();
+  await expect(
+    page.getByRole("tab", { name: "Details", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".task-sheet-header")).toContainText(
+    "Apr 16, 2026",
+  );
+  await expect(page.locator(".task-sheet-header .lucide-clock")).toHaveCount(1);
+  await expect(
+    page.getByRole("progressbar", { name: "Checklist progress" }),
+  ).toHaveAttribute("value", "1");
+  await page.screenshot({
+    path: "../../artifacts/phase-2/reference-task-sheet.png",
+    fullPage: true,
+  });
+  await page.getByRole("tab", { name: "Comments 0", exact: true }).click();
+  await page
+    .getByLabel("New comment", { exact: true })
+    .fill("Ready for review. <b>Plain text</b>");
+  await page.getByRole("button", { name: "Post comment", exact: true }).click();
+  await expect(page.locator('[data-slot="board-notification"]')).toContainText(
+    "Comment added",
+  );
+  await expect(
+    page.getByRole("tab", { name: "Comments 1", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".task-comment-list p")).toHaveText(
+    "Ready for review. <b>Plain text</b>",
+  );
+  await expect(page.locator(".task-comment-list p b")).toHaveCount(0);
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(
+    card.getByRole("button", {
+      name: "Comments for Develop core features",
+      exact: true,
+    }),
+  ).toHaveText("1");
+  await card
+    .getByRole("button", {
+      name: "Comments for Develop core features",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole("tab", { name: "Comments 1", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".task-comment-list p")).toContainText(
+    "Ready for review",
+  );
+  await page.screenshot({
+    path: "../../artifacts/phase-2/task-comments.png",
+    fullPage: true,
+  });
+  const fresh = (
+    await (
+      await page.request.get(`/api/v1/boards/state?boardId=${boardId}`)
+    ).json()
+  ).data;
+  expect(
+    fresh.fields.find((field: { id: string }) => field.id === tagId).options[0]
+      .color,
+  ).toBe("#a855f7");
+  const statusField = fresh.fields.find(
+    (field: { key: string }) => field.key === "status",
+  );
+  expect(
+    (
+      await postBoard(page, "configure-field", {
+        boardId,
+        fieldId: statusField.id,
+        version: statusField.version,
+        name: statusField.name,
+        options: statusField.options.map((option: { id: string }) => ({
+          ...option,
+          color: "url(javascript:alert(1))",
+        })),
+      })
+    ).status(),
+  ).toBe(422);
+  expect(await getDatabase().taskComment.count({ where: { taskId } })).toBe(1);
+  await page.getByRole("tab", { name: "Comments 1", exact: true }).focus();
+  await page
+    .getByRole("tab", { name: "Comments 1", exact: true })
+    .press("ArrowRight");
+  await expect(
+    page.getByRole("tab", { name: "Activity", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("tab", { name: "Activity", exact: true }).press("Home");
+  await expect(
+    page.getByRole("tab", { name: "Details", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.locator(".task-sheet-body").evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(page.locator(".task-sheet-header")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Save changes", exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: "../../artifacts/phase-2/reference-task-sheet-mobile.png",
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("button", { name: "Add task", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Create task", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+});
+
+test("comments enforce board membership, archived state, maintenance and retry identity", async ({
+  page,
+  browser,
+}) => {
+  const { workspace, board, otherBoard } = await readyTeam(page);
+  const db = getDatabase();
+  const created = await postBoard(page, "create-task", {
+    boardId: board.id,
+    createKey: crypto.randomUUID(),
+    name: "Shared conversation",
+  });
+  const taskId = (await created.json()).data.taskId;
+  const foreign = await postBoard(page, "create-task", {
+    boardId: otherBoard.id,
+    createKey: crypto.randomUUID(),
+    name: "Private conversation",
+  });
+  const foreignId = (await foreign.json()).data.taskId;
+  const memberId = createRecordId();
+  const member = await db.user.create({
+    data: {
+      id: memberId,
+      name: "Commenter",
+      email: "commenter@example.test",
+      role: "MEMBER",
+      emailVerified: true,
+      accounts: {
+        create: {
+          accountId: memberId,
+          providerId: "credential",
+          password: await (
+            await import("better-auth/crypto")
+          ).hashPassword("commenter-password-123"),
+        },
+      },
+      memberships: { create: { workspaceId: workspace.id } },
+    },
+  });
+  const context = await browser.newContext();
+  const memberPage = await context.newPage();
+  try {
+    expect(
+      (
+        await memberPage.request.post("/api/v1/session/sign-in", {
+          headers: { origin: "http://127.0.0.1:3100" },
+          data: { email: member.email, password: "commenter-password-123" },
+        })
+      ).status(),
+    ).toBe(200);
+    const input = {
+      taskId,
+      createKey: crypto.randomUUID(),
+      body: "A member can discuss a task without editing its data.",
+    };
+    const [one, two] = await Promise.all([
+      postBoard(memberPage, "comment", input),
+      postBoard(memberPage, "comment", input),
+    ]);
+    expect(one.status()).toBe(200);
+    expect(two.status()).toBe(200);
+    expect(await db.taskComment.count({ where: { taskId } })).toBe(1);
+    expect(
+      (await db.task.findUniqueOrThrow({ where: { id: taskId } })).revision,
+    ).toBe(1);
+    expect(
+      (
+        await postBoard(memberPage, "comment", {
+          ...input,
+          body: "Changed retry payload",
+        })
+      ).status(),
+    ).toBe(409);
+    expect(
+      (
+        await memberPage.request.get(
+          `/api/v1/boards/comments?taskId=${foreignId}`,
+        )
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await postBoard(memberPage, "comment", {
+          ...input,
+          taskId: foreignId,
+          createKey: crypto.randomUUID(),
+        })
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await postBoard(memberPage, "comment", {
+          ...input,
+          createKey: crypto.randomUUID(),
+          body: " ",
+        })
+      ).status(),
+    ).toBe(422);
+    await postBoard(page, "archive", { taskId, revision: 1 });
+    expect(
+      (
+        await postBoard(memberPage, "comment", {
+          ...input,
+          createKey: crypto.randomUUID(),
+        })
+      ).status(),
+    ).toBe(409);
+    expect(
+      (
+        await memberPage.request.get(`/api/v1/boards/comments?taskId=${taskId}`)
+      ).status(),
+    ).toBe(200);
+    await postBoard(page, "restore", { taskId, revision: 2 });
+    await db.installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: true },
+    });
+    expect(
+      (
+        await postBoard(memberPage, "comment", {
+          ...input,
+          createKey: crypto.randomUUID(),
+        })
+      ).status(),
+    ).toBe(503);
+    await db.installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: false },
+    });
+    await db.workspaceMember.delete({
+      where: {
+        workspaceId_userId: { workspaceId: workspace.id, userId: memberId },
+      },
+    });
+    expect(
+      (
+        await memberPage.request.get(`/api/v1/boards/comments?taskId=${taskId}`)
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await postBoard(memberPage, "comment", {
+          ...input,
+          createKey: crypto.randomUUID(),
+        })
+      ).status(),
+    ).toBe(404);
+  } finally {
+    await context.close();
+  }
 });

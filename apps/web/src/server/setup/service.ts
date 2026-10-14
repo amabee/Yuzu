@@ -569,6 +569,9 @@ export async function completeSetup(input: unknown, headers: Headers) {
         name: data.boardName,
         workspaceId: workspace.id,
         createdById: current.ownerId!,
+        managers: {
+          create: { userId: current.ownerId!, grantedById: current.ownerId! },
+        },
         columns: { create: columns },
         groups: { create: { name: "Tasks", position: 0 } },
       },

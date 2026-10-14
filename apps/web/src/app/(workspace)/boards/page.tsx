@@ -2,25 +2,38 @@ import Link from "next/link";
 import { getDatabase } from "@yuzu/database";
 import { workspaceContext } from "@/server/workspace-access";
 import { workspaceScope } from "@/server/team-access";
+import { CreateBoard } from "@/components/boards/create-board";
+import { isAdministrator } from "@/server/team-access";
 import { ArrowRight, Columns3 } from "lucide-react";
 
 export const metadata = { title: "Boards" };
 export default async function BoardsPage() {
-  const { user } = await workspaceContext();
+  const { user, workspaces } = await workspaceContext();
   const boards = await getDatabase().board.findMany({
     where: { workspace: workspaceScope(user) },
-    select: { id: true, name: true },
+    select: {
+      managers: { select: { userId: true } },
+      createdById: true,
+      id: true,
+      name: true,
+      workspace: { select: { name: true } },
+      _count: { select: { columns: true, groups: true } },
+    },
   });
   return (
     <div>
-      <p className="mb-2 text-[11px] font-semibold tracking-[0.15em] text-brand-secondary uppercase">
-        Your workspace
-      </p>
-      <h1 className="text-3xl font-semibold tracking-tight">Boards</h1>
+      <div className="workspace-breadcrumb">Workspaces / Boards</div>
+      <div className="flex items-center justify-between gap-4">
+        <h1 className="text-3xl font-semibold tracking-tight">Boards</h1>
+        {(isAdministrator(user.role) ||
+          boards.some((board) =>
+            board.managers.some((manager) => manager.userId === user.id),
+          )) && <CreateBoard workspaces={workspaces} />}
+      </div>
       <p className="mt-3 text-sm leading-6 text-muted-foreground">
         Your projects, with room to grow.
       </p>
-      <div className="mt-8 grid gap-4 sm:grid-cols-2">
+      <div className="workspace-board-grid mt-6">
         {boards.length === 0 && (
           <p className="rounded-xl border bg-card p-6 text-sm text-muted-foreground">
             No boards are available to you yet. Ask an owner or administrator
@@ -31,13 +44,20 @@ export default async function BoardsPage() {
           <Link
             key={board.id}
             href={`/boards/${board.id}`}
-            className="rounded-xl border bg-card p-6 hover:border-primary/40"
+            className="workspace-board-card bg-card"
           >
-            <Columns3 className="mb-5 text-primary" size={23} />
+            <div className="workspace-board-card-top">
+              <span>
+                <Columns3 size={22} />
+              </span>
+              <ArrowRight size={16} />
+            </div>
+            <p>{board.workspace.name}</p>
             <h2 className="text-lg font-semibold">{board.name}</h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Created during installation · no sample tasks
-            </p>
+            <div className="workspace-board-card-footer">
+              <span>{board._count.columns} fields</span>
+              <span>{board._count.groups} groups</span>
+            </div>
             <span className="mt-6 flex items-center gap-2 text-sm text-primary">
               Open board
               <ArrowRight size={15} />
