@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+**/node_modules
+**/.next
+**/generated
+artifacts
+**/test-results
+**/playwright-report
+.agents
+docs

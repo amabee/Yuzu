@@ -1,16 +1,15 @@
 import type { Metadata } from "next";
-import { CheckCheck } from "lucide-react";
-import { EmptyFeature } from "@/components/empty-feature";
-
+import { headers } from "next/headers";
+import { ApprovalQueueView } from "@/components/boards/approval-queue";
+import { approvalQueue } from "@/server/approval-service";
+import { workspaceContext } from "@/server/workspace-access";
 export const metadata: Metadata = { title: "Approvals" };
-export default function ApprovalsPage() {
+export default async function ApprovalsPage() {
+  const { settings } = await workspaceContext();
   return (
-    <EmptyFeature
-      title="Approvals"
-      intro="A clear place for requests, decisions, and the context behind them."
-      icon={CheckCheck}
-      heading="Thoughtful changes, shared decisions"
-      description="Approval requests will appear here once boards and their approval policies are ready. This preview has no pending requests."
+    <ApprovalQueueView
+      initialData={await approvalQueue(await headers())}
+      timezone={settings.timezone}
     />
   );
 }

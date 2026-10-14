@@ -1917,9 +1917,14 @@ test("board engine creates typed tasks, shares records between views, and restor
       exact: true,
     }),
   ).toBeVisible();
+  await expect(page.locator(".task-card")).toHaveAttribute("draggable", "true");
   await page
-    .getByLabel("Move Ship the board engine", { exact: true })
-    .selectOption("in_progress");
+    .getByRole("button", { name: "Drag Ship the board engine", exact: true })
+    .dragTo(
+      page.locator(".board-lane").filter({
+        has: page.getByRole("heading", { name: "In progress", exact: true }),
+      }),
+    );
   await expect(
     page
       .locator(".board-lane")
@@ -2636,13 +2641,12 @@ test("board moves immediately, rolls back failed saves, and exposes option order
       exact: true,
     }),
   ).toBeVisible();
-  await expect(
-    page.getByLabel("Move Move without refreshing", { exact: true }),
-  ).toBeDisabled();
+  await expect(page.locator(".task-card")).toHaveAttribute(
+    "draggable",
+    "false",
+  );
   releaseSave();
-  await expect(
-    page.getByLabel("Move Move without refreshing", { exact: true }),
-  ).toBeEnabled();
+  await expect(page.locator(".task-card")).toHaveAttribute("draggable", "true");
   await page.unroute("**/api/v1/boards/update");
   await page.route("**/api/v1/boards/update", async (route) => {
     await route.fulfill({
@@ -2658,8 +2662,8 @@ test("board moves immediately, rolls back failed saves, and exposes option order
     });
   });
   await page
-    .getByLabel("Move Move without refreshing", { exact: true })
-    .selectOption("done");
+    .getByRole("button", { name: "Drag Move without refreshing", exact: true })
+    .dragTo(lane("Done"));
   await expect(page.locator(".board-surface").getByRole("alert")).toContainText(
     "Task changed",
   );
@@ -2863,9 +2867,7 @@ test("existing auth IDs refresh correctly, whole cards open sheets and drag, tag
   await expect(
     doneLane.getByRole("button", { name: "Card interactions", exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByLabel("Move Card interactions", { exact: true }),
-  ).toBeEnabled();
+  await expect(card).toHaveAttribute("draggable", "true");
   await expect(page.locator(".board-surface").getByRole("alert")).toHaveCount(
     0,
   );
@@ -3091,6 +3093,21 @@ test("task reference sheet persists option appearance, formats dates and shows r
     card.locator(".task-card-tags > span").filter({ hasText: "High" }),
   ).toHaveCSS("background-color", "rgb(245, 158, 11)");
   await expect(card.getByText("Apr 16", { exact: true })).toBeVisible();
+  await expect(card.locator("select")).toHaveCount(0);
+  await expect(card.locator(".task-card-heading .task-card-date")).toHaveText(
+    "Apr 16",
+  );
+  const avatarBounds = await card.locator(".task-avatar").first().boundingBox();
+  const commentBounds = await card.locator(".task-comment-count").boundingBox();
+  expect(avatarBounds!.x).toBeLessThan(commentBounds!.x);
+  await card.locator(".task-avatar").first().hover();
+  await expect(page.getByRole("tooltip")).toContainText("Team Owner");
+  await page.mouse.move(0, 0);
+  await page.screenshot({
+    path: "../../artifacts/phase-2/clean-task-card.png",
+    fullPage: true,
+  });
+
   await expect(
     card.getByText("Apr 16", { exact: true }).locator("svg"),
   ).toHaveCount(1);
@@ -3366,5 +3383,1131 @@ test("comments enforce board membership, archived state, maintenance and retry i
     ).toBe(404);
   } finally {
     await context.close();
+  }
+});
+
+test("Yuzu toast design uses citrus assets, accessible actions, progress, dismissal and theme modes", async ({
+  page,
+}) => {
+  await readyTeam(page);
+  await page.goto("/design/toasts");
+  await expect(
+    page.getByRole("heading", { name: "Yuzu notifications" }),
+  ).toBeVisible();
+  await expect(page.locator(".toast-preview-grid .yuzu-toast")).toHaveCount(9);
+  await page.getByRole("button", { name: "Show success", exact: true }).click();
+  const notification = page.locator('[data-slot="board-notification"]');
+  await expect(notification).toHaveAttribute("data-variant", "success");
+  await expect(notification.locator(".yuzu-toast-leaf")).toHaveCSS(
+    "background-image",
+    /yuzu-leaf-corner.svg/,
+  );
+  await expect(notification.locator(".yuzu-toast-lemon")).toHaveCSS(
+    "background-image",
+    /yuzu-lemon-slice.svg/,
+  );
+  const position = await notification.boundingBox();
+  expect(position!.y).toBeLessThan(80);
+  await page
+    .getByRole("button", { name: "Dismiss notification", exact: true })
+    .click();
+  await expect(notification).toHaveCount(0);
+  await page.getByRole("button", { name: "Show action", exact: true }).click();
+  await notification
+    .getByRole("button", { name: "Try action", exact: true })
+    .click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Preview action completed" }),
+  ).toBeVisible();
+  await expect(notification).toHaveCount(0);
+  await page.getByRole("button", { name: "Show loading", exact: true }).click();
+  await expect(notification.getByRole("progressbar")).toHaveAttribute(
+    "value",
+    "26",
+  );
+  await page
+    .getByRole("button", { name: "Advance progress", exact: true })
+    .click();
+  await expect(notification.getByRole("progressbar")).toHaveAttribute(
+    "value",
+    "75",
+  );
+  await page
+    .getByRole("button", { name: "Dismiss notification", exact: true })
+    .click();
+  await page.getByLabel("Toast duration", { exact: true }).selectOption("2000");
+  await page.getByRole("button", { name: "Show neutral", exact: true }).click();
+  await expect(notification).toBeVisible();
+  await page.mouse.move(0, 0);
+  await expect(notification).toHaveCount(0, { timeout: 6000 });
+  await page.screenshot({
+    path: "../../artifacts/phase-2/toast-light.png",
+    fullPage: true,
+  });
+  await page.getByRole("switch", { name: "Dark mode", exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
+  await expect(page.locator("html")).not.toHaveClass(/theme-ripple/);
+  await page.screenshot({
+    path: "../../artifacts/phase-2/toast-dark.png",
+    fullPage: true,
+  });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.getByRole("button", { name: "Show error", exact: true }).click();
+  await expect(notification).toHaveCSS("animation-name", "none");
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "../../artifacts/phase-2/toast-mobile.png",
+    fullPage: true,
+  });
+});
+
+test("boards sync across people, preserve drafts and recover concurrent non-overlapping saves", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(90_000);
+  const { workspace, otherBoard } = await readyTeam(page);
+  const db = getDatabase();
+  const id = createRecordId();
+  const member = await db.user.create({
+    data: {
+      id,
+      name: "Live Member",
+      email: "live@example.test",
+      emailVerified: true,
+      accounts: {
+        create: {
+          accountId: id,
+          providerId: "credential",
+          password: await (
+            await import("better-auth/crypto")
+          ).hashPassword("live-member-password-123"),
+        },
+      },
+    },
+  });
+  await db.workspaceMember.create({
+    data: { userId: id, workspaceId: workspace.id },
+  });
+  const made = await postBoard(page, "create-board", {
+    workspaceId: workspace.id,
+    name: "Live team board",
+  });
+  const boardId = (await made.json()).data.id;
+  const before = (
+    await (
+      await page.request.get(`/api/v1/boards/state?boardId=${boardId}`)
+    ).json()
+  ).data;
+  const created = await postBoard(page, "create-task", {
+    boardId,
+    createKey: crypto.randomUUID(),
+    name: "Collaborative card",
+    description: "Original",
+    assigneeIds: [before.currentUserId, id],
+  });
+  expect(created.status()).toBe(200);
+  const taskId = (await created.json()).data.taskId;
+  const context = await browser.newContext();
+  const teammate = await context.newPage();
+  await teammate.clock.install();
+  let blockConnections = false;
+  let closeOwnerSocket: (() => void) | undefined;
+  await page.routeWebSocket(/127\.0\.0\.1:3101\/socket\.io/, (socket) => {
+    if (blockConnections) {
+      socket.close();
+      return;
+    }
+    closeOwnerSocket = () => socket.close();
+    socket.connectToServer();
+  });
+  const lane = (target: Page, name: string) =>
+    target
+      .locator(".board-lane")
+      .filter({ has: target.getByRole("heading", { name, exact: true }) });
+  const remote = async (changes: unknown) => {
+    const current = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(
+      (
+        await postBoard(teammate, "update", {
+          taskId,
+          revision: current.revision,
+          changes,
+        })
+      ).status(),
+    ).toBe(200);
+  };
+  try {
+    expect(
+      (
+        await teammate.request.post("/api/v1/realtime/authorize", {
+          headers: { origin: "http://127.0.0.1:3100" },
+          data: { boardId },
+        })
+      ).status(),
+    ).toBe(401);
+    expect(
+      (
+        await teammate.request.post("/api/v1/session/sign-in", {
+          headers: { origin: "http://127.0.0.1:3100" },
+          data: { email: member.email, password: "live-member-password-123" },
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await teammate.request.post("/api/v1/realtime/authorize", {
+          headers: { origin: "http://127.0.0.1:3100" },
+          data: { boardId: otherBoard.id },
+        })
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await teammate.request.post("/api/v1/realtime/authorize", {
+          headers: { origin: "https://untrusted.test" },
+          data: { boardId },
+        })
+      ).status(),
+    ).toBe(403);
+    await page.goto(`/boards/${boardId}`);
+    await teammate.goto(`/boards/${boardId}`);
+    await expect(page.locator(".board-surface")).toHaveAttribute(
+      "data-connection",
+      "live",
+    );
+    await expect(teammate.locator(".board-surface")).toHaveAttribute(
+      "data-connection",
+      "live",
+    );
+    await teammate
+      .getByRole("button", { name: "Collaborative card", exact: true })
+      .click();
+    expect(
+      (
+        await postBoard(page, "field", {
+          boardId,
+          name: "Live field",
+          type: "TEXT",
+        })
+      ).status(),
+    ).toBe(200);
+    await expect(
+      teammate.getByLabel("Live field", { exact: true }),
+    ).toBeVisible();
+    await teammate.getByRole("button", { name: "Close", exact: true }).click();
+    await lane(teammate, "To do")
+      .locator(".task-card")
+      .dragTo(lane(teammate, "In progress"));
+    await expect(lane(page, "In progress").locator(".task-card")).toContainText(
+      "Collaborative card",
+      { timeout: 10_000 },
+    );
+    await page
+      .getByRole("button", {
+        name: "Collaborative card",
+        exact: true,
+      })
+      .click();
+    await page.getByLabel("Task description").fill("My unsaved notes");
+    // No navigation/focus/reload on the viewing page: interval sync must update an open sheet.
+    await remote({ statusId: "done" });
+    await expect(page.getByLabel("Task status")).toHaveValue("done", {
+      timeout: 10_000,
+    });
+    await expect(page.getByLabel("Task description")).toHaveValue(
+      "My unsaved notes",
+    );
+    await page
+      .getByRole("button", { name: "Save changes", exact: true })
+      .click();
+    await expect(
+      page.locator('[data-slot="board-notification"]'),
+    ).toContainText("Task updated");
+    expect(
+      await db.task.findUniqueOrThrow({ where: { id: taskId } }),
+    ).toMatchObject({ statusId: "done", description: "My unsaved notes" });
+    await expect(lane(teammate, "Done").locator(".task-card")).toHaveCount(1, {
+      timeout: 10_000,
+    });
+
+    await page
+      .getByRole("button", {
+        name: "Collaborative card",
+        exact: true,
+      })
+      .click();
+    await page.getByRole("tab", { name: /Comments/ }).click();
+    expect(
+      (
+        await postBoard(teammate, "comment", {
+          taskId,
+          createKey: crypto.randomUUID(),
+          body: "A live teammate comment",
+        })
+      ).status(),
+    ).toBe(200);
+    await expect(page.locator(".task-comment-list")).toContainText(
+      "A live teammate comment",
+      { timeout: 10_000 },
+    );
+    await page.getByRole("tab", { name: "Details", exact: true }).click();
+    await page.getByLabel("Task description").fill("My conflicting notes");
+    await remote({ description: "Teammate's notes" });
+    await expect(
+      page.getByRole("status", { name: "Task edit conflict" }),
+    ).toContainText("Description", { timeout: 10_000 });
+    await expect(page.getByLabel("Task description")).toHaveValue(
+      "My conflicting notes",
+    );
+    await expect(
+      page.getByRole("button", { name: "Save changes", exact: true }),
+    ).toBeDisabled();
+    expect(
+      (await db.task.findUniqueOrThrow({ where: { id: taskId } })).description,
+    ).toBe("Teammate's notes");
+    await page
+      .getByRole("button", { name: "Keep my edits", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Save changes", exact: true })
+      .click();
+    await expect(page.getByLabel("Task description")).toHaveCount(0);
+    expect(
+      (await db.task.findUniqueOrThrow({ where: { id: taskId } })).description,
+    ).toBe("My conflicting notes");
+
+    // Force a race after the user clicks Save; a disjoint edit should retry safely once.
+    await page
+      .getByRole("button", {
+        name: "Collaborative card",
+        exact: true,
+      })
+      .click();
+    await page.getByLabel("Task description").fill("Saved through a race");
+    let requests = 0;
+    await page.route("**/api/v1/boards/update", async (route) => {
+      requests++;
+      if (requests === 1) await remote({ priority: "HIGH" });
+      expect(Object.keys(route.request().postDataJSON().changes)).toEqual([
+        "description",
+      ]);
+      await route.continue();
+    });
+    await page
+      .getByRole("button", { name: "Save changes", exact: true })
+      .click();
+    await expect(page.getByLabel("Task description")).toHaveCount(0);
+    expect(requests).toBe(2);
+    expect(
+      await db.task.findUniqueOrThrow({ where: { id: taskId } }),
+    ).toMatchObject({ description: "Saved through a race", priority: "HIGH" });
+    await page.unroute("**/api/v1/boards/update");
+
+    // A disconnected viewer catches missed events by refetching after reconnection.
+    blockConnections = true;
+    closeOwnerSocket!();
+    await expect(page.locator(".board-surface")).toHaveAttribute(
+      "data-connection",
+      "reconnecting",
+    );
+    await remote({ name: "Recovered collaborative card" });
+    blockConnections = false;
+    await expect(page.locator(".board-surface")).toHaveAttribute(
+      "data-connection",
+      "live",
+      { timeout: 10_000 },
+    );
+    await expect(
+      page.getByRole("button", {
+        name: "Recovered collaborative card",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await remote({ name: "Collaborative card" });
+    await expect(
+      page.getByRole("button", { name: "Collaborative card", exact: true }),
+    ).toBeVisible();
+
+    // Choosing the latest version is explicit and resets the form without saving old values.
+    await page
+      .getByRole("button", {
+        name: "Collaborative card",
+        exact: true,
+      })
+      .click();
+    await page.getByLabel("Task description").fill("Discard this draft");
+    await remote({ description: "Keep teammate's version" });
+    await expect(
+      page.getByRole("status", { name: "Task edit conflict" }),
+    ).toBeVisible({ timeout: 10_000 });
+    await page
+      .getByRole("button", { name: "Load latest task", exact: true })
+      .click();
+    await expect(page.getByLabel("Task description")).toHaveValue(
+      "Keep teammate's version",
+    );
+    await expect(
+      page.getByRole("button", { name: "Save changes", exact: true }),
+    ).toBeDisabled();
+    await remote({ description: "New visible notes" });
+    await expect(page.getByLabel("Task description")).toHaveValue(
+      "New visible notes",
+      { timeout: 10_000 },
+    );
+    await page.getByLabel("Task description").fill("Editing the visible notes");
+    await expect(
+      page.getByRole("status", { name: "Task edit conflict" }),
+    ).toHaveCount(0);
+    await page
+      .getByRole("button", { name: "Save changes", exact: true })
+      .click();
+    await expect(page.getByLabel("Task description")).toHaveCount(0);
+    expect(
+      (await db.task.findUniqueOrThrow({ where: { id: taskId } })).description,
+    ).toBe("Editing the visible notes");
+    // Ticket renewal rechecks current membership rather than extending cached access.
+    await db.workspaceMember.delete({
+      where: { workspaceId_userId: { workspaceId: workspace.id, userId: id } },
+    });
+    expect(
+      (
+        await teammate.request.post("/api/v1/realtime/authorize", {
+          headers: { origin: "http://127.0.0.1:3100" },
+          data: { boardId },
+        })
+      ).status(),
+    ).toBe(404);
+    await teammate.clock.fastForward(31_000);
+    await expect(teammate.locator(".board-surface")).toHaveAttribute(
+      "data-connection",
+      "fallback",
+    );
+  } finally {
+    await context.close();
+  }
+});
+
+const postApproval = (page: Page, action: string, input: unknown) =>
+  page.request.post(`/api/v1/approvals/${action}`, {
+    headers: { origin: "http://127.0.0.1:3100" },
+    data: input,
+  });
+async function approvalTeam(
+  page: Page,
+  browser: import("@playwright/test").Browser,
+) {
+  const { workspace } = await readyTeam(page);
+  const made = await postBoard(page, "create-board", {
+    workspaceId: workspace.id,
+    name: "Approval project",
+  });
+  const boardId = (await made.json()).data.id;
+  const db = getDatabase();
+  const actors: {
+    id: string;
+    page: Page;
+    context: import("@playwright/test").BrowserContext;
+  }[] = [];
+  for (const name of ["Request Author", "Backup Reviewer"]) {
+    const id = createRecordId();
+    const email = `${name.toLowerCase().replaceAll(" ", "-")}@approval.test`;
+    await db.user.create({
+      data: {
+        id,
+        name,
+        email,
+        emailVerified: true,
+        accounts: {
+          create: {
+            accountId: id,
+            providerId: "credential",
+            password: await (
+              await import("better-auth/crypto")
+            ).hashPassword("approval-test-password-123"),
+          },
+        },
+      },
+    });
+    await db.workspaceMember.create({
+      data: { workspaceId: workspace.id, userId: id },
+    });
+    const context = await browser.newContext();
+    const actorPage = await context.newPage();
+    expect(
+      (
+        await actorPage.request.post("/api/v1/session/sign-in", {
+          headers: { origin: "http://127.0.0.1:3100" },
+          data: { email, password: "approval-test-password-123" },
+        })
+      ).status(),
+    ).toBe(200);
+    actors.push({ id, page: actorPage, context });
+  }
+  const state = async () =>
+    (
+      await (
+        await page.request.get(`/api/v1/boards/state?boardId=${boardId}`)
+      ).json()
+    ).data;
+  const ownerId = (await state()).currentUserId;
+  const configure = async (changes: Record<string, unknown> = {}) => {
+    const current = await state();
+    return postApproval(page, "configure", {
+      ...current.approvalPolicy,
+      boardId,
+      enabled: true,
+      primaryApproverId: ownerId,
+      backupApproverId: actors[1]!.id,
+      ...changes,
+    });
+  };
+  return {
+    boardId,
+    workspaceId: workspace.id,
+    ownerId,
+    author: actors[0]!,
+    backup: actors[1]!,
+    state,
+    configure,
+    close: async () => {
+      for (const actor of actors) await actor.context.close();
+    },
+  };
+}
+
+test("approval UI keeps pending moves off the board and routes owner requests to the backup", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(90_000);
+  const team = await approvalTeam(page, browser);
+  const db = getDatabase();
+  try {
+    const made = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: crypto.randomUUID(),
+      name: "Approval UI task",
+      assigneeIds: [team.author.id],
+    });
+    const taskId = (await made.json()).data.taskId;
+    await page.goto(`/boards/${team.boardId}`);
+    await page
+      .getByRole("button", { name: "Board details", exact: true })
+      .click();
+    await page
+      .getByRole("switch", { name: "Approval mode", exact: true })
+      .click();
+    await page
+      .getByLabel("Primary approver", { exact: true })
+      .selectOption(team.ownerId);
+    await page
+      .getByLabel("Backup approver", { exact: true })
+      .selectOption(team.backup.id);
+    await page
+      .getByLabel("Require approval for Status", { exact: true })
+      .check();
+    await page
+      .getByRole("button", { name: "Save approval settings", exact: true })
+      .click();
+    await expect(
+      page.locator('[data-slot="board-notification"]'),
+    ).toContainText("Approval settings saved");
+    await page
+      .getByRole("button", { name: "Back to board", exact: true })
+      .click();
+    await team.author.page.goto(`/boards/${team.boardId}`);
+    await page.goto("/approvals");
+    await expect(page.locator('[data-slot="approval-queue"]')).toHaveAttribute(
+      "data-connection",
+      "live",
+    );
+    const lane = (name: string) =>
+      team.author.page.locator(".board-lane").filter({
+        has: team.author.page.getByRole("heading", { name, exact: true }),
+      });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    await team.author.page.route("**/api/v1/boards/update", async (route) => {
+      await gate;
+      await route.continue();
+    });
+    await lane("To do").locator(".task-card").dragTo(lane("In progress"));
+    await expect(lane("To do").locator(".task-card")).toHaveCount(1);
+    await expect(lane("In progress").locator(".task-card")).toHaveCount(0);
+    release();
+    await expect(
+      team.author.page.locator('[data-slot="board-notification"]'),
+    ).toContainText("Changes sent for approval");
+    await team.author.page.unroute("**/api/v1/boards/update");
+    await expect(
+      team.author.page.getByText("Awaiting approval", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: "Review Approval UI task",
+        exact: true,
+      }),
+    ).toBeVisible();
+    expect(
+      await db.task.findUniqueOrThrow({ where: { id: taskId } }),
+    ).toMatchObject({ statusId: "todo", revision: 1 });
+    await page.screenshot({
+      path: "../../artifacts/approvals/queue-desktop.png",
+      fullPage: true,
+    });
+    await page
+      .getByRole("button", { name: "Review Approval UI task", exact: true })
+      .click();
+    await expect(page.getByLabel("Proposed changes")).toContainText("To do");
+    await expect(page.getByLabel("Proposed changes")).toContainText(
+      "In progress",
+    );
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(
+      page.getByRole("button", { name: "Approve request", exact: true }),
+    ).toBeInViewport();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: "../../artifacts/approvals/review-mobile.png",
+      fullPage: true,
+    });
+    await page
+      .getByRole("button", { name: "Approve request", exact: true })
+      .click();
+    await expect(lane("In progress").locator(".task-card")).toHaveCount(1);
+    await expect(
+      team.author.page.getByText("Awaiting approval", { exact: true }),
+    ).toHaveCount(0);
+    const ownerRequest = await postBoard(page, "update", {
+      taskId,
+      revision: 2,
+      requestKey: crypto.randomUUID(),
+      changes: { statusId: "done" },
+    });
+    const ownerProposal = (await ownerRequest.json()).data;
+    expect(ownerProposal.outcome).toBe("PENDING_APPROVAL");
+    expect(
+      (
+        await postApproval(page, "decide", {
+          proposalId: ownerProposal.proposalId,
+          action: "approve",
+        })
+      ).status(),
+    ).toBe(403);
+    await expect(
+      page.getByRole("button", {
+        name: "Review Approval UI task",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Review Approval UI task", exact: true })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Approve request", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Withdraw request", exact: true }),
+    ).toBeVisible();
+    const authorQueue = (
+      await (
+        await team.author.page.request.get("/api/v1/approvals/queue")
+      ).json()
+    ).data;
+    expect(
+      authorQueue.proposals.some(
+        (item: { id: string }) => item.id === ownerProposal.proposalId,
+      ),
+    ).toBe(false);
+    await team.backup.page.goto("/approvals");
+    await team.backup.page
+      .getByRole("button", { name: "Review Approval UI task", exact: true })
+      .click();
+    await team.backup.page
+      .getByRole("button", { name: "Approve request", exact: true })
+      .click();
+    await expect(lane("Done").locator(".task-card")).toHaveCount(1);
+    expect(
+      (await db.task.findUniqueOrThrow({ where: { id: taskId } })).revision,
+    ).toBe(3);
+    await page.getByLabel("Filter approval requests").selectOption("APPROVED");
+    await expect(page.locator('[data-slot="approval-queue"] li')).toHaveCount(
+      2,
+    );
+  } finally {
+    await team.close();
+  }
+});
+
+test("approval transactions enforce field conflicts, current authority, rejection, withdrawal and policy changes", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(90_000);
+  const team = await approvalTeam(page, browser);
+  const db = getDatabase();
+  try {
+    const initial = await team.state();
+    const assigneeField = initial.fields.find(
+      (field: { key: string }) => field.key === "assignees",
+    ).id;
+    const statusField = initial.fields.find(
+      (field: { key: string }) => field.key === "status",
+    ).id;
+    expect(
+      (
+        await postApproval(team.author.page, "configure", {
+          ...initial.approvalPolicy,
+          boardId: team.boardId,
+          enabled: true,
+          primaryApproverId: team.ownerId,
+        })
+      ).status(),
+    ).toBe(403);
+    expect(
+      (
+        await team.configure({
+          primaryApproverId: team.ownerId,
+          backupApproverId: team.ownerId,
+        })
+      ).status(),
+    ).toBe(422);
+    expect(
+      (
+        await team.configure({
+          backupApproverId: null,
+          protectedFieldIds: [assigneeField, statusField],
+        })
+      ).status(),
+    ).toBe(200);
+    const created = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: crypto.randomUUID(),
+      name: "Protected task",
+      description: "Original",
+      assigneeIds: [team.author.id],
+    });
+    const taskId = (await created.json()).data.taskId;
+    expect(
+      (
+        await postBoard(page, "update", {
+          taskId,
+          revision: 1,
+          changes: { statusId: "done" },
+        })
+      ).status(),
+    ).toBe(409);
+    expect(await db.boardProposal.count()).toBe(0);
+    expect(
+      (
+        await team.configure({
+          protectedFieldIds: [assigneeField, statusField],
+        })
+      ).status(),
+    ).toBe(200);
+    const input = {
+      taskId,
+      revision: 1,
+      requestKey: crypto.randomUUID(),
+      changes: {
+        statusId: "in_progress",
+        description: "Whole proposed change",
+      },
+    };
+    const responses = await Promise.all([
+      postBoard(team.author.page, "update", input),
+      postBoard(team.author.page, "update", input),
+    ]);
+    for (const response of responses) expect(response.status()).toBe(200);
+    const proposalId = (await responses[0]!.json()).data.proposalId;
+    expect((await responses[1]!.json()).data.proposalId).toBe(proposalId);
+    expect(await db.boardProposal.count()).toBe(1);
+    expect(
+      await db.task.findUniqueOrThrow({ where: { id: taskId } }),
+    ).toMatchObject({ statusId: "todo", description: "Original", revision: 1 });
+    expect(
+      (
+        await postApproval(team.author.page, "decide", {
+          proposalId,
+          action: "approve",
+        })
+      ).status(),
+    ).toBe(403);
+    expect(
+      (
+        await postApproval(team.backup.page, "decide", {
+          proposalId,
+          action: "approve",
+        })
+      ).status(),
+    ).toBe(403);
+    expect(
+      (
+        await postBoard(team.backup.page, "update", {
+          taskId,
+          revision: 1,
+          changes: { description: "No editor rights" },
+        })
+      ).status(),
+    ).toBe(403);
+    // An unrelated direct edit does not invalidate the proposal or get overwritten.
+    expect(
+      (
+        await postBoard(page, "update", {
+          taskId,
+          revision: 1,
+          changes: { priority: "HIGH" },
+        })
+      ).status(),
+    ).toBe(200);
+    const decisions = await Promise.all([
+      postApproval(page, "decide", { proposalId, action: "approve" }),
+      postApproval(page, "decide", { proposalId, action: "approve" }),
+    ]);
+    expect(decisions.map((response) => response.status()).sort()).toEqual([
+      200, 409,
+    ]);
+    expect(
+      await db.task.findUniqueOrThrow({ where: { id: taskId } }),
+    ).toMatchObject({
+      statusId: "in_progress",
+      description: "Whole proposed change",
+      priority: "HIGH",
+      revision: 3,
+    });
+    expect(await db.taskActivity.count({ where: { taskId } })).toBe(3);
+    const request = async (changes: unknown) => {
+      const current = await db.task.findUniqueOrThrow({
+        where: { id: taskId },
+      });
+      const response = await postBoard(team.author.page, "update", {
+        taskId,
+        revision: current.revision,
+        requestKey: crypto.randomUUID(),
+        changes,
+      });
+      expect(response.status()).toBe(200);
+      return (await response.json()).data;
+    };
+    const stale = await request({ statusId: "done" });
+    // A separately approved conflicting edit makes the first request stale.
+    const own = await postBoard(page, "update", {
+      taskId,
+      revision: 3,
+      requestKey: crypto.randomUUID(),
+      changes: { statusId: "todo" },
+    });
+    const ownId = (await own.json()).data.proposalId;
+    expect(
+      (
+        await postApproval(team.backup.page, "decide", {
+          proposalId: ownId,
+          action: "approve",
+        })
+      ).status(),
+    ).toBe(200);
+    const staleDecision = (
+      await (
+        await postApproval(page, "decide", {
+          proposalId: stale.proposalId,
+          action: "approve",
+        })
+      ).json()
+    ).data;
+    expect(staleDecision.status).toBe("STALE");
+    expect(
+      (await db.task.findUniqueOrThrow({ where: { id: taskId } })).statusId,
+    ).toBe("todo");
+    const rejected = await request({ statusId: "done" });
+    expect(
+      (
+        await postApproval(page, "decide", {
+          proposalId: rejected.proposalId,
+          action: "reject",
+          reason: " ",
+        })
+      ).status(),
+    ).toBe(422);
+    expect(
+      (
+        await postApproval(page, "decide", {
+          proposalId: rejected.proposalId,
+          action: "reject",
+          reason: "Finish the checks first.",
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await db.boardProposal.findUniqueOrThrow({
+          where: { id: rejected.proposalId },
+        })
+      ).reason,
+    ).toBe("Finish the checks first.");
+    const withdrawn = await request({ statusId: "done" });
+    expect(
+      (
+        await postApproval(page, "decide", {
+          proposalId: withdrawn.proposalId,
+          action: "withdraw",
+        })
+      ).status(),
+    ).toBe(403);
+    expect(
+      (
+        await postApproval(team.author.page, "decide", {
+          proposalId: withdrawn.proposalId,
+          action: "withdraw",
+        })
+      ).status(),
+    ).toBe(200);
+    const invalidated = await request({ statusId: "done" });
+    expect((await team.configure({ enabled: false })).status()).toBe(200);
+    expect(
+      (
+        await db.boardProposal.findUniqueOrThrow({
+          where: { id: invalidated.proposalId },
+        })
+      ).status,
+    ).toBe("STALE");
+    expect(
+      (await db.task.findUniqueOrThrow({ where: { id: taskId } })).statusId,
+    ).toBe("todo");
+    expect(
+      (
+        await team.configure({
+          protectedFieldIds: [assigneeField, statusField],
+          requireArchive: true,
+        })
+      ).status(),
+    ).toBe(200);
+    const archived = await postBoard(team.author.page, "archive", {
+      taskId,
+      revision: 4,
+      requestKey: crypto.randomUUID(),
+    });
+    const archiveId = (await archived.json()).data.proposalId;
+    expect(
+      (await db.task.findUniqueOrThrow({ where: { id: taskId } })).archivedAt,
+    ).toBeNull();
+    expect(
+      (
+        await postApproval(page, "decide", {
+          proposalId: archiveId,
+          action: "approve",
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (await db.task.findUniqueOrThrow({ where: { id: taskId } })).archivedAt,
+    ).not.toBeNull();
+    expect(
+      (await postBoard(page, "restore", { taskId, revision: 5 })).status(),
+    ).toBe(200);
+    const revoked = await request({ statusId: "done" });
+    // Assignee rights are revoked by another approved assignment change.
+    const remove = await postBoard(page, "update", {
+      taskId,
+      revision: 6,
+      requestKey: crypto.randomUUID(),
+      changes: { assigneeIds: [] },
+    });
+    expect(
+      (
+        await postApproval(team.backup.page, "decide", {
+          proposalId: (await remove.json()).data.proposalId,
+          action: "approve",
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await (
+          await postApproval(page, "decide", {
+            proposalId: revoked.proposalId,
+            action: "approve",
+          })
+        ).json()
+      ).data.status,
+    ).toBe("STALE");
+    // Approver changes are compatible with the request, but immediately revoke the old reviewer.
+    expect(
+      (
+        await postBoard(page, "editor", {
+          taskId,
+          revision: 7,
+          userId: team.author.id,
+          grant: true,
+        })
+      ).status(),
+    ).toBe(200);
+    const rerouted = await request({ statusId: "done" });
+    expect(
+      (
+        await team.configure({
+          primaryApproverId: team.backup.id,
+          backupApproverId: team.ownerId,
+          protectedFieldIds: [assigneeField, statusField],
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postApproval(page, "decide", {
+          proposalId: rerouted.proposalId,
+          action: "approve",
+        })
+      ).status(),
+    ).toBe(403);
+    expect(
+      (
+        await postApproval(team.backup.page, "decide", {
+          proposalId: rerouted.proposalId,
+          action: "approve",
+        })
+      ).status(),
+    ).toBe(200);
+  } finally {
+    await team.close();
+  }
+});
+
+test("creation approvals hide drafts, deduplicate retries and revalidate people, membership and maintenance", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(90_000);
+  const team = await approvalTeam(page, browser);
+  const db = getDatabase();
+  try {
+    expect((await team.configure({ requireCreation: true })).status()).toBe(
+      200,
+    );
+    const body = {
+      boardId: team.boardId,
+      createKey: crypto.randomUUID(),
+      name: "Pending new task",
+      assigneeIds: [team.backup.id],
+    };
+    const attempts = await Promise.all([
+      postBoard(team.author.page, "create-task", body),
+      postBoard(team.author.page, "create-task", body),
+    ]);
+    for (const attempt of attempts) expect(attempt.status()).toBe(200);
+    const proposalId = (await attempts[0]!.json()).data.proposalId;
+    expect((await attempts[1]!.json()).data.proposalId).toBe(proposalId);
+    expect(await db.task.count({ where: { boardId: team.boardId } })).toBe(0);
+    expect((await team.state()).tasks).toHaveLength(0);
+    expect(
+      (
+        await postBoard(team.author.page, "create-task", {
+          ...body,
+          name: "Changed retry",
+        })
+      ).status(),
+    ).toBe(409);
+    await db.installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: true },
+    });
+    expect(
+      (
+        await postApproval(page, "decide", { proposalId, action: "approve" })
+      ).status(),
+    ).toBe(503);
+    await db.installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: false },
+    });
+    const decisions = await Promise.all([
+      postApproval(page, "decide", { proposalId, action: "approve" }),
+      postApproval(page, "decide", { proposalId, action: "approve" }),
+    ]);
+    expect(decisions.map((response) => response.status()).sort()).toEqual([
+      200, 409,
+    ]);
+    const task = await db.task.findFirstOrThrow({
+      where: { boardId: team.boardId },
+    });
+    expect(task.createdById).toBe(team.author.id);
+    expect(
+      await db.taskAssignee.count({
+        where: { taskId: task.id, userId: team.backup.id },
+      }),
+    ).toBe(1);
+    expect(
+      (await postBoard(team.author.page, "create-task", body)).status(),
+    ).toBe(200);
+    expect(await db.task.count({ where: { boardId: team.boardId } })).toBe(1);
+    const peopleDraft = await postBoard(team.author.page, "create-task", {
+      ...body,
+      createKey: crypto.randomUUID(),
+      name: "Invalid people later",
+    });
+    const peopleProposal = (await peopleDraft.json()).data.proposalId;
+    await db.workspaceMember.delete({
+      where: {
+        workspaceId_userId: {
+          workspaceId: team.workspaceId,
+          userId: team.backup.id,
+        },
+      },
+    });
+    expect(
+      (
+        await (
+          await postApproval(page, "decide", {
+            proposalId: peopleProposal,
+            action: "approve",
+          })
+        ).json()
+      ).data.status,
+    ).toBe("STALE");
+    const scopedDraft = await postBoard(team.author.page, "create-task", {
+      boardId: team.boardId,
+      createKey: crypto.randomUUID(),
+      name: "Author removed later",
+    });
+    const scopedId = (await scopedDraft.json()).data.proposalId;
+    await db.workspaceMember.delete({
+      where: {
+        workspaceId_userId: {
+          workspaceId: team.workspaceId,
+          userId: team.author.id,
+        },
+      },
+    });
+    expect(
+      (
+        await (
+          await postApproval(page, "decide", {
+            proposalId: scopedId,
+            action: "approve",
+          })
+        ).json()
+      ).data.status,
+    ).toBe("STALE");
+    expect(
+      (
+        await (
+          await team.author.page.request.get(
+            "/api/v1/approvals/queue?status=ALL",
+          )
+        ).json()
+      ).data.proposals,
+    ).toHaveLength(0);
+    expect(await db.task.count({ where: { boardId: team.boardId } })).toBe(1);
+  } finally {
+    await team.close();
   }
 });

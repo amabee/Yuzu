@@ -14,10 +14,12 @@ export function TaskComments({
   task,
   active,
   onNotice,
+  syncInterval,
 }: {
   state: BoardState;
   task: BoardTask;
   active: boolean;
+  syncInterval: number;
   onNotice: (message: string, kind: "success" | "error") => void;
 }) {
   const [body, setBody] = useState("");
@@ -27,6 +29,11 @@ export function TaskComments({
   const query = useQuery({
     queryKey,
     enabled: active,
+    staleTime: 0,
+    refetchInterval: syncInterval,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: "always",
+    refetchOnReconnect: "always",
     queryFn: async ({ signal }) =>
       commentsSchema.parse(
         (

@@ -29,7 +29,9 @@
     "react-hook-form": "7.90.0",
     "tailwind-merge": "3.5.0",
     "zod": "4.6.7",
-    "zustand": "5.0.15"
+    "zustand": "5.0.15",
+    "@yuzu/realtime-protocol": "workspace:*",
+    "socket.io-client": "4.8.4"
   },
   "devDependencies": {
     "@playwright/test": "1.64.0",

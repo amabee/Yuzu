@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { notifyBoardMutation } from "@/server/realtime";
 import { recordId } from "@/lib/board-contract";
 import {
   boardState,
@@ -44,6 +45,7 @@ async function handle(request: Request, action: string) {
       )
         data = await manageBoard(action, body, request.headers);
       else throw new SetupError(404, "NOT_FOUND", "Board action not found.");
+      await notifyBoardMutation(body, data);
     } else throw new SetupError(404, "NOT_FOUND", "Board action not found.");
     return Response.json(
       { data, requestId },
