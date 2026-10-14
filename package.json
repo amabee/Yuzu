@@ -8,7 +8,7 @@
   },
   "scripts": {
     "setup:keys": "node scripts/setup-keys.mjs",
-    "dev": "pnpm --filter @yuzu/web dev",
+    "dev": "pnpm db:generate && pnpm --filter @yuzu/web dev",
     "build": "pnpm db:generate && pnpm --filter @yuzu/web build",
     "start": "pnpm --filter @yuzu/web start",
     "lint": "pnpm --filter @yuzu/web lint",

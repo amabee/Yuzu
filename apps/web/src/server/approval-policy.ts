@@ -7,6 +7,7 @@ import {
 } from "@/lib/approval-contract";
 import { eligibleReviewer } from "@/lib/approval-rules";
 import { SetupError } from "./setup/security";
+import { createNotifications } from "./notification-events";
 export async function readApprovalPolicy(
   tx: DatabaseTransaction,
   board: { id: string; columns: { id: string; key: string }[] },
@@ -107,6 +108,16 @@ export async function submitProposal(
       policyVersion: args.policy.version,
       sourceRevision: args.sourceRevision,
     },
+  });
+  await createNotifications(tx, {
+    recipientIds: [reviewer],
+    actorId: args.authorId,
+    boardId: args.boardId,
+    taskId: args.taskId,
+    proposalId: proposal.id,
+    kind: "APPROVAL_REQUEST",
+    message: "requested your approval",
+    eventKey: `proposal:${proposal.id}:review:${args.policy.version}`,
   });
   await tx.boardEvent.create({
     data: {

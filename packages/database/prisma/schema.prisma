@@ -75,6 +75,8 @@ model User {
   backupApprovalPolicies  BoardApprovalPolicy[] @relation("BackupApprover")
   proposalsAuthored       BoardProposal[]       @relation("ProposalAuthor")
   proposalsDecided        BoardProposal[]       @relation("ProposalDecider")
+  notifications           Notification[]        @relation("NotificationRecipient")
+  notificationsSent       Notification[]        @relation("NotificationActor")
 }
 
 model Session {
@@ -201,6 +203,7 @@ model Board {
   events         BoardEvent[]
   approvalPolicy BoardApprovalPolicy?
   proposals      BoardProposal[]
+  notifications  Notification[]
   tasks          Task[]
   columns        BoardColumn[]
   groups         BoardGroup[]
@@ -237,30 +240,31 @@ model BoardGroup {
 }
 
 model Task {
-  id           String            @id @default(uuid(7))
-  boardId      String
-  board        Board             @relation(fields: [boardId], references: [id], onDelete: Cascade)
-  name         String
-  description  String            @default("")
-  statusId     String?
-  priority     String            @default("NORMAL")
-  dueDate      DateTime?         @db.Date
-  groupId      String?
-  group        BoardGroup?       @relation(fields: [groupId], references: [id], onDelete: Restrict)
-  createdById  String
-  createdBy    User              @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  createKey    String
-  createDigest String
-  revision     Int               @default(1)
-  archivedAt   DateTime?         @db.Timestamptz(3)
-  createdAt    DateTime          @default(now()) @db.Timestamptz(3)
-  updatedAt    DateTime          @updatedAt @db.Timestamptz(3)
-  assignees    TaskAssignee[]
-  editors      TaskEditorGrant[]
-  values       TaskFieldValue[]
-  activity     TaskActivity[]
-  comments     TaskComment[]
-  proposals    BoardProposal[]
+  id            String            @id @default(uuid(7))
+  boardId       String
+  board         Board             @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  name          String
+  description   String            @default("")
+  statusId      String?
+  priority      String            @default("NORMAL")
+  dueDate       DateTime?         @db.Date
+  groupId       String?
+  group         BoardGroup?       @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  createdById   String
+  createdBy     User              @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createKey     String
+  createDigest  String
+  revision      Int               @default(1)
+  archivedAt    DateTime?         @db.Timestamptz(3)
+  createdAt     DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime          @updatedAt @db.Timestamptz(3)
+  assignees     TaskAssignee[]
+  editors       TaskEditorGrant[]
+  values        TaskFieldValue[]
+  activity      TaskActivity[]
+  comments      TaskComment[]
+  proposals     BoardProposal[]
+  notifications Notification[]
 
   @@unique([createdById, createKey])
   @@index([boardId, archivedAt, createdAt])
@@ -426,8 +430,38 @@ model BoardProposal {
   reason          String?
   createdAt       DateTime          @default(now()) @db.Timestamptz(3)
   decidedAt       DateTime?         @db.Timestamptz(3)
+  notifications   Notification[]
 
   @@unique([authorId, requestKey])
   @@index([boardId, status, createdAt])
   @@index([authorId, status, createdAt])
+}
+
+enum NotificationKind {
+  ASSIGNMENT
+  APPROVAL_REQUEST
+  APPROVAL_DECISION
+}
+
+model Notification {
+  id          String           @id @default(uuid(7))
+  recipientId String
+  recipient   User             @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  actorId     String
+  actor       User             @relation("NotificationActor", fields: [actorId], references: [id], onDelete: Cascade)
+  boardId     String
+  board       Board            @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  taskId      String?
+  task        Task?            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  proposalId  String?
+  proposal    BoardProposal?   @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  kind        NotificationKind
+  message     String
+  eventKey    String
+  createdAt   DateTime         @default(now()) @db.Timestamptz(3)
+  readAt      DateTime?        @db.Timestamptz(3)
+
+  @@unique([recipientId, eventKey])
+  @@index([recipientId, readAt, id])
+  @@index([boardId])
 }

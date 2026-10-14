@@ -1,6 +1,18 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
+.notification-surface {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(
+    in srgb,
+    var(--card) var(--theme-opacity, 80%),
+    transparent
+  );
+  backdrop-filter: blur(var(--theme-blur, 8px));
+  box-shadow: var(--theme-card-shadow, none);
+}
+
 :root {
   --background: #f7f9fa;
   --foreground: #203744;

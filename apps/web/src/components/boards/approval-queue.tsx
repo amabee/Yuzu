@@ -106,14 +106,19 @@ function changeRows(proposal: Proposal) {
 export function ApprovalQueueView({
   initialData,
   timezone,
+  initialRequestId,
 }: {
   initialData: ApprovalQueue;
   timezone: string;
+  initialRequestId?: string;
 }) {
-  const [filter, setFilter] = useState("PENDING");
+  const [filter, setFilter] = useState(initialRequestId ? "ALL" : "PENDING");
+  const [requestId, setRequestId] = useState(initialRequestId);
   const [cursors, setCursors] = useState<(string | null)[]>([null]);
   const cursor = cursors.at(-1);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    initialRequestId ?? null,
+  );
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
   const [notice, setNotice] = useState<YuzuToastNotice | null>(null);
@@ -121,15 +126,20 @@ export function ApprovalQueueView({
   const prefix = ["principal", initialData.currentUserId, "approvals"];
   const live = useApprovalLiveSync(initialData.currentUserId);
   const query = useQuery({
-    queryKey: [...prefix, filter, cursor],
-    initialData: filter === "PENDING" && !cursor ? initialData : undefined,
+    queryKey: [...prefix, filter, cursor, requestId],
+    initialData:
+      (initialRequestId
+        ? filter === "ALL" && requestId === initialRequestId
+        : filter === "PENDING") && !cursor
+        ? initialData
+        : undefined,
     staleTime: 0,
     refetchInterval: live.syncInterval,
     refetchOnWindowFocus: "always",
     refetchOnReconnect: "always",
     queryFn: async ({ signal }) => {
       const response = await apiRequest(
-        `/api/v1/approvals/queue?status=${filter}${cursor ? `&cursor=${cursor}` : ""}`,
+        `/api/v1/approvals/queue?status=${filter}${cursor ? `&cursor=${cursor}` : ""}${requestId ? `&request=${requestId}` : ""}`,
         { signal, cache: "no-store" },
       );
       const parsed = approvalQueueSchema.safeParse(response.data);
@@ -162,6 +172,7 @@ export function ApprovalQueueView({
         ),
     onSuccess: async (result) => {
       setSelectedId(null);
+      setRequestId(undefined);
       setRejecting(false);
       setReason("");
       setNotice({
@@ -233,6 +244,7 @@ export function ApprovalQueueView({
             value={filter}
             onChange={(event) => {
               setFilter(event.target.value);
+              setRequestId(undefined);
               setCursors([null]);
               setSelectedId(null);
             }}

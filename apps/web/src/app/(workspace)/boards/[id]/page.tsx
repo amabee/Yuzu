@@ -11,8 +11,10 @@ import { z } from "zod";
 
 export default async function BoardPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ task?: string }>;
 }) {
   const { user } = await workspaceContext();
   const board = await getDatabase().board.findFirst({
@@ -60,6 +62,12 @@ export default async function BoardPage({
         </div>
       </div>
       <BoardSurface
+        initialTaskId={
+          z
+            .string()
+            .uuid()
+            .safeParse((await searchParams).task).data
+        }
         initialState={initialState}
         name={board.name}
         fields={board.columns}

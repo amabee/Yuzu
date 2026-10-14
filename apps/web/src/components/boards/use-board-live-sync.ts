@@ -35,7 +35,13 @@ function useLiveSync(boardId: string | undefined, principalId: string) {
     let retry: ReturnType<typeof setTimeout> | undefined;
     const seen = new Set<string>();
     const queue = createLiveRefreshQueue(
-      () => Boolean(queryClient.isMutating({ mutationKey: queryKey })),
+      () =>
+        Boolean(
+          queryClient.isMutating({ mutationKey: queryKey }) ||
+          queryClient.isMutating({
+            mutationKey: ["principal", principalId, "notifications"],
+          }),
+        ),
       () =>
         Promise.all([
           queryClient.invalidateQueries({ queryKey }, { cancelRefetch: false }),
@@ -45,6 +51,10 @@ function useLiveSync(boardId: string | undefined, principalId: string) {
           ),
           queryClient.invalidateQueries(
             { queryKey: ["principal", principalId, "task-comments"] },
+            { cancelRefetch: false },
+          ),
+          queryClient.invalidateQueries(
+            { queryKey: ["principal", principalId, "notifications"] },
             { cancelRefetch: false },
           ),
         ]),

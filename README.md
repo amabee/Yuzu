@@ -84,14 +84,20 @@ workspaces, boards, flexible fields, and core collaboration.
 - [x] Revision conflict protection, task history, archive/restore
 - [x] Task comments, configurable tag/status/priority appearance, and operation toasts
 - [ ] Remaining profile/account and workspace lifecycle administration
-- [ ] Approval policies and decision queue
-- [ ] Files, inbox notifications, and saved views
+- [x] Approval policies, primary/backup decisions, and a private review queue
+- [x] Realtime board synchronization and persistent assignment/approval notifications
+- [ ] Mentions, comment edit history, files, and saved views
 - [ ] Dashboards, CSV exchange, and complete OpenAPI documentation
 - [ ] Workflow automation and Blueprint/App Builder exploration
 - [ ] Release deployment, recovery, and pilot verification
 
 Use **Boards → Create board** or open an existing board and choose **Add task**.
-New boards use direct editing; approval policies are the next milestone.
+New boards use direct editing. Configure approvals in **Board details** and
+review requests under **Approvals**. **Inbox** and the header bell show your
+assignments, approval requests and decisions, including updates received offline.
+Opening a notification rechecks current access before linking to its task or
+review sheet. Mark individual notifications read/unread or clear the current
+unread backlog; newer arrivals remain unread.
 See [Board engine](docs/board-engine.md) for permissions and API contracts.
 
 ## Technology

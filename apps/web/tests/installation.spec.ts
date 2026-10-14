@@ -3798,6 +3798,21 @@ const postApproval = (page: Page, action: string, input: unknown) =>
     headers: { origin: "http://127.0.0.1:3100" },
     data: input,
   });
+const readInbox = async (page: Page, suffix = "") =>
+  (
+    await (
+      await page.request.get(`/api/v1/notifications/inbox${suffix}`)
+    ).json()
+  ).data;
+const changeInbox = (
+  page: Page,
+  input: unknown,
+  origin = "http://127.0.0.1:3100",
+) =>
+  page.request.post("/api/v1/notifications/change", {
+    headers: { origin },
+    data: input,
+  });
 async function approvalTeam(
   page: Page,
   browser: import("@playwright/test").Browser,
@@ -4507,6 +4522,406 @@ test("creation approvals hide drafts, deduplicate retries and revalidate people,
       ).data.proposals,
     ).toHaveLength(0);
     expect(await db.task.count({ where: { boardId: team.boardId } })).toBe(1);
+  } finally {
+    await team.close();
+  }
+});
+
+test("notification inbox delivers assignments live, persists read state and opens the task sheet", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  const mirrorContext = await browser.newContext({
+    storageState: await team.author.context.storageState(),
+  });
+  try {
+    await team.author.page.goto("/notifications");
+    await expect(team.author.page.getByText("Nothing here yet")).toBeVisible();
+    const input = {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Ship notification inbox",
+      assigneeIds: [team.author.id],
+    };
+    const made = await postBoard(page, "create-task", input);
+    expect(made.status()).toBe(200);
+    const taskId = (await made.json()).data.taskId;
+    // Same intent retry must not create another inbox record.
+    expect((await postBoard(page, "create-task", input)).status()).toBe(200);
+    await expect(
+      team.author.page.getByRole("link", {
+        name: "Notifications (1 unread)",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      team.author.page.getByText("Ship notification inbox", { exact: true }),
+    ).toBeVisible();
+    const id = (await readInbox(team.author.page)).items[0].id;
+    const mirror = await mirrorContext.newPage();
+    await mirror.goto("/notifications");
+    await expect(
+      mirror.getByRole("link", {
+        name: "Notifications (1 unread)",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await team.author.page.evaluate(() => document.fonts.ready);
+    await team.author.page.screenshot({
+      path: "../../artifacts/notifications/inbox-desktop.png",
+      fullPage: true,
+    });
+    await team.author.page.setViewportSize({ width: 390, height: 844 });
+    await team.author.page.screenshot({
+      path: "../../artifacts/notifications/inbox-mobile.png",
+      fullPage: true,
+    });
+    await team.author.page
+      .getByRole("switch", { name: "Dark mode", exact: true })
+      .click();
+    await expect(
+      team.author.page.getByRole("switch", { name: "Dark mode", exact: true }),
+    ).toBeEnabled();
+    await team.author.page.screenshot({
+      path: "../../artifacts/notifications/inbox-dark-mobile.png",
+      fullPage: true,
+    });
+    await team.author.page
+      .getByRole("button", {
+        name: "Mark as read: Ship notification inbox",
+        exact: true,
+      })
+      .click();
+    await expect
+      .poll(async () => (await readInbox(team.author.page)).unreadCount)
+      .toBe(0);
+    await expect(
+      mirror.getByRole("link", { name: "Notifications", exact: true }),
+    ).toBeVisible();
+    await expect(
+      team.author.page.getByRole("button", {
+        name: "Mark as unread: Ship notification inbox",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await team.author.page
+      .getByRole("button", {
+        name: "Mark as unread: Ship notification inbox",
+        exact: true,
+      })
+      .click();
+    await expect
+      .poll(async () => (await readInbox(team.author.page)).unreadCount)
+      .toBe(1);
+    await team.author.page
+      .locator(`[data-notification-id="${id}"]`)
+      .getByRole("button")
+      .first()
+      .click();
+    await expect(team.author.page).toHaveURL(
+      new RegExp(`/boards/${team.boardId}\\?task=${taskId}`),
+    );
+    await expect(team.author.page.getByRole("dialog")).toBeVisible();
+    await expect
+      .poll(async () => (await readInbox(team.author.page)).unreadCount)
+      .toBe(0);
+    await team.author.page.reload();
+    await expect(team.author.page.getByRole("dialog")).toBeVisible();
+    expect((await readInbox(team.author.page)).items).toHaveLength(1);
+    expect((await changeInbox(page, { action: "open", id })).status()).toBe(
+      404,
+    );
+    expect(
+      (
+        await changeInbox(team.backup.page, { action: "read", id, read: true })
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await changeInbox(
+          team.author.page,
+          { action: "read", id, read: false },
+          "https://other.test",
+        )
+      ).status(),
+    ).toBe(403);
+    await getDatabase().workspaceMember.delete({
+      where: {
+        workspaceId_userId: {
+          workspaceId: team.workspaceId,
+          userId: team.author.id,
+        },
+      },
+    });
+    expect((await readInbox(team.author.page)).items).toHaveLength(0);
+    expect((await readInbox(team.author.page)).unreadCount).toBe(0);
+    expect(
+      (await changeInbox(team.author.page, { action: "open", id })).status(),
+    ).toBe(404);
+  } finally {
+    await mirrorContext.close();
+    await team.close();
+  }
+});
+
+test("approval notifications wait for acceptance and follow reviewer reassignment without leaking old requests", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const current = await team.state();
+    const assigneeField = current.fields.find(
+      (field: { key: string }) => field.key === "assignees",
+    ).id;
+    const made = await postBoard(team.author.page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Approval notification task",
+    });
+    expect(made.status(), JSON.stringify(await made.json())).toBe(200);
+    const taskId = (await made.json()).data.taskId;
+    expect(
+      (
+        await team.configure({
+          protectedFieldIds: [assigneeField],
+          primaryApproverId: team.backup.id,
+          backupApproverId: null,
+        })
+      ).status(),
+    ).toBe(200);
+    const requestKey = createRecordId();
+    const body = {
+      taskId,
+      revision: 1,
+      requestKey,
+      changes: { assigneeIds: [team.ownerId] },
+    };
+    const submitted = await postBoard(team.author.page, "update", body);
+    expect(submitted.status(), JSON.stringify(await submitted.json())).toBe(
+      200,
+    );
+    const proposalId = (await submitted.json()).data.proposalId;
+    expect((await postBoard(team.author.page, "update", body)).status()).toBe(
+      200,
+    );
+    let inbox = await readInbox(team.backup.page);
+    expect(inbox.items).toHaveLength(1);
+    expect(inbox.items[0].kind).toBe("APPROVAL_REQUEST");
+    expect((await readInbox(page)).items).toHaveLength(0); // Proposed assignment is not active.
+    const link = await changeInbox(team.backup.page, {
+      action: "open",
+      id: inbox.items[0].id,
+    });
+    await team.backup.page.goto((await link.json()).data.href);
+    await expect(team.backup.page.getByRole("dialog")).toBeVisible();
+    await expect(
+      team.backup.page.getByRole("button", {
+        name: "Approve request",
+        exact: true,
+      }),
+    ).toBeVisible();
+    expect(
+      (
+        await team.configure({
+          primaryApproverId: team.ownerId,
+          backupApproverId: null,
+        })
+      ).status(),
+    ).toBe(200);
+    expect((await readInbox(team.backup.page)).items).toHaveLength(0);
+    expect(
+      (
+        await changeInbox(team.backup.page, {
+          action: "open",
+          id: inbox.items[0].id,
+        })
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await postApproval(team.backup.page, "decide", {
+          proposalId,
+          action: "approve",
+        })
+      ).status(),
+    ).toBe(403);
+    // Approve as owner; self-assignment by the applying actor is deliberately quiet.
+    expect(
+      (
+        await postApproval(page, "decide", { proposalId, action: "approve" })
+      ).status(),
+    ).toBe(200);
+    inbox = await readInbox(team.author.page);
+    expect(inbox.items).toHaveLength(1);
+    expect(inbox.items[0].kind).toBe("APPROVAL_DECISION");
+    expect(inbox.items[0].message).toBe("approved your request");
+    expect(
+      (
+        await postApproval(page, "decide", { proposalId, action: "approve" })
+      ).status(),
+    ).toBe(409);
+    expect((await readInbox(team.author.page)).items).toHaveLength(1);
+    const revision = (await team.state()).tasks[0].revision;
+    const request = await postBoard(team.author.page, "update", {
+      taskId,
+      revision,
+      requestKey: createRecordId(),
+      changes: { assigneeIds: [team.backup.id] },
+    });
+    const next = (await request.json()).data.proposalId;
+    expect((await readInbox(team.backup.page)).items).toHaveLength(0);
+    expect(
+      (
+        await postApproval(page, "decide", {
+          proposalId: next,
+          action: "approve",
+        })
+      ).status(),
+    ).toBe(200);
+    expect((await readInbox(team.backup.page)).items[0].kind).toBe(
+      "ASSIGNMENT",
+    );
+    const rejection = await postBoard(team.author.page, "update", {
+      taskId,
+      revision: revision + 1,
+      requestKey: createRecordId(),
+      changes: { assigneeIds: [] },
+    });
+    expect(
+      (
+        await postApproval(page, "decide", {
+          proposalId: (await rejection.json()).data.proposalId,
+          action: "reject",
+          reason: "Keep the reviewer assigned",
+        })
+      ).status(),
+    ).toBe(200);
+    expect((await readInbox(team.author.page)).items[0].message).toBe(
+      "rejected your request",
+    );
+  } finally {
+    await team.close();
+  }
+});
+
+test("inbox pagination and concurrent read controls preserve new arrivals and enforce recipient scope", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const db = getDatabase();
+    const made = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Inbox pagination task",
+    });
+    const taskId = (await made.json()).data.taskId;
+    await db.notification.createMany({
+      data: Array.from({ length: 33 }, (_, i) => ({
+        id: createRecordId(),
+        recipientId: team.author.id,
+        actorId: team.ownerId,
+        boardId: team.boardId,
+        taskId,
+        kind: "ASSIGNMENT",
+        message: "assigned you to this task",
+        eventKey: `test-event:${i}`,
+      })),
+    });
+    const first = await readInbox(team.author.page);
+    expect(first.items).toHaveLength(30);
+    expect(first.unreadCount).toBe(33);
+    const second = await readInbox(
+      team.author.page,
+      `?cursor=${first.nextCursor}`,
+    );
+    expect(second.items).toHaveLength(3);
+    expect(second.nextCursor).toBeNull();
+    expect(
+      new Set([...first.items, ...second.items].map((item) => item.id)).size,
+    ).toBe(33);
+    const arriving = await db.notification.create({
+      data: {
+        recipientId: team.author.id,
+        actorId: team.ownerId,
+        boardId: team.boardId,
+        taskId,
+        kind: "ASSIGNMENT",
+        message: "assigned you to this task",
+        eventKey: "new-arrival",
+      },
+    });
+    expect(
+      (
+        await changeInbox(team.author.page, {
+          action: "read-all",
+          throughId: first.items[0].id,
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (await readInbox(team.author.page, "?filter=UNREAD")).items.map(
+        (item: { id: string }) => item.id,
+      ),
+    ).toEqual([arriving.id]);
+    const results = await Promise.all([
+      changeInbox(team.author.page, {
+        action: "read",
+        id: arriving.id,
+        read: true,
+      }),
+      changeInbox(team.author.page, {
+        action: "read",
+        id: arriving.id,
+        read: true,
+      }),
+    ]);
+    expect(results.map((result) => result.status())).toEqual([200, 200]);
+    expect((await readInbox(team.author.page)).unreadCount).toBe(0);
+    expect(
+      (
+        await changeInbox(team.backup.page, {
+          action: "read-all",
+          throughId: arriving.id,
+        })
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await team.author.page.request.get(
+          "/api/v1/notifications/inbox?cursor=invalid",
+        )
+      ).status(),
+    ).toBe(422);
+    const anonymous = await browser.newContext();
+    try {
+      expect(
+        (
+          await anonymous.request.get(
+            "http://127.0.0.1:3100/api/v1/notifications/inbox",
+          )
+        ).status(),
+      ).toBe(401);
+    } finally {
+      await anonymous.close();
+    }
+    await db.installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: true },
+    });
+    // Read controls are personal preferences, not task changes, and remain usable.
+    expect(
+      (
+        await changeInbox(team.author.page, {
+          action: "read",
+          id: arriving.id,
+          read: false,
+        })
+      ).status(),
+    ).toBe(200);
   } finally {
     await team.close();
   }

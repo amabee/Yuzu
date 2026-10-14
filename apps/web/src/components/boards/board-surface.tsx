@@ -60,10 +60,12 @@ export function BoardSurface({
   name,
   statuses: initialStatuses,
   initialState,
+  initialTaskId,
   group,
   info,
 }: {
   initialState: BoardState;
+  initialTaskId?: string;
   name: string;
   fields: { id: string; name: string; type?: string }[];
   statuses: string[];
@@ -107,14 +109,22 @@ export function BoardSurface({
   const fields = state.fields;
   const savedStatuses =
     state.fields.find((field) => field.key === "status")?.options ?? [];
-  const [archived, setArchived] = useState(false);
+  const [archived, setArchived] = useState(
+    Boolean(
+      initialState.tasks.find((task) => task.id === initialTaskId)?.archivedAt,
+    ),
+  );
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState("");
   const [sort, setSort] = useState("created");
   const [selectedTab, setSelectedTab] = useState<"details" | "comments">(
     "details",
   );
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    initialState.tasks.some((task) => task.id === initialTaskId)
+      ? initialTaskId!
+      : null,
+  );
   const [creating, setCreating] = useState(false);
   const tasks = state.tasks
     .filter(

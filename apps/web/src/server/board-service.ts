@@ -15,6 +15,7 @@ import {
   actualApprovalChanges,
 } from "@/lib/approval-rules";
 import type { TaskMutationResult } from "@/lib/approval-contract";
+import { createNotifications } from "./notification-events";
 import {
   boardCreateSchema,
   boardManagerSchema,
@@ -486,6 +487,15 @@ export async function createTaskRecord(
     },
   });
   await saveValues(tx, task.id, body.fieldValues, context.board, people);
+  await createNotifications(tx, {
+    recipientIds: body.assigneeIds ?? [],
+    actorId,
+    boardId: task.boardId,
+    taskId: task.id,
+    kind: "ASSIGNMENT",
+    message: "assigned you to this task",
+    eventKey: `task:${task.id}:assignment:1`,
+  });
   await tx.taskActivity.create({
     data: {
       taskId: task.id,
@@ -560,6 +570,18 @@ export async function applyTaskRecord(
   }
   await saveValues(tx, task.id, fieldValues, context.board, people);
   const after = await loadTask(tx, task.id);
+  if (assigneeIds)
+    await createNotifications(tx, {
+      recipientIds: assigneeIds.filter(
+        (id) => !task.assignees.some((person) => person.userId === id),
+      ),
+      actorId,
+      boardId: task.boardId,
+      taskId: task.id,
+      kind: "ASSIGNMENT",
+      message: "assigned you to this task",
+      eventKey: `task:${task.id}:assignment:${after!.revision}`,
+    });
   await tx.taskActivity.create({
     data: {
       taskId: task.id,
