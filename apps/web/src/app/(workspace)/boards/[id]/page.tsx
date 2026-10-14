@@ -1,22 +1,29 @@
 import { notFound } from "next/navigation";
 import { getDatabase } from "@yuzu/database";
 import { workspaceContext } from "@/server/workspace-access";
-import { Columns3 } from "lucide-react";
+import { workspaceScope } from "@/server/team-access";
+import { BoardSurface } from "@/components/boards/board-surface";
+import { z } from "zod";
 
 export default async function BoardPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { settings } = await workspaceContext();
+  const { user } = await workspaceContext();
   const board = await getDatabase().board.findFirst({
     where: {
       id: (await params).id,
-      workspaceId: settings.initialWorkspaceId ?? "",
+      workspace: workspaceScope(user),
     },
     include: { columns: { orderBy: { position: "asc" } }, groups: true },
   });
   if (!board) notFound();
+  const status = z
+    .object({ options: z.array(z.object({ label: z.string() })) })
+    .safeParse(
+      board.columns.find((column) => column.type === "STATUS")?.config,
+    );
   return (
     <div>
       <p className="mb-2 text-[11px] font-semibold tracking-[0.15em] text-brand-secondary uppercase">
@@ -27,38 +34,16 @@ export default async function BoardPage({
         Your board structure is saved. Task editing arrives in the board-engine
         milestone.
       </p>
-      <div className="mt-8 overflow-x-auto rounded-xl border bg-card">
-        <table className="w-full min-w-[700px] text-left text-sm">
-          <caption className="sr-only">{board.name} fields</caption>
-          <thead>
-            <tr>
-              {board.columns.map((column) => (
-                <th
-                  scope="col"
-                  key={column.id}
-                  className="border-b px-5 py-4 font-medium"
-                >
-                  {column.name}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td colSpan={board.columns.length} className="p-12 text-center">
-                <Columns3 size={26} className="mx-auto mb-4 text-primary" />
-                <p className="font-medium">
-                  A clean start for{" "}
-                  {board.groups[0]?.name.toLowerCase() ?? "your tasks"}.
-                </p>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  No sample records were created during installation.
-                </p>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <BoardSurface
+        name={board.name}
+        fields={board.columns}
+        statuses={
+          status.success
+            ? status.data.options.map((option) => option.label)
+            : []
+        }
+        group={board.groups[0]?.name ?? "Your tasks"}
+      />
     </div>
   );
 }

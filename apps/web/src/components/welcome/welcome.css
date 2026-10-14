@@ -1,26 +1,30 @@
 /* Welcome page styles, ported from docs/mockups/yuzu-install.html.
    Everything is scoped under .yw so it cannot leak into the rest of the app. */
 .yw {
-  --teal: #086288;
-  --blue: #4d8dba;
-  --sky: #97d7ff;
-  --cream: #ffefc4;
-  --cream-2: #fbe2a2;
-  --ink: #0a2633;
-  --ink-2: #47606c;
-  --ink-3: #7f939c;
-  --canvas: #eef3f5;
-  --paper: #ffffff;
-  --line: #dce5e9;
-  --deep: #06374b;
-  --deep-2: #0b4a63;
+  --teal: var(--primary);
+  --blue: var(--primary);
+  --sky: color-mix(in srgb, var(--primary) 35%, var(--card));
+  --cream: var(--secondary);
+  --cream-2: var(--border);
+  --ink: var(--foreground);
+  --ink-2: var(--muted-foreground);
+  --ink-3: var(--muted-foreground);
+  --canvas: var(--background);
+  --paper: var(--card);
+  --line: var(--border);
+  --deep: var(--sidebar);
+  --deep-2: var(--sidebar);
   --st-todo: #7f939c;
   --st-work: #4d8dba;
   --st-review: #b9821a;
   --st-done: #22916a;
-  --hatch: repeating-linear-gradient(-45deg, #ffefc4 0 7px, #fbe2a2 7px 14px);
-  --display: var(--font-display), system-ui, sans-serif;
-  --ui: var(--font-ui), system-ui, sans-serif;
+  --hatch: repeating-linear-gradient(
+    -45deg,
+    var(--secondary) 0 7px,
+    var(--border) 7px 14px
+  );
+  --display: var(--theme-heading);
+  --ui: var(--theme-body);
 }
 .yw * {
   box-sizing: border-box;
@@ -32,8 +36,8 @@
   font-family: var(--ui);
   background: var(--canvas);
   color: var(--ink);
-  font-size: 16px;
-  line-height: 1.55;
+  font-size: var(--theme-size);
+  line-height: var(--theme-leading);
   -webkit-font-smoothing: antialiased;
   overflow-x: clip;
 }
@@ -81,13 +85,13 @@
 }
 .yw .btn.pri {
   background: var(--teal);
-  color: #fff;
+  color: var(--primary-foreground);
 }
 .yw .btn.pri:hover {
-  background: #0a729e;
+  background: color-mix(in srgb, var(--primary) 85%, var(--foreground));
 }
 .yw .btn.ghost {
-  border-color: #bfd0d8;
+  border-color: var(--border);
   color: var(--ink);
 }
 .yw .btn.ghost:hover {
@@ -113,8 +117,8 @@
     box-shadow 0.25s;
 }
 .yw .top.scrolled {
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(10px);
+  background: color-mix(in srgb, var(--card) var(--theme-opacity), transparent);
+  backdrop-filter: blur(var(--theme-blur));
   box-shadow: 0 1px 0 var(--line);
 }
 .yw .top .wrap {
@@ -478,7 +482,7 @@
   top: 0;
   background: var(--paper);
   border-radius: 12px;
-  border: 1px solid #e3eaee;
+  border: 1px solid var(--border);
   overflow: hidden;
   will-change: transform;
 }
@@ -909,7 +913,7 @@
 }
 .yw .go-btn:hover {
   transform: translateY(-3px);
-  background: #0a729e;
+  background: color-mix(in srgb, var(--primary) 85%, var(--foreground));
 }
 .yw .go-btn:active {
   transform: translateY(0) scale(0.97);
@@ -1152,4 +1156,39 @@ html.splashing .yw .top img {
   .yw .ready {
     padding: 100px 0 120px;
   }
+}
+
+/* Keep the animation's geometry and selectors while honoring installation tokens. */
+.yw .welcome-mode {
+  margin-left: auto;
+  margin-right: 18px;
+}
+.yw h1,
+.yw h2,
+.yw h3 {
+  font-weight: var(--theme-weight);
+  letter-spacing: var(--theme-tracking);
+}
+.yw .gate,
+.yw .beats b {
+  color: var(--sidebar-foreground);
+}
+.yw .gate .sh p,
+.yw .beats span {
+  color: color-mix(in srgb, var(--sidebar-foreground) 75%, var(--sidebar));
+}
+.yw .gate h2 {
+  color: var(--sidebar-foreground);
+}
+.yw .board,
+.yw .approval,
+.yw .own-card {
+  box-shadow: var(--theme-card-shadow);
+}
+.yw select {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--foreground);
+  border-radius: var(--radius);
 }

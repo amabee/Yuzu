@@ -4,26 +4,30 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./ids": "./src/ids.ts",
+    "./upgrade-ids": "./src/upgrade-ids.ts"
   },
   "scripts": {
     "generate": "prisma generate --config prisma7.config.ts",
     "migrate": "prisma migrate dev --config prisma7.config.ts",
     "deploy": "prisma migrate deploy --config prisma7.config.ts",
     "check": "tsx src/check.ts",
+    "upgrade:ids": "tsx src/upgrade-ids.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@prisma/client": "7.10.0",
     "@prisma/adapter-pg": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "dotenv": "17.2.3",
     "pg": "8.16.3",
-    "dotenv": "17.2.3"
+    "uuid": "14.0.3"
   },
   "devDependencies": {
+    "@types/node": "24.10.1",
+    "@types/pg": "8.15.6",
     "prisma": "7.10.0",
     "tsx": "4.20.6",
-    "typescript": "5.9.3",
-    "@types/node": "24.10.1",
-    "@types/pg": "8.15.6"
+    "typescript": "5.9.3"
   }
 }

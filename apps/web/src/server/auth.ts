@@ -1,7 +1,7 @@
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { APIError, createAuthMiddleware } from "better-auth/api";
-import { getDatabase } from "@yuzu/database";
+import { createRecordId, getDatabase } from "@yuzu/database";
 import { configuredOrigin, digest } from "./setup/security";
 import { allowSignIn } from "./auth-rate-limit";
 
@@ -13,6 +13,7 @@ function makeAuth() {
   return betterAuth({
     baseURL: configuredOrigin(),
     secret,
+    advanced: { database: { generateId: () => createRecordId() } },
     database: prismaAdapter(getDatabase(), { provider: "postgresql" }),
     emailAndPassword: {
       enabled: true,
@@ -29,6 +30,14 @@ function makeAuth() {
     logger: { disabled: true },
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
+        if (
+          ctx.path === "/request-password-reset" ||
+          ctx.path === "/reset-password" ||
+          ctx.path.startsWith("/reset-password/")
+        )
+          throw new APIError("FORBIDDEN", {
+            message: "Use Yuzu's password recovery page.",
+          });
         if (
           ctx.path === "/sign-in/email" &&
           typeof ctx.body?.email === "string" &&

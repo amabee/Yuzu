@@ -28,6 +28,7 @@ import {
   verifySchema,
   type SetupStatus,
 } from "@/lib/setup-contract";
+import { ModeSwitcher } from "@/components/appearance/theme-runtime";
 import { Button } from "@/components/ui/button";
 import { Field, Input, inputClass } from "./field";
 
@@ -85,15 +86,15 @@ export function SetupWizard({ initial }: { initial: SetupStatus }) {
     "Your workspace is ready.",
   ][step - 1];
   return (
-    <div className="min-h-svh bg-background lg:grid lg:grid-cols-[300px_1fr]">
-      <aside className="flex flex-col bg-primary px-6 py-6 text-white lg:min-h-svh lg:px-8 lg:py-10">
+    <div className="yuzu-setup min-h-svh bg-background lg:grid lg:grid-cols-[300px_1fr]">
+      <aside className="flex flex-col bg-sidebar px-6 py-6 text-sidebar-foreground lg:min-h-svh lg:px-8 lg:py-10">
         <Link href="/welcome" className="flex items-center gap-3">
           <Image src="/logo.svg" alt="Yuzu" width={38} height={38} priority />
           <span className="text-2xl font-semibold tracking-tight">
             yuzu<span className="text-brand-highlight">.</span>
           </span>
         </Link>
-        <p className="mt-3 text-xs leading-5 text-white/75">
+        <p className="mt-3 text-xs leading-5 text-sidebar-foreground/75">
           A little structure.
           <br className="hidden lg:block" /> A lot of possibility.
         </p>
@@ -107,10 +108,10 @@ export function SetupWizard({ initial }: { initial: SetupStatus }) {
               <div
                 key={label}
                 aria-current={step === index ? "step" : undefined}
-                className={`flex shrink-0 items-center gap-3 rounded-lg px-2 py-2 ${step === index ? "bg-white/12 text-white" : "text-white/65"}`}
+                className={`flex shrink-0 items-center gap-3 rounded-lg px-2 py-2 ${step === index ? "bg-sidebar-foreground/12 text-sidebar-foreground" : "text-sidebar-foreground/65"}`}
               >
                 <span
-                  className={`flex size-7 items-center justify-center rounded-full border text-xs ${index < step ? "border-brand-highlight bg-brand-highlight text-primary" : "border-white/35"}`}
+                  className={`flex size-7 items-center justify-center rounded-full border text-xs ${index < step ? "border-brand-highlight bg-brand-highlight text-primary" : "border-sidebar-foreground/35"}`}
                 >
                   {index < step ? <Check size={14} /> : index}
                 </span>
@@ -122,7 +123,7 @@ export function SetupWizard({ initial }: { initial: SetupStatus }) {
         <div className="mt-auto hidden pt-14 lg:block">
           <Sprout className="mb-4 text-brand-cream" />
           <p className="text-sm font-medium">Built around your work.</p>
-          <p className="mt-2 text-xs leading-6 text-white/75">
+          <p className="mt-2 text-xs leading-6 text-sidebar-foreground/75">
             Independent hosting. Flexible boards. Clear decisions. A space your
             team can call its own.
           </p>
@@ -131,6 +132,7 @@ export function SetupWizard({ initial }: { initial: SetupStatus }) {
       <main className="mx-auto w-full max-w-5xl px-5 py-8 sm:px-10 sm:py-12 lg:px-16 lg:py-14">
         <div className="mb-8 flex items-center justify-between text-xs text-muted-foreground">
           <span>First installation</span>
+          <ModeSwitcher />
           <span>
             Step {step} of {steps.length}
           </span>
@@ -164,7 +166,7 @@ export function SetupWizard({ initial }: { initial: SetupStatus }) {
               {mutation.error && (
                 <div
                   role="alert"
-                  className="mb-6 rounded-lg border border-destructive/20 bg-white px-4 py-3 text-sm text-destructive"
+                  className="mb-6 rounded-lg border border-destructive/20 bg-sidebar-foreground px-4 py-3 text-sm text-destructive"
                 >
                   {mutation.error.message}
                 </div>

@@ -1,4 +1,3 @@
-import { getDatabase } from "@yuzu/database";
 import { workspaceContext } from "@/server/workspace-access";
 import { AppShell } from "@/components/app-shell";
 
@@ -8,16 +7,11 @@ export default async function WorkspaceLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { settings, session } = await workspaceContext();
-  const workspace = settings.initialWorkspaceId
-    ? await getDatabase().workspace.findUnique({
-        where: { id: settings.initialWorkspaceId },
-      })
-    : null;
+  const { settings, session, workspace } = await workspaceContext();
   return (
     <AppShell
       installationName={settings.name}
-      workspaceName={workspace?.name}
+      workspaceName={workspace?.name ?? "No workspace access"}
       ownerName={session.user.name}
     >
       {children}

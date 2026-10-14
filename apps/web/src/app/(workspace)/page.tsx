@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { getDatabase } from "@yuzu/database";
 import { workspaceContext } from "@/server/workspace-access";
+import { workspaceScope } from "@/server/team-access";
 
 const places = [
   {
@@ -37,12 +38,11 @@ const places = [
 ];
 
 export default async function OverviewPage() {
-  const { settings } = await workspaceContext();
-  const board = settings.initialBoardId
-    ? await getDatabase().board.findUnique({
-        where: { id: settings.initialBoardId },
-      })
-    : null;
+  const { user } = await workspaceContext();
+  const board = await getDatabase().board.findFirst({
+    where: { workspace: workspaceScope(user) },
+    orderBy: { createdAt: "asc" },
+  });
   return (
     <div>
       <div className="mb-8 flex flex-wrap items-end justify-between gap-5">
@@ -81,7 +81,7 @@ export default async function OverviewPage() {
           <Button
             asChild
             variant="outline"
-            className="mt-6 border-primary/20 bg-white/60 text-primary hover:bg-white"
+            className="mt-6 border-primary/20 bg-card/60 text-primary hover:bg-card"
           >
             <Link href="/boards">
               Find your starting point
@@ -91,7 +91,7 @@ export default async function OverviewPage() {
         </div>
         <div
           aria-hidden="true"
-          className="absolute right-10 bottom-7 hidden h-40 w-44 rotate-[-7deg] rounded-xl border border-white/70 bg-white/50 p-4 xl:block"
+          className="absolute right-10 bottom-7 hidden h-40 w-44 rotate-[-7deg] rounded-xl border border-border/70 bg-card/50 p-4 xl:block"
         >
           <div className="mb-5 h-2 w-20 rounded bg-primary/20" />
           <div className="space-y-3">

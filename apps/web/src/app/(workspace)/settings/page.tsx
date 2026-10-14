@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
 import { CalendarDays, Paperclip, ShieldCheck } from "lucide-react";
+import Link from "next/link";
+import { workspaceContext } from "@/server/workspace-access";
+import { isAdministrator } from "@/server/team-access";
 
 export const metadata: Metadata = { title: "Settings" };
 const settings = [
@@ -22,7 +25,8 @@ const settings = [
     value: "Administrator access required",
   },
 ];
-export default function SettingsPage() {
+export default async function SettingsPage() {
+  const { user } = await workspaceContext();
   return (
     <div>
       <p className="mb-2 text-[11px] font-semibold tracking-[0.15em] text-brand-secondary uppercase">
@@ -34,6 +38,22 @@ export default function SettingsPage() {
       <p className="mt-3 text-sm leading-6 text-muted-foreground">
         The foundations for the way your team works.
       </p>
+      {isAdministrator(user.role) && (
+        <Link
+          href="/settings/team"
+          className="mt-6 inline-flex rounded-lg bg-primary px-4 py-3 text-sm font-medium text-primary-foreground"
+        >
+          Manage team access
+        </Link>
+      )}
+      {isAdministrator(user.role) && (
+        <Link
+          href="/settings/appearance"
+          className="ml-3 mt-6 inline-flex rounded-lg border bg-card px-4 py-3 text-sm font-medium"
+        >
+          Customize appearance
+        </Link>
+      )}
       <div className="mt-8 overflow-hidden rounded-xl border bg-card">
         {settings.map(({ icon: Icon, title, description, value }) => (
           <section
@@ -56,8 +76,8 @@ export default function SettingsPage() {
         ))}
       </div>
       <p className="mt-5 text-xs leading-5 text-muted-foreground">
-        Settings are shown as a preview. Account setup and administrator
-        controls arrive in the identity milestone.
+        General settings are shown as a preview. Team invitations and membership
+        management are available through Team access.
       </p>
     </div>
   );

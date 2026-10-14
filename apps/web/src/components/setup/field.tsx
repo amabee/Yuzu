@@ -1,7 +1,8 @@
+import { Input as ShadcnInput } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 export const inputClass =
-  "h-11 w-full rounded-lg border border-input bg-white px-3 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:bg-muted";
+  "h-11 w-full rounded-lg border border-input bg-card px-3 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:bg-muted";
 export function Field({
   label,
   id,
@@ -36,5 +37,5 @@ export function Field({
   );
 }
 export function Input({ className, ...props }: React.ComponentProps<"input">) {
-  return <input className={cn(inputClass, className)} {...props} />;
+  return <ShadcnInput className={cn(inputClass, className)} {...props} />;
 }
