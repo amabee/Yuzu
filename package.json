@@ -23,7 +23,8 @@
     "db:generate": "pnpm --filter @yuzu/database generate",
     "db:migrate": "pnpm --filter @yuzu/database migrate",
     "db:deploy": "pnpm --filter @yuzu/database run deploy",
-    "db:check": "pnpm --filter @yuzu/database check"
+    "db:check": "pnpm --filter @yuzu/database check",
+    "db:upgrade:ids": "pnpm --filter @yuzu/database upgrade:ids"
   },
   "devDependencies": {
     "prettier": "3.7.4"

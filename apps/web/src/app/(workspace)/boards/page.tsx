@@ -1,13 +1,14 @@
 import Link from "next/link";
 import { getDatabase } from "@yuzu/database";
 import { workspaceContext } from "@/server/workspace-access";
+import { workspaceScope } from "@/server/team-access";
 import { ArrowRight, Columns3 } from "lucide-react";
 
 export const metadata = { title: "Boards" };
 export default async function BoardsPage() {
-  const { settings } = await workspaceContext();
+  const { user } = await workspaceContext();
   const boards = await getDatabase().board.findMany({
-    where: { workspaceId: settings.initialWorkspaceId ?? "" },
+    where: { workspace: workspaceScope(user) },
     select: { id: true, name: true },
   });
   return (
@@ -20,6 +21,12 @@ export default async function BoardsPage() {
         Your projects, with room to grow.
       </p>
       <div className="mt-8 grid gap-4 sm:grid-cols-2">
+        {boards.length === 0 && (
+          <p className="rounded-xl border bg-card p-6 text-sm text-muted-foreground">
+            No boards are available to you yet. Ask an owner or administrator
+            for workspace access.
+          </p>
+        )}
         {boards.map((board) => (
           <Link
             key={board.id}

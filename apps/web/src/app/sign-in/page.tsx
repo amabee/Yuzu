@@ -12,7 +12,7 @@ export default async function SignInPage() {
   });
   if (!settings?.ownerId) redirect("/welcome");
   const session = await getAuth().api.getSession({ headers: await headers() });
-  if (session?.user.id === settings.ownerId)
-    redirect(settings.setupState === "READY" ? "/" : "/setup");
+  if (session && settings.setupState === "READY") redirect("/");
+  if (session?.user.id === settings.ownerId) redirect("/setup");
   return <SignInForm />;
 }

@@ -14,8 +14,7 @@ enum SetupState {
   READY
 }
 
-// Only installation metadata is introduced in the foundation milestone.
-// Identity, membership and board models follow with their permission services.
+// Named singleton and operational keys remain strings; generated record IDs use UUIDv7.
 model InstallationSettings {
   id                         String     @id @default("installation")
   name                       String     @default("Yuzu")
@@ -24,6 +23,10 @@ model InstallationSettings {
   maxAttachmentSizeBytes     Int        @default(50000000)
   allowedAttachmentMimeTypes String[]   @default(["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf", "text/plain", "text/csv", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.openxmlformats-officedocument.presentationml.presentation"])
   maintenanceMode            Boolean    @default(false)
+  theme                      Json?
+  themeDraft                 Json?
+  previousTheme              Json?
+  themeRevision              Int        @default(0)
   setupState                 SetupState @default(UNCLAIMED)
   revision                   Int        @default(1)
   createdAt                  DateTime   @default(now()) @db.Timestamptz(3)
@@ -42,7 +45,7 @@ model InstallationSettings {
 }
 
 model User {
-  id            String                @id
+  id            String                @id @default(uuid(7))
   name          String
   email         String                @unique
   emailVerified Boolean               @default(false)
@@ -56,10 +59,12 @@ model User {
   workspaces    Workspace[]
   memberships   WorkspaceMember[]
   boards        Board[]
+  invitations   Invitation[]          @relation("Inviter")
+  accessEvents  AccessEvent[]
 }
 
 model Session {
-  id        String   @id
+  id        String   @id @default(uuid(7))
   expiresAt DateTime
   token     String   @unique
   createdAt DateTime @default(now())
@@ -73,7 +78,7 @@ model Session {
 }
 
 model Account {
-  id                    String    @id
+  id                    String    @id @default(uuid(7))
   accountId             String
   providerId            String
   userId                String
@@ -93,7 +98,7 @@ model Account {
 }
 
 model Verification {
-  id         String   @id
+  id         String   @id @default(uuid(7))
   identifier String
   value      String
   expiresAt  DateTime
@@ -120,14 +125,16 @@ model AuthenticationAttempt {
 }
 
 model Workspace {
-  id          String            @id @default(cuid())
-  name        String
-  createdById String
-  createdBy   User              @relation(fields: [createdById], references: [id], onDelete: Restrict)
-  members     WorkspaceMember[]
-  boards      Board[]
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  id           String            @id @default(uuid(7))
+  name         String
+  createdById  String
+  createdBy    User              @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  members      WorkspaceMember[]
+  boards       Board[]
+  invitations  Invitation[]
+  accessEvents AccessEvent[]
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
 }
 
 model WorkspaceMember {
@@ -139,8 +146,38 @@ model WorkspaceMember {
   @@id([workspaceId, userId])
 }
 
+model Invitation {
+  id          String    @id @default(uuid(7))
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  email       String
+  invitedById String
+  invitedBy   User      @relation("Inviter", fields: [invitedById], references: [id], onDelete: Restrict)
+  tokenDigest String    @unique
+  expiresAt   DateTime  @db.Timestamptz(3)
+  sentAt      DateTime? @db.Timestamptz(3)
+  acceptedAt  DateTime? @db.Timestamptz(3)
+  revokedAt   DateTime? @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@unique([workspaceId, email])
+}
+
+model AccessEvent {
+  id           String    @id @default(uuid(7))
+  workspaceId  String
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actorId      String
+  actor        User      @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  action       String
+  subjectEmail String
+  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([workspaceId, createdAt])
+}
+
 model Board {
-  id          String        @id @default(cuid())
+  id          String        @id @default(uuid(7))
   name        String
   workspaceId String
   workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
@@ -155,7 +192,7 @@ model Board {
 }
 
 model BoardColumn {
-  id       String @id @default(cuid())
+  id       String @id @default(uuid(7))
   boardId  String
   board    Board  @relation(fields: [boardId], references: [id], onDelete: Cascade)
   key      String
@@ -168,7 +205,7 @@ model BoardColumn {
 }
 
 model BoardGroup {
-  id       String @id @default(cuid())
+  id       String @id @default(uuid(7))
   boardId  String
   board    Board  @relation(fields: [boardId], references: [id], onDelete: Cascade)
   name     String

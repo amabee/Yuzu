@@ -134,8 +134,8 @@ collection of microservices.
 
 The foundation and first-installation wizard are runnable, including a protected
 owner account, email receipt verification, and a persisted initial workspace and
-board structure. Editable tasks, invitations, approvals, and collaboration follow
-in later milestones.
+board structure. Email invitations, password recovery, and workspace membership are available.
+Editable tasks, approvals, and collaboration follow in later milestones.
 
 Use Node.js 24, pnpm 11.9.0, and a running Docker engine. From the repository root:
 
@@ -155,7 +155,29 @@ for checks, database changes, troubleshooting, and current limitations.
 
 Follow [first installation](docs/installation.md): copy the generated setup key
 from the server's `.env`, create the owner, and verify email delivery. No sample
-tasks are created. Invitations and task editing remain subsequent milestones.
+tasks are created. After installation, open Settings → Manage team access to
+invite teammates into a workspace. Invitations expire after seven days; resending
+replaces the previous link. New users create an account, while existing users
+sign in with the invited email before accepting. Owners/admins manage membership;
+ordinary members only see boards in their current workspaces.
+
+Generated record IDs use UUIDv7. Use `ORDER BY id` for time-oriented ordering, or
+`ORDER BY "createdAt", id` when querying exact creation dates with a stable tie-breaker.
+Named installation, bootstrap, recovery, and rate-limit keys retain their defined
+string formats. Existing local data can be upgraded with `pnpm db:upgrade:ids`;
+this preserves accounts, credentials, memberships, boards, and their creation dates,
+while signing out existing sessions and invalidating recovery records when IDs change.
+
+Use **Forgot password?** on the sign-in page to request a recovery email. Links
+expire after 30 minutes, work once, and are replaced by a newer request. A successful
+reset signs out all sessions for that account. Recovery requires verified email
+configuration; request responses do not disclose whether an account exists.
+
+For local email testing, `pnpm services:up` also starts Mailpit. In Yuzu's email
+setup, use SMTP host `127.0.0.1`, port `1025`, SSL off, and blank username and
+password. Use a sender such as `noreply@yuzu.test`, then read the verification
+code in [Mailpit's inbox](http://127.0.0.1:8025). Messages are stored in a Docker
+volume for testing rather than delivered to real inboxes.
 
 > [!CAUTION]
 > Avoid using Yuzu with important production data until deployment and recovery

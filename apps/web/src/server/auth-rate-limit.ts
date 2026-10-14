@@ -2,6 +2,30 @@ import { getDatabase } from "@yuzu/database";
 import { digest } from "./setup/security";
 
 export async function allowSignIn(email: string): Promise<boolean> {
+  return allowAttempt(email, "sign-in");
+}
+
+export async function allowInvitationAttempt(token: string): Promise<boolean> {
+  return allowAttempt(token, "invitation");
+}
+
+export async function allowRecoveryRequest(email: string): Promise<boolean> {
+  return allowAttempt(email, "recovery-request", {
+    limit: 1,
+    window: 60_000,
+    globalLimit: 30,
+  });
+}
+
+export async function allowRecoveryReset(token: string): Promise<boolean> {
+  return allowAttempt(token, "recovery-reset");
+}
+
+async function allowAttempt(
+  subject: string,
+  namespace: string,
+  limits = { limit: 10, window: 600_000, globalLimit: 100 },
+): Promise<boolean> {
   const db = getDatabase();
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -9,11 +33,15 @@ export async function allowSignIn(email: string): Promise<boolean> {
         async (tx) => {
           const now = new Date();
           for (const rule of [
-            { id: "sign-in-global", limit: 100, window: 60_000 },
             {
-              id: `sign-in:${digest(email.trim().toLowerCase())}`,
-              limit: 10,
-              window: 600_000,
+              id: `${namespace}-global`,
+              limit: limits.globalLimit,
+              window: 60_000,
+            },
+            {
+              id: `${namespace}:${digest(namespace === "sign-in" ? subject.trim().toLowerCase() : subject)}`,
+              limit: limits.limit,
+              window: limits.window,
             },
           ]) {
             const current = await tx.authenticationAttempt.findUnique({

@@ -4,14 +4,12 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Bell,
   CheckCheck,
   ChevronRight,
   CircleHelp,
   Home,
   LayoutGrid,
   Menu,
-  Search,
   Settings2,
   Sprout,
 } from "lucide-react";
@@ -25,6 +23,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { ModeSwitcher } from "@/components/appearance/theme-runtime";
 import { SignOut } from "@/components/sign-out";
 
 const navigation = [
@@ -57,13 +56,13 @@ function Sidebar({
           yuzu<span className="text-brand-highlight">.</span>
         </span>
       </Link>
-      <div className="mb-7 rounded-xl border border-white/15 bg-white/8 px-3 py-3">
-        <p className="text-[10px] font-semibold tracking-[0.14em] text-white/65 uppercase">
+      <div className="mb-7 rounded-xl border border-sidebar-foreground/15 bg-sidebar-foreground/8 px-3 py-3">
+        <p className="text-[10px] font-semibold tracking-[0.14em] text-sidebar-foreground/65 uppercase">
           Workspace
         </p>
         <p className="mt-1 truncate text-sm font-medium">{workspaceName}</p>
       </div>
-      <p className="mb-3 px-3 text-[10px] font-semibold tracking-[0.14em] text-white/65 uppercase">
+      <p className="mb-3 px-3 text-[10px] font-semibold tracking-[0.14em] text-sidebar-foreground/65 uppercase">
         Make work flow
       </p>
       <nav aria-label="Main navigation" className="space-y-1.5">
@@ -72,12 +71,18 @@ function Sidebar({
             key={href}
             href={href}
             onClick={close}
-            aria-current={pathname === href ? "page" : undefined}
+            aria-current={
+              pathname === href ||
+              (href !== "/" && pathname.startsWith(`${href}/`))
+                ? "page"
+                : undefined
+            }
             className={cn(
-              "flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium transition-colors hover:bg-white/10 focus-visible:outline-white",
-              pathname === href
-                ? "bg-white text-primary shadow-sm hover:bg-white"
-                : "text-white/85",
+              "flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium transition-colors hover:bg-sidebar-foreground/10 focus-visible:outline-sidebar-foreground",
+              pathname === href ||
+                (href !== "/" && pathname.startsWith(`${href}/`))
+                ? "bg-sidebar-foreground/15 text-sidebar-foreground shadow-sm hover:bg-sidebar-foreground/20"
+                : "text-sidebar-foreground/85",
             )}
           >
             <Icon size={18} strokeWidth={1.8} />
@@ -86,14 +91,14 @@ function Sidebar({
         ))}
       </nav>
       <div className="mt-auto pt-10">
-        <div className="rounded-xl bg-white/8 p-4">
-          <Sprout size={21} className="mb-3 text-brand-cream" />
+        <div className="rounded-xl bg-sidebar-foreground/8 p-4">
+          <Sprout size={21} className="mb-3 text-sidebar-foreground/80" />
           <p className="text-sm font-medium">Room to grow.</p>
-          <p className="mt-1.5 text-xs leading-relaxed text-white/75">
+          <p className="mt-1.5 text-xs leading-relaxed text-sidebar-foreground/75">
             A workspace shaped around your team, one project at a time.
           </p>
         </div>
-        <div className="mt-5 flex items-center gap-2 px-1 text-xs text-white/65">
+        <div className="mt-5 flex items-center gap-2 px-1 text-xs text-sidebar-foreground/65">
           <CircleHelp size={15} />
           {installationName}
         </div>
@@ -117,23 +122,27 @@ export function AppShell({
   const mobileOpen = useUiStore((state) => state.mobileNavigationOpen);
   const setMobileOpen = useUiStore((state) => state.setMobileNavigationOpen);
   const title =
-    navigation.find((item) => item.href === pathname)?.label ?? "Workspace";
+    navigation.find(
+      (item) =>
+        item.href === pathname ||
+        (item.href !== "/" && pathname.startsWith(`${item.href}/`)),
+    )?.label ?? "Workspace";
   return (
-    <div className="min-h-svh">
+    <div className="min-h-svh yuzu-workspace">
       <a
         href="#main-content"
-        className="sr-only z-50 rounded bg-white p-3 text-primary focus:not-sr-only focus:fixed focus:top-3 focus:left-3"
+        className="sr-only z-50 rounded bg-sidebar-foreground p-3 text-primary focus:not-sr-only focus:fixed focus:top-3 focus:left-3"
       >
         Skip to content
       </a>
-      <aside className="fixed inset-y-0 left-0 hidden w-60 lg:block">
+      <aside className="fixed inset-y-0 left-0 hidden w-56 lg:block">
         <Sidebar
           installationName={installationName}
           workspaceName={workspaceName}
         />
       </aside>
-      <div className="lg:pl-60">
-        <header className="flex h-20 items-center justify-between gap-3 border-b bg-card px-5 sm:px-9 lg:px-10">
+      <div className="lg:pl-56">
+        <header className="yuzu-topbar sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b bg-card px-5 sm:px-9 lg:px-8">
           <div className="flex min-w-0 items-center gap-3">
             <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
               <SheetTrigger asChild>
@@ -176,27 +185,7 @@ export function AppShell({
           </div>
           <div className="flex items-center gap-2 sm:gap-4">
             <SignOut />
-            <span className="rounded-full border border-primary/15 bg-secondary px-3 py-1 text-[11px] font-medium text-primary">
-              Preview
-            </span>
-            <Button
-              variant="ghost"
-              size="icon"
-              disabled
-              aria-label="Search unavailable in this preview"
-              title="Search arrives with boards"
-            >
-              <Search size={18} />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              disabled
-              aria-label="Notifications unavailable in this preview"
-              title="Notifications arrive with collaboration"
-            >
-              <Bell size={18} />
-            </Button>
+            <ModeSwitcher />
             <div className="hidden h-8 w-px bg-border sm:block" />
             <div
               aria-label="Yuzu workspace"
@@ -209,7 +198,7 @@ export function AppShell({
         <main
           id="main-content"
           tabIndex={-1}
-          className="mx-auto max-w-[1440px] px-5 py-8 outline-none sm:px-9 sm:py-10 lg:px-10"
+          className="mx-auto max-w-[1440px] px-5 py-8 outline-none sm:px-9 sm:py-10 lg:px-8"
         >
           {children}
         </main>
