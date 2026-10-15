@@ -1,4 +1,5 @@
 import { checkDatabase } from "@yuzu/database";
+import { checkAttachmentStorage } from "@yuzu/database/attachment-objects";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,6 +8,7 @@ export async function GET() {
   const requestId = crypto.randomUUID();
   try {
     await checkDatabase();
+    await checkAttachmentStorage();
     return Response.json(
       { data: { status: "ready" }, requestId },
       { headers: { "Cache-Control": "no-store" } },

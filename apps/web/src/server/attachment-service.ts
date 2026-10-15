@@ -1,4 +1,11 @@
 import { getDatabase, type DatabaseTransaction } from "@yuzu/database";
+import {
+  storageProvider,
+  s3Bucket,
+  writeS3Attachment,
+  discardAttachmentObject,
+  type AttachmentLocation,
+} from "@yuzu/database/attachment-objects";
 import { recordId } from "@/lib/id-contract";
 import { attachmentName, attachmentTypes } from "@/lib/attachment-contract";
 import { access, serial } from "./board-service";
@@ -126,17 +133,33 @@ export async function uploadAttachment(taskId: string, request: Request) {
       "FILE_TYPE_NOT_ALLOWED",
       "Choose a file type allowed by the installation's upload policy.",
     );
+  const provider = storageProvider();
+  const bucket = provider === "S3" ? s3Bucket() : null;
   const received = await receiveAttachment(
     request,
     initial.settings.maxAttachmentSizeBytes,
   );
   let retained = false;
+  let remoteAttempted = false;
+  const location: AttachmentLocation = {
+    storageKey: received.storageKey,
+    storageProvider: provider,
+    storageBucket: bucket,
+  };
   try {
     const validated = await validateAttachment(
       attachmentPath(received.storageKey),
       fileName,
       request.headers.get("content-type") ?? "",
     );
+    if (location.storageProvider === "S3") {
+      remoteAttempted = true;
+      await writeS3Attachment(
+        received,
+        location.storageBucket!,
+        request.signal,
+      );
+    }
     // Recheck session, permissions and policy after the potentially slow transfer.
     const identity = await requireIdentity(request.headers);
     const result = await serial(async (tx) => {
@@ -193,6 +216,8 @@ export async function uploadAttachment(taskId: string, request: Request) {
           uploadKey,
           ...received,
           ...validated,
+          storageProvider: location.storageProvider,
+          storageBucket: location.storageBucket,
         },
       });
       await tx.boardEvent.create({
@@ -214,7 +239,25 @@ export async function uploadAttachment(taskId: string, request: Request) {
     retained = result.storageKey === received.storageKey;
     return { id: result.id, taskId, boardId: result.boardId };
   } finally {
-    if (!retained) await discardAttachment(received.storageKey);
+    if (!retained || location.storageProvider === "S3")
+      await discardAttachment(received.storageKey).catch(() => {
+        console.error(
+          JSON.stringify({
+            event: "attachment_staging_cleanup_pending",
+            storageKey: received.storageKey,
+          }),
+        );
+      });
+    if (!retained && remoteAttempted) {
+      await discardAttachmentObject(location).catch(() => {
+        console.error(
+          JSON.stringify({
+            event: "attachment_cleanup_pending",
+            storageKey: received.storageKey,
+          }),
+        );
+      });
+    }
   }
 }
 
@@ -263,11 +306,13 @@ export async function removeAttachment(id: string, headers: Headers) {
       taskId: file.taskId,
       boardId: context.task.boardId,
       storageKey: file.storageKey,
+      storageProvider: file.storageProvider,
+      storageBucket: file.storageBucket,
     };
   });
   // Visibility changes atomically; a failed physical cleanup remains retryable.
   try {
-    await discardAttachment(result.storageKey);
+    await discardAttachmentObject(result);
   } catch {
     console.error(
       JSON.stringify({

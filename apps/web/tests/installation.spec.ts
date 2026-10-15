@@ -1,9 +1,13 @@
 import { test as base, expect } from "@playwright/test";
 import { SMTPServer } from "smtp-server";
-import { readdir } from "node:fs/promises";
+import { readdir, mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRecordId, getDatabase } from "@yuzu/database";
 import { upgradeRecordIds } from "@yuzu/database/upgrade-ids";
+import { readAttachmentObject } from "@yuzu/database/attachment-objects";
 import type { Page } from "@playwright/test";
 import { presets } from "../src/components/design-preview/theme-model";
 import { encryptSettings } from "../src/server/setup/security";
@@ -4117,6 +4121,112 @@ const removeFile = (page: Page, id: string) =>
     data: {},
   });
 
+test("local attachments migrate to S3 with verified bytes and safe reruns", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(60_000);
+  test.skip(
+    process.env.YUZU_E2E_S3 !== "1",
+    "Requires the isolated SeaweedFS test bucket.",
+  );
+  const team = await approvalTeam(page, browser);
+  const directory = fileURLToPath(
+    new URL("../../../artifacts/e2e-attachments/", import.meta.url),
+  );
+  const content = Buffer.from("Existing local reference 🍋");
+  try {
+    expect(
+      (
+        await postBoard(page, "create-task", {
+          boardId: team.boardId,
+          createKey: createRecordId(),
+          name: "Legacy file migration",
+        })
+      ).status(),
+    ).toBe(200);
+    const taskId = (await team.state()).tasks[0].id;
+    const storageKey = createRecordId();
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, `${storageKey}.bin`), content);
+    const file = await getDatabase().taskAttachment.create({
+      data: {
+        taskId,
+        uploadedById: team.ownerId,
+        uploadKey: createRecordId(),
+        storageKey,
+        fileName: "legacy.txt",
+        mimeType: "text/plain",
+        sizeBytes: content.length,
+        sha256: createHash("sha256").update(content).digest("hex"),
+      },
+    });
+    const before = await page.request.get(`/api/v1/attachments/${file.id}`);
+    expect(before.status()).toBe(200);
+    expect(await before.body()).toEqual(content);
+    const migrate = () =>
+      spawnSync("pnpm attachments:migrate-s3", {
+        shell: true,
+        encoding: "utf8",
+        timeout: 20_000,
+        cwd: fileURLToPath(new URL("../../../", import.meta.url)),
+        env: {
+          ...process.env,
+          DATABASE_URL: process.env.YUZU_E2E_DATABASE_URL,
+          YUZU_UPLOAD_DIR: directory,
+          YUZU_S3_BUCKET: "yuzu-e2e-attachments",
+        },
+      });
+    const first = migrate();
+    expect(first.status, first.stderr).toBe(0);
+    expect(first.stdout).toContain("verified 1 attachment(s)");
+    expect(
+      await getDatabase().taskAttachment.findUniqueOrThrow({
+        where: { id: file.id },
+      }),
+    ).toMatchObject({
+      storageProvider: "S3",
+      storageBucket: "yuzu-e2e-attachments",
+    });
+    expect(await readFile(join(directory, `${storageKey}.bin`))).toEqual(
+      content,
+    );
+    const after = await page.request.get(`/api/v1/attachments/${file.id}`);
+    expect(after.status()).toBe(200);
+    expect(await after.body()).toEqual(content);
+    const second = migrate();
+    expect(second.status, second.stderr).toBe(0);
+    expect(second.stdout).toContain("verified 0 attachment(s)");
+    const brokenKey = createRecordId();
+    await writeFile(join(directory, `${brokenKey}.bin`), "corrupted");
+    const broken = await getDatabase().taskAttachment.create({
+      data: {
+        taskId,
+        uploadedById: team.ownerId,
+        uploadKey: createRecordId(),
+        storageKey: brokenKey,
+        fileName: "broken.txt",
+        mimeType: "text/plain",
+        sizeBytes: content.length,
+        sha256: file.sha256,
+      },
+    });
+    expect(migrate().status).not.toBe(0);
+    expect(
+      (
+        await getDatabase().taskAttachment.findUniqueOrThrow({
+          where: { id: broken.id },
+        })
+      ).storageProvider,
+    ).toBe("LOCAL");
+    expect(await readFile(join(directory, `${brokenKey}.bin`), "utf8")).toBe(
+      "corrupted",
+    );
+  } finally {
+    await team.close();
+  }
+});
+
 test("attachments enforce scope, editor/manager ownership, policy, retry identity and archive preservation", async ({
   page,
   browser,
@@ -4140,6 +4250,15 @@ test("attachments enforce scope, editor/manager ownership, policy, retry identit
     ]);
     for (const response of uploads) expect(response.status()).toBe(201);
     const fileId = (await uploads[0].json()).data.id;
+    const stored = await getDatabase().taskAttachment.findUniqueOrThrow({
+      where: { id: fileId },
+    });
+    expect(stored.storageProvider).toBe(
+      process.env.YUZU_E2E_S3 === "1" ? "S3" : "LOCAL",
+    );
+    expect(stored.storageBucket).toBe(
+      process.env.YUZU_E2E_S3 === "1" ? "yuzu-e2e-attachments" : null,
+    );
     expect((await uploads[1].json()).data.id).toBe(fileId);
     expect((await team.state()).tasks[0].revision).toBe(1);
     expect((await team.state()).pendingApprovals).toHaveLength(0);
@@ -4165,6 +4284,14 @@ test("attachments enforce scope, editor/manager ownership, policy, retry identit
     expect(own.status()).toBe(201);
     const ownId = (await own.json()).data.id;
     expect((await removeFile(team.author.page, ownId)).status()).toBe(200);
+    if (process.env.YUZU_E2E_S3 === "1") {
+      const removed = await getDatabase().taskAttachment.findUniqueOrThrow({
+        where: { id: ownId },
+      });
+      await expect(readAttachmentObject(removed)).rejects.toMatchObject({
+        $metadata: { httpStatusCode: 404 },
+      });
+    }
     expect((await removeFile(team.author.page, ownId)).status()).toBe(200);
     expect(
       await getDatabase().boardEvent.count({

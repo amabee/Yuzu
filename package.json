@@ -25,7 +25,8 @@
     "db:deploy": "pnpm --filter @yuzu/database run deploy",
     "db:check": "pnpm --filter @yuzu/database check",
     "db:upgrade:ids": "pnpm --filter @yuzu/database upgrade:ids",
-    "attachments:cleanup": "pnpm --filter @yuzu/database attachments:cleanup"
+    "attachments:cleanup": "pnpm --filter @yuzu/database attachments:cleanup",
+    "attachments:migrate-s3": "pnpm --filter @yuzu/database attachments:migrate-s3"
   },
   "devDependencies": {
     "prettier": "3.7.4"

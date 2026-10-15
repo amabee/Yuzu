@@ -224,21 +224,54 @@ JPEG, PNG, GIF, WebP, PDF, UTF-8 TXT/CSV and modern Office documents. The server
 enforces the installation's size/MIME policy and checks file contents. Signature
 checks identify formats; they do not replace malware scanning.
 
-Set the server-only `YUZU_UPLOAD_DIR` to an **absolute persistent directory** when
-deploying to a shared server. Local development defaults to
-`apps/web/storage/attachments`. Keep this directory outside public/static hosting
-and mount persistent storage if running the web process in a container. Multiple
-web instances must share the same private files. Reverse proxies must allow the
-configured request size and the two-minute upload timeout.
+New installations use **SeaweedFS through the S3 API**. Run `pnpm setup:keys` to
+generate server-only storage credentials, then `pnpm services:up`. Docker runs a
+pinned SeaweedFS Mini image with persistent `seaweedfs_data`, authenticated S3 on
+`127.0.0.1:8333`, and a private `yuzu-attachments` bucket. Other storage interfaces
+are not published. This is a single-node deployment; it does not provide host
+failure redundancy.
 
-Back up PostgreSQL **and** the upload directory together. Enable maintenance mode
-and drain active uploads before backing up; restore the matching database and
-files together. Archived tasks preserve files. Removed files become unavailable
-immediately; physical cleanup is attempted after the metadata change commits.
-Run `pnpm attachments:cleanup` against the intended database/storage configuration
-to remove unreferenced UUIDv7 files older than 24 hours after interrupted uploads
-or failed cleanup. Active references and recent files are preserved. No recurring
-cleanup job is installed automatically.
+`YUZU_STORAGE_PROVIDER=S3` selects storage for **new** uploads. Configure
+`YUZU_S3_ENDPOINT`, `YUZU_S3_BUCKET`, `YUZU_S3_REGION`, `YUZU_S3_ACCESS_KEY_ID`, and
+`YUZU_S3_SECRET_ACCESS_KEY` on the server. `YUZU_S3_FORCE_PATH_STYLE=true` supports
+SeaweedFS; it can be disabled for providers using virtual-host bucket addressing.
+Provision the bucket before starting Yuzu. If the web app runs in Docker, use
+`http://seaweedfs:8333` on its private Docker network rather than the host address.
+Credentials never reach browsers; Yuzu checks task access and streams downloads.
+Readiness checks include access to the configured S3 bucket.
+
+Each attachment records its provider and bucket. Existing disk attachments stay
+readable when enabling S3; changing the default does not move them. Keep the S3
+endpoint configured while any S3 attachments remain. Changing endpoints requires
+copying existing objects and verifying them first.
+
+`YUZU_UPLOAD_DIR` is the private local staging directory for size/content checks
+(default `apps/web/storage/attachments`). In S3 mode, validated uploads are copied
+to object storage and staging files are removed. `LOCAL` mode retains files on
+disk instead. Set an absolute directory on a shared server; keep it outside
+public/static hosting. Web instances using LOCAL must share this directory.
+Reverse proxies must allow the configured request size and upload duration.
+
+To move existing files, apply migrations with `pnpm db:deploy`, configure S3,
+then run `pnpm attachments:migrate-s3`. It verifies the local source and a full
+S3 download against the database size and SHA-256 before changing each row.
+It preserves local originals and can resume safely after interruption. Enable
+maintenance mode and drain active uploads/removals before migrating or backing
+up. Back up PostgreSQL **and** SeaweedFS's persistent volume (plus any remaining
+local files); restore matching metadata and file contents together. Preserved
+local originals are rollback copies, not automatic rollback of database locations.
+
+Archived tasks preserve files. Removal hides the attachment immediately, then
+attempts physical cleanup. `pnpm attachments:cleanup` removes unreferenced UUIDv7
+disk files and, in S3 mode, objects under `attachments/` in the configured bucket
+that are older than 24 hours. Active references, migration originals, and recent
+files are preserved. Run cleanup for each previous bucket if bucket configuration
+changes. No recurring cleanup job is installed automatically.
+
+Run `pnpm --filter @yuzu/database test:storage` for real S3 integrity/access tests
+against local SeaweedFS. Browser tests default to isolated LOCAL storage; set
+`YUZU_E2E_S3=1` to exercise the same upload/permission/download workflows against
+the separate `yuzu-e2e-attachments` bucket.
 
 ## Contributing
 

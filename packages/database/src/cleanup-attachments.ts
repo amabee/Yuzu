@@ -3,6 +3,12 @@ import { readdir, stat, unlink } from "node:fs/promises";
 import { resolve, isAbsolute, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDatabase } from "./index";
+import {
+  storageProvider,
+  s3Bucket,
+  listAttachmentObjects,
+  discardAttachmentObject,
+} from "./attachment-objects";
 
 config({ path: new URL("../../../.env", import.meta.url), quiet: true });
 const configured = process.env.YUZU_UPLOAD_DIR;
@@ -58,6 +64,26 @@ try {
   console.log(
     `Removed ${removed} unreferenced attachment file(s) older than 24 hours.`,
   );
+  if (storageProvider() === "S3") {
+    const bucket = s3Bucket();
+    let remoteRemoved = 0;
+    for await (const object of listAttachmentObjects(bucket)) {
+      if (
+        active.has(object.storageKey) ||
+        object.lastModified.getTime() >= cutoff
+      )
+        continue;
+      await discardAttachmentObject({
+        storageKey: object.storageKey,
+        storageProvider: "S3",
+        storageBucket: bucket,
+      });
+      remoteRemoved++;
+    }
+    console.log(
+      `Removed ${remoteRemoved} unreferenced S3 attachment object(s) older than 24 hours.`,
+    );
+  }
 } finally {
   await db.$disconnect();
 }

@@ -1,10 +1,8 @@
-import { open } from "node:fs/promises";
-import { Readable } from "node:stream";
+import { readAttachmentObject } from "@yuzu/database/attachment-objects";
 import {
   downloadAttachment,
   removeAttachment,
 } from "@/server/attachment-service";
-import { attachmentPath } from "@/server/attachment-storage";
 import { attachmentError } from "@/server/attachment-response";
 import { notifyBoardMutation } from "@/server/realtime";
 import { readSetupBody, SetupError } from "@/server/setup/security";
@@ -17,14 +15,23 @@ export async function GET(request: Request, context: Context) {
       (await context.params).id,
       request.headers,
     );
-    let handle;
+    let body;
     try {
-      handle = await open(attachmentPath(file.storageKey), "r");
-    } catch {
+      body = await readAttachmentObject(file, request.signal);
+    } catch (error) {
+      const storageError = error as {
+        code?: string;
+        $metadata?: { httpStatusCode?: number };
+      };
+      const missing =
+        storageError.code === "ENOENT" ||
+        storageError.$metadata?.httpStatusCode === 404;
       throw new SetupError(
-        404,
-        "FILE_UNAVAILABLE",
-        "The stored file is unavailable. Contact your administrator.",
+        missing ? 404 : 503,
+        missing ? "FILE_UNAVAILABLE" : "STORAGE_UNAVAILABLE",
+        missing
+          ? "The stored file is unavailable. Contact your administrator."
+          : "File storage is temporarily unavailable. Try again shortly.",
       );
     }
     const fallback = file.fileName.replace(/[^a-zA-Z0-9._ -]/g, "_");
@@ -32,20 +39,17 @@ export async function GET(request: Request, context: Context) {
       /['()*]/g,
       (c) => `%${c.charCodeAt(0).toString(16)}`,
     );
-    return new Response(
-      Readable.toWeb(handle.createReadStream()) as ReadableStream<Uint8Array>,
-      {
-        headers: {
-          "Content-Type": file.mimeType,
-          "Content-Length": String(file.sizeBytes),
-          "Content-Disposition": `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`,
-          "Cache-Control": "private, no-store",
-          "X-Content-Type-Options": "nosniff",
-          "Content-Security-Policy": "default-src 'none'; sandbox",
-          "Cross-Origin-Resource-Policy": "same-origin",
-        },
+    return new Response(body, {
+      headers: {
+        "Content-Type": file.mimeType,
+        "Content-Length": String(file.sizeBytes),
+        "Content-Disposition": `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`,
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+        "Cross-Origin-Resource-Policy": "same-origin",
       },
-    );
+    });
   } catch (error) {
     return attachmentError(error);
   }

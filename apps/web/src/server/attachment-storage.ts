@@ -1,33 +1,15 @@
 import { createHash } from "node:crypto";
-import { mkdir, open, unlink } from "node:fs/promises";
-import { resolve, dirname } from "node:path";
+import { mkdir, open } from "node:fs/promises";
 import { createRecordId } from "@yuzu/database";
+import {
+  uploadRoot,
+  attachmentPath,
+  discardLocalAttachment,
+} from "@yuzu/database/attachment-objects";
 import { SetupError } from "./setup/security";
 
-export const uploadRoot = () =>
-  resolve(
-    /* turbopackIgnore: true */ process.env.YUZU_UPLOAD_DIR ||
-      "storage/attachments",
-  );
-export function attachmentPath(storageKey: string) {
-  if (
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
-      storageKey,
-    )
-  )
-    throw new Error("Invalid private attachment storage key.");
-  const path = resolve(uploadRoot(), `${storageKey}.bin`);
-  if (dirname(path) !== uploadRoot())
-    throw new Error("Invalid attachment path.");
-  return path;
-}
-export async function discardAttachment(storageKey: string) {
-  try {
-    await unlink(attachmentPath(storageKey));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-}
+export { uploadRoot, attachmentPath };
+export const discardAttachment = discardLocalAttachment;
 
 /** Stream directly to private disk, bounding actual bytes even without Content-Length. */
 export async function receiveAttachment(request: Request, maxBytes: number) {

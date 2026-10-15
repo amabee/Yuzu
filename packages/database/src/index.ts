@@ -7,7 +7,7 @@ const databaseGlobal = globalThis as unknown as {
   yuzuDatabase?: PrismaClient;
   yuzuDatabaseSchemaVersion?: string;
 };
-const schemaVersion = "task-attachments-v1";
+const schemaVersion = "s3-task-attachments-v1";
 
 export function getDatabase(): PrismaClient {
   if (
@@ -45,6 +45,8 @@ export async function checkDatabase(): Promise<void> {
     db.notification.findFirst({ select: { id: true } }),
     db.commentRevision.findFirst({ select: { id: true } }),
     db.task.findFirst({ select: { checklist: true } }),
-    db.taskAttachment.findFirst({ select: { id: true } }),
+    db.taskAttachment.findFirst({
+      select: { id: true, storageProvider: true, storageBucket: true },
+    }),
   ]);
 }

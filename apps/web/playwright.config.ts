@@ -45,6 +45,8 @@ export default defineConfig({
         YUZU_UPLOAD_DIR: fileURLToPath(
           new URL("../../artifacts/e2e-attachments/", import.meta.url),
         ),
+        YUZU_STORAGE_PROVIDER: process.env.YUZU_E2E_S3 === "1" ? "S3" : "LOCAL",
+        YUZU_S3_BUCKET: "yuzu-e2e-attachments",
       },
       timeout: 60_000,
     },

@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./ids": "./src/ids.ts",
+    "./attachment-objects": "./src/attachment-objects.ts",
     "./upgrade-ids": "./src/upgrade-ids.ts"
   },
   "scripts": {
@@ -15,9 +16,12 @@
     "check": "tsx src/check.ts",
     "upgrade:ids": "tsx src/upgrade-ids.ts",
     "attachments:cleanup": "tsx src/cleanup-attachments.ts",
+    "attachments:migrate-s3": "tsx src/migrate-attachments-s3.ts",
+    "test:storage": "tsx --test src/attachment-objects.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1151.0",
     "@prisma/adapter-pg": "7.10.0",
     "@prisma/client": "7.10.0",
     "dotenv": "17.2.3",
