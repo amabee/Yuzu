@@ -38,6 +38,34 @@ services:
       timeout: 3s
       retries: 30
       start_period: 10s
+  seaweedfs-console:
+    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    restart: unless-stopped
+    command:
+      ["admin", "-master=seaweedfs:9333", "-ip=0.0.0.0", "-dataDir=/data"]
+    environment:
+      WEED_ADMIN_USER: ${YUZU_SEAWEED_ADMIN_USER:-admin}
+      WEED_ADMIN_PASSWORD: ${YUZU_SEAWEED_ADMIN_PASSWORD:?Run pnpm setup:keys first}
+    ports:
+      - "127.0.0.1:${YUZU_SEAWEED_ADMIN_PORT:-23646}:23646"
+    volumes:
+      - seaweedfs_console_data:/data
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:23646/health",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
   postgres:
     image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
     restart: unless-stopped
@@ -102,6 +130,7 @@ services:
       retries: 20
 
 volumes:
+  seaweedfs_console_data:
   seaweedfs_data:
   postgres_data:
   mailpit_data:

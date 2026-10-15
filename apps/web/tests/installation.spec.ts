@@ -4121,6 +4121,99 @@ const removeFile = (page: Page, id: string) =>
     data: {},
   });
 
+test("JPG and PDF uploads validate in Next and keep the open task stable", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(120_000);
+  const team = await approvalTeam(page, browser);
+  try {
+    expect(
+      (
+        await postBoard(page, "create-task", {
+          boardId: team.boardId,
+          createKey: createRecordId(),
+          name: "Binary references",
+        })
+      ).status(),
+    ).toBe(200);
+    const taskId = (await team.state()).tasks[0].id;
+    await page.goto(`/boards/${team.boardId}`);
+    await page
+      .getByRole("button", { name: "Binary references", exact: true })
+      .click();
+    await page.getByRole("tab", { name: /Files/ }).click();
+    await expect(
+      page.getByText("No files attached yet", { exact: true }),
+    ).toBeVisible();
+    const probe = createRecordId();
+    await page.evaluate((value) => {
+      document.documentElement.dataset.reloadProbe = value;
+    }, probe);
+    const jpg = await readFile(
+      new URL("./fixtures/reference.jpg", import.meta.url),
+    );
+    const pdf = Buffer.from(
+      "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF",
+    );
+    for (const [name, content, mime] of [
+      ["reference.jpg", jpg, "image/jpeg"],
+      ["reference.pdf", pdf, "application/pdf"],
+    ] as const) {
+      await page
+        .getByLabel("Choose a file", { exact: true })
+        .setInputFiles({ name, mimeType: mime, buffer: content });
+      const response = page.waitForResponse(
+        (response) =>
+          response.url().includes("/api/v1/attachments?") &&
+          response.request().method() === "POST",
+      );
+      await page
+        .getByRole("button", { name: "Upload file", exact: true })
+        .click();
+      const uploaded = await response;
+      expect(uploaded.status(), await uploaded.text()).toBe(201);
+      const id = (await uploaded.json()).data.id;
+      await expect(
+        page.getByRole("button", { name: `Download ${name}`, exact: true }),
+      ).toBeVisible();
+      const downloaded = await page.request.get(`/api/v1/attachments/${id}`);
+      expect(downloaded.status()).toBe(200);
+      expect(await downloaded.body()).toEqual(content);
+      await expect(page.locator("html")).toHaveAttribute(
+        "data-reload-probe",
+        probe,
+      );
+    }
+    expect(
+      (
+        await postFile(
+          page,
+          taskId,
+          "fake.jpg",
+          Buffer.from("not a JPEG"),
+          createRecordId(),
+          "image/jpeg",
+        )
+      ).status(),
+    ).toBe(415);
+    if (process.env.YUZU_E2E_DEV === "1") {
+      // Runtime data and dev logs must not become HMR dependencies.
+      await page.waitForTimeout(15_000);
+      await expect(page.locator("html")).toHaveAttribute(
+        "data-reload-probe",
+        probe,
+      );
+      await expect(page.getByRole("tab", { name: /Files 2/ })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+    }
+  } finally {
+    await team.close();
+  }
+});
+
 test("local attachments migrate to S3 with verified bytes and safe reruns", async ({
   page,
   browser,

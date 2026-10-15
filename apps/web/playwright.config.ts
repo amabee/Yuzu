@@ -30,7 +30,10 @@ export default defineConfig({
       timeout: 30_000,
     },
     {
-      command: "pnpm start --port 3100",
+      command:
+        process.env.YUZU_E2E_DEV === "1"
+          ? "pnpm dev --port 3100"
+          : "pnpm start --port 3100",
       url: "http://127.0.0.1:3100/api/health",
       reuseExistingServer: false,
       env: {

@@ -227,8 +227,13 @@ checks identify formats; they do not replace malware scanning.
 New installations use **SeaweedFS through the S3 API**. Run `pnpm setup:keys` to
 generate server-only storage credentials, then `pnpm services:up`. Docker runs a
 pinned SeaweedFS Mini image with persistent `seaweedfs_data`, authenticated S3 on
-`127.0.0.1:8333`, and a private `yuzu-attachments` bucket. Other storage interfaces
-are not published. This is a single-node deployment; it does not provide host
+`127.0.0.1:8333`, and a private `yuzu-attachments` bucket. The authenticated admin
+console is available at **http://127.0.0.1:23646**. Use `YUZU_SEAWEED_ADMIN_USER`
+(default `admin`) and the generated `YUZU_SEAWEED_ADMIN_PASSWORD` from `.env`.
+Open the file browser and navigate to `/buckets/yuzu-attachments/attachments/`.
+Objects use UUID filenames; original filenames are stored in Yuzu's database.
+The console can bypass Yuzu's task permissions, so use the app to add/remove task
+attachments. Other storage interfaces are not published. This is a single-node deployment; it does not provide host
 failure redundancy.
 
 `YUZU_STORAGE_PROVIDER=S3` selects storage for **new** uploads. Configure
@@ -272,6 +277,9 @@ Run `pnpm --filter @yuzu/database test:storage` for real S3 integrity/access tes
 against local SeaweedFS. Browser tests default to isolated LOCAL storage; set
 `YUZU_E2E_S3=1` to exercise the same upload/permission/download workflows against
 the separate `yuzu-e2e-attachments` bucket.
+Set `YUZU_E2E_DEV=1` to run the browser tests through Turbopack development mode
+with separate build output. The binary-file regression checks JPG/PDF validation
+and verifies that runtime uploads do not trigger unsolicited document reloads.
 
 ## Contributing
 
