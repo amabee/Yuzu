@@ -1,7 +1,20 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, Download, Paperclip, Trash2, Upload, X } from "lucide-react";
+import {
+  FileText,
+  Download,
+  Paperclip,
+  Trash2,
+  Upload,
+  X,
+  FolderOpen,
+  Image as ImageIcon,
+  Sheet,
+  Presentation,
+  ChevronDown,
+  LoaderCircle,
+} from "lucide-react";
 import {
   attachmentListSchema,
   attachmentTypes,
@@ -11,6 +24,17 @@ import { apiRequest } from "@/lib/api-client";
 import { uploadTaskFile, downloadTaskFile } from "@/lib/upload-attachment";
 import type { BoardState, BoardTask } from "@/lib/board-contract";
 import { Button } from "@/components/ui/button";
+
+function FileIcon({ mimeType }: { mimeType: string }) {
+  const Icon = mimeType.startsWith("image/")
+    ? ImageIcon
+    : /spreadsheet|csv/.test(mimeType)
+      ? Sheet
+      : mimeType.includes("presentation")
+        ? Presentation
+        : FileText;
+  return <Icon size={20} aria-hidden="true" />;
+}
 
 export function TaskFiles({
   state,
@@ -111,14 +135,21 @@ export function TaskFiles({
     .join(",");
   return (
     <div className="task-files-panel space-y-5">
-      <div>
-        <h3 className="task-section-heading">
-          <Paperclip size={15} />
-          Files
-        </h3>
-        <p className="mt-2 text-xs leading-5 text-muted-foreground">
-          Keep the documents and references this task needs together.
-        </p>
+      <div className="task-files-heading">
+        <div>
+          <h3 className="task-section-heading">
+            <Paperclip size={15} />
+            Files
+          </h3>
+          <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+            Everything this task needs, in one place.
+          </p>
+        </div>
+        {data && (
+          <span className="task-files-count">
+            {data.files.length} {data.files.length === 1 ? "file" : "files"}
+          </span>
+        )}
       </div>
       {query.isPending && (
         <p role="status" className="text-sm text-muted-foreground">
@@ -132,34 +163,32 @@ export function TaskFiles({
       )}
       {data && (
         <>
-          <p className="text-xs text-muted-foreground">
-            Up to {formatFileSize(data.maxSizeBytes)} per file.{" "}
-            {data.allowedMimeTypes
-              .flatMap((mime) => attachmentTypes[mime] ?? [])
-              .map((ext) => ext.toUpperCase())
-              .join(", ")}
-            .
-          </p>
-          {data.canUpload && (
-            <p className="text-xs text-muted-foreground">
-              Uploads are saved immediately.
-            </p>
-          )}
           {data.canUpload ? (
-            <div className="rounded-lg border border-dashed bg-muted/20 p-4">
-              <label
-                htmlFor={`task-file-${task.id}`}
-                className="mb-2 block text-sm font-medium"
-              >
-                Choose a file
-              </label>
+            <div className="task-file-upload">
+              <div className="task-file-upload-intro">
+                <span className="task-file-upload-icon">
+                  <Upload size={22} aria-hidden="true" />
+                </span>
+                <h4>Add a reference</h4>
+                <p>Share a document, image, or the latest deliverable.</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={upload.isPending || remove.isPending}
+                  onClick={() => input.current?.click()}
+                >
+                  <Paperclip size={14} />
+                  {selection ? "Choose another file" : "Browse files"}
+                </Button>
+              </div>
               <input
                 ref={input}
                 id={`task-file-${task.id}`}
                 type="file"
+                aria-label="Choose a file"
                 accept={accept}
                 disabled={upload.isPending || remove.isPending}
-                className="block w-full min-w-0 text-xs text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-secondary-foreground"
+                hidden
                 onChange={(event) => {
                   const file = event.target.files?.[0];
                   upload.reset();
@@ -169,11 +198,35 @@ export function TaskFiles({
                 }}
               />
               {selection && (
-                <>
-                  <p className="mt-3 break-all text-xs">
-                    {selection.file.name} ·{" "}
-                    {formatFileSize(selection.file.size)}
-                  </p>
+                <div className="task-file-selection">
+                  <div className="flex items-center gap-3">
+                    <span className="task-file-type">
+                      <FileIcon mimeType={selection.file.type} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="break-words text-xs font-medium">
+                        {selection.file.name}
+                      </p>
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        {formatFileSize(selection.file.size)}
+                        {!upload.isPending && " • Selected"}
+                      </p>
+                    </div>
+                    {!upload.isPending && (
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        aria-label="Clear selected file"
+                        onClick={() => {
+                          setSelection(null);
+                          upload.reset();
+                          if (input.current) input.current.value = "";
+                        }}
+                      >
+                        <X size={14} />
+                      </Button>
+                    )}
+                  </div>
                   {selection.file.size > data.maxSizeBytes ? (
                     <p role="alert" className="mt-2 text-xs text-destructive">
                       Choose a file smaller than{" "}
@@ -209,7 +262,7 @@ export function TaskFiles({
                       )}
                     </div>
                   )}
-                </>
+                </div>
               )}
               {upload.isPending && (
                 <div className="mt-3">
@@ -233,6 +286,22 @@ export function TaskFiles({
                   {upload.error.message}
                 </p>
               )}
+              <details className="task-file-policy">
+                <summary>
+                  <span>
+                    Up to {formatFileSize(data.maxSizeBytes)} per file
+                  </span>
+                  <span>
+                    File types <ChevronDown size={12} aria-hidden="true" />
+                  </span>
+                </summary>
+                <p>
+                  {data.allowedMimeTypes
+                    .flatMap((mime) => attachmentTypes[mime] ?? [])
+                    .map((ext) => ext.toUpperCase())
+                    .join(", ")}
+                </p>
+              </details>
             </div>
           ) : (
             <p className="text-xs text-muted-foreground">
@@ -241,102 +310,120 @@ export function TaskFiles({
                 : "Task editors can upload files. You can download the files below."}
             </p>
           )}
-          {data.files.length === 0 ? (
-            <div className="py-8 text-center">
-              <Paperclip
-                className="mx-auto mb-3 text-muted-foreground"
-                size={24}
-              />
-              <p className="text-sm">No files attached yet</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {data.canUpload
-                  ? "Choose a file above to add the first reference."
-                  : "Uploaded files will appear here."}
-              </p>
+          <div>
+            <div className="task-files-list-heading">
+              <h4>Attached files</h4>
+              <span>{data.files.length}</span>
             </div>
-          ) : (
-            <ul className="divide-y rounded-lg border" aria-label="Task files">
-              {data.files.map((file) => (
-                <li key={file.id} className="p-3">
-                  <div className="flex items-start gap-3">
-                    <FileText
-                      size={18}
-                      className="mt-0.5 shrink-0 text-primary"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="break-words text-sm font-medium">
-                        {file.fileName}
-                      </p>
-                      <p className="mt-1 break-words text-xs text-muted-foreground">
-                        {formatFileSize(file.sizeBytes)} · {file.uploadedByName}
-                      </p>
-                      <p className="mt-1 text-[11px] text-muted-foreground">
-                        {new Date(file.createdAt).toLocaleDateString(
-                          undefined,
-                          { month: "short", day: "numeric", year: "numeric" },
-                        )}
-                      </p>
-                    </div>
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      disabled={download.isPending}
-                      aria-label={`Download ${file.fileName}`}
-                      onClick={() => download.mutate(file)}
-                    >
-                      <Download size={15} />
-                    </Button>
-                    {file.canRemove && (
+            {data.files.length === 0 ? (
+              <div className="task-files-empty">
+                <span className="task-files-empty-icon">
+                  <FolderOpen size={26} strokeWidth={1.4} aria-hidden="true" />
+                  <Paperclip size={13} aria-hidden="true" />
+                </span>
+                <p className="text-xs font-medium">No files attached yet</p>
+                <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+                  {data.canUpload
+                    ? "Add the first reference to keep everyone on the same page."
+                    : "Uploaded files will appear here."}
+                </p>
+              </div>
+            ) : (
+              <ul className="task-files-list" aria-label="Task files">
+                {data.files.map((file) => (
+                  <li key={file.id}>
+                    <div className="flex items-start gap-2.5">
+                      <span className="task-file-type">
+                        <FileIcon mimeType={file.mimeType} />
+                        <span>
+                          {file.fileName.split(".").pop()?.slice(0, 5)}
+                        </span>
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="break-words text-xs font-medium leading-5">
+                          {file.fileName}
+                        </p>
+                        <p className="mt-1 break-words text-[11px] text-muted-foreground">
+                          {formatFileSize(file.sizeBytes)} ·{" "}
+                          {file.uploadedByName}
+                        </p>
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          Added{" "}
+                          {new Date(file.createdAt).toLocaleDateString(
+                            undefined,
+                            { month: "short", day: "numeric", year: "numeric" },
+                          )}
+                        </p>
+                      </div>
                       <Button
                         size="icon-sm"
                         variant="ghost"
-                        aria-label={`Remove ${file.fileName}`}
-                        disabled={remove.isPending || upload.isPending}
-                        onClick={() => setRemoving(file.id)}
+                        disabled={download.isPending}
+                        aria-label={`Download ${file.fileName}`}
+                        onClick={() => download.mutate(file)}
                       >
-                        <Trash2 size={15} />
+                        {download.isPending &&
+                        download.variables?.id === file.id ? (
+                          <LoaderCircle
+                            size={15}
+                            className="animate-spin motion-reduce:animate-none"
+                          />
+                        ) : (
+                          <Download size={15} />
+                        )}
                       </Button>
-                    )}
-                  </div>
-                  {removing === file.id && (
-                    <div
-                      role="group"
-                      aria-label={`Confirm removal of ${file.fileName}`}
-                      className="mt-3 space-y-2 border-t pt-3"
-                    >
-                      <p className="text-xs">
-                        Remove this file? It will no longer be available for
-                        download.
-                      </p>
-                      <div className="flex gap-2">
+                      {file.canRemove && (
                         <Button
-                          variant="destructive"
-                          size="sm"
-                          disabled={remove.isPending}
-                          onClick={() => remove.mutate(file.id)}
-                        >
-                          Remove file
-                        </Button>
-                        <Button
+                          size="icon-sm"
                           variant="ghost"
-                          size="sm"
-                          disabled={remove.isPending}
-                          onClick={() => setRemoving(null)}
+                          aria-label={`Remove ${file.fileName}`}
+                          disabled={remove.isPending || upload.isPending}
+                          onClick={() => setRemoving(file.id)}
                         >
-                          Keep file
+                          <Trash2 size={15} className="text-muted-foreground" />
                         </Button>
-                      </div>
-                      {remove.error && (
-                        <p role="alert" className="text-xs text-destructive">
-                          {remove.error.message}
-                        </p>
                       )}
                     </div>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
+                    {removing === file.id && (
+                      <div
+                        role="group"
+                        aria-label={`Confirm removal of ${file.fileName}`}
+                        className="mt-3 space-y-2 border-t pt-3"
+                      >
+                        <p className="text-xs">
+                          Remove this file? It will no longer be available for
+                          download.
+                        </p>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            disabled={remove.isPending}
+                            onClick={() => remove.mutate(file.id)}
+                          >
+                            Remove file
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={remove.isPending}
+                            onClick={() => setRemoving(null)}
+                          >
+                            Keep file
+                          </Button>
+                        </div>
+                        {remove.error && (
+                          <p role="alert" className="text-xs text-destructive">
+                            {remove.error.message}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </>
       )}
     </div>

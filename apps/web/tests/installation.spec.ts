@@ -4325,6 +4325,34 @@ test("Files tab uploads and downloads, synchronizes across users, and confirms r
         actor.getByText("No files attached yet", { exact: true }),
       ).toBeVisible();
     }
+    const filesPanel = page.getByRole("tabpanel", { name: /Files/ });
+    await filesPanel.getByText("File types", { exact: true }).click();
+    await expect(filesPanel.locator("details p")).toContainText("PDF");
+    await filesPanel.getByText("File types", { exact: true }).click();
+    await page.screenshot({
+      path: "../../artifacts/phase-3/task-files-empty.png",
+      fullPage: true,
+    });
+    const picker = team.author.page.waitForEvent("filechooser");
+    await team.author.page
+      .getByRole("button", { name: "Browse files", exact: true })
+      .click();
+    await (
+      await picker
+    ).setFiles({
+      name: "Draft.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("Draft reference"),
+    });
+    await team.author.page
+      .getByRole("button", { name: "Clear selected file" })
+      .click();
+    await expect(
+      team.author.page.getByRole("button", {
+        name: "Upload file",
+        exact: true,
+      }),
+    ).toHaveCount(0);
     await team.author.page
       .getByLabel("Choose a file", { exact: true })
       .setInputFiles({
@@ -4350,8 +4378,36 @@ test("Files tab uploads and downloads, synchronizes across users, and confirms r
       .click();
     expect((await download).suggestedFilename()).toBe("Release notes.txt");
     await expect(page.locator("#nprogress")).toHaveCount(0);
+    await page
+      .getByRole("button", {
+        name: "Dismiss notification",
+        includeHidden: true,
+      })
+      .click();
+    await page.emulateMedia({ colorScheme: "dark" });
+    await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
+    await page.locator(".task-sheet-panel").evaluate(async (panel) => {
+      await Promise.all(
+        panel
+          .getAnimations()
+          .map((animation) => animation.finished.catch(() => {})),
+      );
+    });
     await page.screenshot({
       path: "../../artifacts/phase-3/task-files-desktop.png",
+      fullPage: true,
+    });
+    await page.emulateMedia({ colorScheme: "light" });
+    await expect(page.locator("html")).toHaveAttribute("data-mode", "light");
+    await page.locator(".task-sheet-panel").evaluate(async (panel) => {
+      await Promise.all(
+        panel
+          .getAnimations()
+          .map((animation) => animation.finished.catch(() => {})),
+      );
+    });
+    await page.screenshot({
+      path: "../../artifacts/phase-3/task-files-light.png",
       fullPage: true,
     });
     await page.setViewportSize({ width: 390, height: 844 });
