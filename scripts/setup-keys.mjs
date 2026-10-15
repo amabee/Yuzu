@@ -8,6 +8,9 @@ for (const name of [
   "YUZU_SETUP_KEY",
   "SETTINGS_ENCRYPTION_KEY",
   "REALTIME_SECRET",
+  "YUZU_S3_ACCESS_KEY_ID",
+  "YUZU_S3_SECRET_ACCESS_KEY",
+  "YUZU_SEAWEED_ADMIN_PASSWORD",
 ]) {
   const pattern = new RegExp(`^${name}=.*$`, "m");
   const existing = content
@@ -28,6 +31,14 @@ for (const [name, value] of Object.entries({
   REALTIME_INTERNAL_URL: "http://127.0.0.1:3001",
   REALTIME_PUBLIC_URL: "http://127.0.0.1:3001",
   REALTIME_PORT: "3001",
+  YUZU_STORAGE_PROVIDER: "S3",
+  YUZU_S3_ENDPOINT: "http://127.0.0.1:8333",
+  YUZU_S3_REGION: "us-east-1",
+  YUZU_S3_BUCKET: "yuzu-attachments",
+  YUZU_S3_PORT: "8333",
+  YUZU_S3_FORCE_PATH_STYLE: "true",
+  YUZU_SEAWEED_ADMIN_USER: "admin",
+  YUZU_SEAWEED_ADMIN_PORT: "23646",
 })) {
   if (!new RegExp(`^${name}=`, "m").test(content))
     content += `${name}=${value}\n`;

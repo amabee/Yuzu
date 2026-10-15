@@ -10,6 +10,7 @@ export type TaskDraft = Pick<
   BoardTask,
   | "name"
   | "description"
+  | "checklist"
   | "statusId"
   | "priority"
   | "dueDate"
@@ -21,6 +22,7 @@ export type TaskChanges = Partial<TaskDraft>;
 const scalarKeys = [
   "name",
   "description",
+  "checklist",
   "statusId",
   "priority",
   "dueDate",

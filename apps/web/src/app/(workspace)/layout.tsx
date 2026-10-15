@@ -26,6 +26,7 @@ export default async function WorkspaceLayout({
     (await cookies()).get("sidebar_state")?.value !== "false";
   return (
     <AppShell
+      principalId={user.id}
       sidebarDefaultOpen={sidebarDefaultOpen}
       installationName={settings.name}
       workspaceName={workspace?.name ?? "No workspace access"}

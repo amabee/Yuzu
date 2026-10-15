@@ -54,7 +54,12 @@ async function handle(request: Request, action: string) {
       },
       {
         status: known ? error.status : invalid ? 422 : 500,
-        headers: { "Cache-Control": "no-store" },
+        headers: {
+          "Cache-Control": "no-store",
+          ...(known && error.status === 429
+            ? { "Retry-After": error.code === "WAIT_TO_RESEND" ? "60" : "600" }
+            : {}),
+        },
       },
     );
   }

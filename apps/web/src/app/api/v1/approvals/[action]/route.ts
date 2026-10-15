@@ -16,6 +16,7 @@ async function handle(request: Request, action: string) {
         request.headers,
         params.get("status") ?? "PENDING",
         params.get("cursor") ?? undefined,
+        params.get("request") ?? undefined,
       );
     } else if (
       request.method === "POST" &&

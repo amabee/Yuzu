@@ -1,6 +1,6 @@
 "use client";
-import type { ReactNode } from "react";
-import { Toast } from "radix-ui";
+import { useEffect, useState, type ReactNode } from "react";
+import { Toast, Portal } from "radix-ui";
 import {
   Info,
   CheckCircle2,
@@ -9,6 +9,7 @@ import {
   Bell,
   LoaderCircle,
   Download,
+  Upload,
   Copy,
   Moon,
   X,
@@ -27,9 +28,14 @@ export type YuzuToastNotice = {
   title?: string;
   duration?: number | null;
   progress?: number;
-  icon?: "download" | "copy" | "moon";
+  dismissible?: boolean;
+  icon?: "download" | "upload" | "copy" | "moon";
   action?: { label: string; onClick: () => void; altText?: string };
 };
+export type TransferNoticeHandler = (
+  notice: YuzuToastNotice,
+  start?: boolean,
+) => void;
 const variants = {
   info: { title: "Information", icon: Info },
   success: { title: "Success", icon: CheckCircle2 },
@@ -39,11 +45,7 @@ const variants = {
   loading: { title: "In progress", icon: LoaderCircle },
 };
 export function toastDuration(notice: YuzuToastNotice) {
-  if (
-    notice.duration === null ||
-    (notice.kind === "loading" && notice.duration === undefined)
-  )
-    return Infinity;
+  if (notice.kind === "loading") return Infinity;
   return Number.isFinite(notice.duration)
     ? Math.min(60000, Math.max(1000, notice.duration!))
     : 5000;
@@ -64,7 +66,12 @@ export function ToastVisual({
   close?: ReactNode;
   action?: ReactNode;
 }) {
-  const iconOverrides = { download: Download, copy: Copy, moon: Moon };
+  const iconOverrides = {
+    download: Download,
+    upload: Upload,
+    copy: Copy,
+    moon: Moon,
+  };
   const Icon = notice.icon
     ? iconOverrides[notice.icon]
     : variants[notice.kind].icon;
@@ -111,62 +118,110 @@ export function ToastVisual({
     </>
   );
 }
-export function YuzuToast({ notice }: { notice: YuzuToastNotice | null }) {
+export function YuzuToast({
+  notice,
+  pinnedNotices = [],
+}: {
+  notice: YuzuToastNotice | null;
+  pinnedNotices?: YuzuToastNotice[];
+}) {
+  const notices = [
+    ...pinnedNotices,
+    ...(notice && !pinnedNotices.some((pending) => pending.id === notice.id)
+      ? [notice]
+      : []),
+  ];
   return (
     <Toast.Provider duration={5000} swipeDirection="right" label="Notification">
-      {notice && (
-        <Toast.Root
-          key={notice.id}
-          defaultOpen
-          duration={toastDuration(notice)}
-          data-slot="board-notification"
-          data-variant={notice.kind}
-          className="yuzu-toast"
-          type={
-            notice.kind === "error" || notice.kind === "warning"
-              ? "foreground"
-              : "background"
-          }
-        >
-          <ToastVisual
-            notice={notice}
-            title={
-              <Toast.Title className="yuzu-toast-title">
-                {notice.title ?? variants[notice.kind].title}
-              </Toast.Title>
-            }
-            description={
-              <Toast.Description className="yuzu-toast-description">
-                {notice.message}
-              </Toast.Description>
-            }
-            action={
-              notice.action && (
-                <Toast.Action
-                  asChild
-                  altText={notice.action.altText ?? notice.action.label}
-                >
-                  <button
-                    className="yuzu-toast-action"
-                    onClick={notice.action.onClick}
-                  >
-                    {notice.action.label}
-                  </button>
-                </Toast.Action>
-              )
-            }
-            close={
-              <Toast.Close
-                aria-label="Dismiss notification"
-                className="yuzu-toast-close"
-              >
-                <X size={13} />
-              </Toast.Close>
-            }
-          />
-        </Toast.Root>
-      )}
-      <Toast.Viewport className="yuzu-toast-viewport" />
+      {notices.map((notice) => (
+        <ToastNotice key={notice.id} notice={notice} />
+      ))}
+      <Portal.Root>
+        <Toast.Viewport className="yuzu-toast-viewport" />
+      </Portal.Root>
     </Toast.Provider>
+  );
+}
+
+function ToastNotice({ notice }: { notice: YuzuToastNotice }) {
+  const [open, setOpen] = useState(true);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const duration = toastDuration(notice);
+
+  // Own the timer so a blurred window or another toast cannot leave it paused.
+  // Pause only while this notification is being read or used directly.
+  useEffect(() => {
+    if (!open || hovered || focused || !Number.isFinite(duration)) return;
+    const timer = window.setTimeout(() => setOpen(false), duration);
+    return () => window.clearTimeout(timer);
+  }, [open, hovered, focused, duration, notice.kind]);
+
+  return (
+    <Toast.Root
+      open={open}
+      onOpenChange={setOpen}
+      duration={Infinity}
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
+      onFocusCapture={() => setFocused(true)}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget))
+          setFocused(false);
+      }}
+      onEscapeKeyDown={(event) => {
+        if (notice.dismissible === false) event.preventDefault();
+      }}
+      onSwipeStart={(event) => {
+        if (notice.dismissible === false) event.preventDefault();
+      }}
+      data-slot="board-notification"
+      data-variant={notice.kind}
+      className="yuzu-toast"
+      type={
+        notice.kind === "error" || notice.kind === "warning"
+          ? "foreground"
+          : "background"
+      }
+    >
+      <ToastVisual
+        notice={notice}
+        title={
+          <Toast.Title className="yuzu-toast-title">
+            {notice.title ?? variants[notice.kind].title}
+          </Toast.Title>
+        }
+        description={
+          <Toast.Description className="yuzu-toast-description">
+            {notice.message}
+          </Toast.Description>
+        }
+        action={
+          notice.action && (
+            <Toast.Action
+              asChild
+              altText={notice.action.altText ?? notice.action.label}
+            >
+              <button
+                className="yuzu-toast-action"
+                onClick={notice.action.onClick}
+              >
+                {notice.action.label}
+              </button>
+            </Toast.Action>
+          )
+        }
+        close={
+          notice.dismissible !== false ? (
+            <Toast.Close
+              aria-label="Dismiss notification"
+              className="yuzu-toast-close"
+            >
+              <X size={13} />
+            </Toast.Close>
+          ) : undefined
+        }
+      />
+    </Toast.Root>
   );
 }

@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { ApprovalPolicyEditor } from "./approval-policy-editor";
 import { Button } from "@/components/ui/button";
-import { ArrowUp, ArrowDown, GripVertical } from "lucide-react";
+import { ArrowUp, ArrowDown, GripVertical, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
   fieldTypes,
@@ -232,6 +232,12 @@ function FieldConfiguration({
                   )}
                 </div>
               ))}
+              {!options.length && !coreKeys.includes(field.key) && (
+                <p className="text-xs text-muted-foreground">
+                  No options. Saving clears unused options. To hide this field
+                  and retain its saved values, use Remove field.
+                </p>
+              )}
               <Button
                 type="button"
                 size="sm"
@@ -290,30 +296,86 @@ function GroupConfiguration({
   onAction: (action: string, input: unknown) => void;
 }) {
   const [name, setName] = useState(group.name);
+  const [confirm, setConfirm] = useState(false);
+  const usage = state.tasks.filter((task) => task.groupId === group.id).length;
   return (
-    <form
-      className="flex gap-2"
-      onSubmit={(event) => {
-        event.preventDefault();
-        onAction("rename-group", {
-          boardId: state.boardId,
-          groupId: group.id,
-          expectedName: group.name,
-          name,
-        });
-      }}
-    >
-      <Input
-        aria-label={`Rename ${group.name} group`}
-        required
-        maxLength={80}
-        value={name}
-        onChange={(event) => setName(event.target.value)}
-      />
-      <Button size="sm" disabled={pending}>
-        Rename group
-      </Button>
-    </form>
+    <div className="space-y-2 rounded-lg border p-3" data-group-id={group.id}>
+      <form
+        className="flex gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onAction("rename-group", {
+            boardId: state.boardId,
+            groupId: group.id,
+            expectedName: group.name,
+            name,
+          });
+        }}
+      >
+        <Input
+          aria-label={`Rename ${group.name} group`}
+          required
+          maxLength={80}
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+        />
+        <Button size="sm" disabled={pending}>
+          Rename group
+        </Button>
+      </form>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span>
+          {usage
+            ? `${usage} task${usage === 1 ? " uses" : "s use"} this group, including archived tasks. Move them before removing it.`
+            : "No tasks use this group. Pending requests are also checked before removal."}
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={pending || usage > 0}
+          onClick={() => setConfirm(true)}
+          aria-label={`Remove ${group.name} group`}
+        >
+          <Trash2 size={13} />
+          Remove group
+        </Button>
+      </div>
+      {confirm && !usage && (
+        <div className="rounded-lg border p-3">
+          <p className="text-sm">
+            Remove {group.name}? Tasks and pending approval requests must not
+            use it.
+          </p>
+          <div className="mt-3 flex gap-2">
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              disabled={pending}
+              onClick={() =>
+                onAction("remove-group", {
+                  boardId: state.boardId,
+                  groupId: group.id,
+                  expectedName: group.name,
+                })
+              }
+            >
+              Confirm group removal
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={pending}
+              onClick={() => setConfirm(false)}
+            >
+              Keep group
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 export function BoardManagement({

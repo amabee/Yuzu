@@ -12,6 +12,7 @@ import {
   Settings2,
   Sprout,
   X,
+  Inbox,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,11 +38,13 @@ import {
   type NavigationWorkspace,
 } from "@/components/workspace-search";
 import { SignOut } from "@/components/sign-out";
+import { NotificationBell } from "@/components/notifications/notification-inbox";
 
 const navigation = [
   { href: "/", label: "Overview", icon: Home },
   { href: "/boards", label: "Boards", icon: LayoutGrid },
   { href: "/approvals", label: "Approvals", icon: CheckCheck },
+  { href: "/notifications", label: "Inbox", icon: Inbox },
   { href: "/settings", label: "Settings", icon: Settings2 },
 ];
 function WorkspaceSidebar({
@@ -224,6 +227,7 @@ function WorkspaceSidebar({
   );
 }
 export function AppShell({
+  principalId,
   children,
   installationName,
   workspaceName,
@@ -232,6 +236,7 @@ export function AppShell({
   workspaces = [],
   role,
 }: {
+  principalId: string;
   children: React.ReactNode;
   installationName?: string;
   workspaceName?: string;
@@ -279,6 +284,7 @@ export function AppShell({
           </div>
           <div className="flex shrink-0 items-center gap-2 sm:gap-4">
             <ModeSwitcher />
+            <NotificationBell principalId={principalId} />
             <SignOut />
             <div
               aria-label="Yuzu workspace"

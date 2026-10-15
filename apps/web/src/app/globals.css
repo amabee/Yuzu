@@ -1,6 +1,18 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
+.notification-surface {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(
+    in srgb,
+    var(--card) var(--theme-opacity, 80%),
+    transparent
+  );
+  backdrop-filter: blur(var(--theme-blur, 8px));
+  box-shadow: var(--theme-card-shadow, none);
+}
+
 :root {
   --background: #f7f9fa;
   --foreground: #203744;
@@ -112,6 +124,16 @@ h3 {
 .yuzu-topbar {
   background: color-mix(in srgb, var(--card) var(--theme-opacity), transparent);
   backdrop-filter: blur(var(--theme-blur));
+}
+.yuzu-error-shell {
+  min-height: 100svh;
+  background: var(--background);
+}
+
+/* Embedded errors share the workspace canvas beneath its header and padding. */
+.workspace-content .yuzu-error-shell {
+  min-height: calc(100svh - 7rem);
+  background: transparent;
 }
 .yuzu-workspace main :is(section, div, a).bg-card {
   box-shadow: var(--theme-card-shadow);
@@ -1141,8 +1163,172 @@ html.theme-ripple::view-transition-group(root) {
 .task-sheet-details,
 .task-sheet-activity,
 .task-sheet-permissions,
+.task-files-panel,
 .task-comments-panel {
   padding: 20px 24px;
+}
+.task-files-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.task-files-count {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.task-file-upload {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--border));
+  border-radius: calc(var(--radius) + 4px);
+  background: color-mix(in srgb, var(--primary) 4%, var(--card));
+}
+.task-file-upload-intro {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  column-gap: 12px;
+  align-items: start;
+  padding: 18px 16px;
+}
+.task-file-upload-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  grid-row: 1 / 4;
+  margin-top: 2px;
+  border-radius: calc(var(--radius) + 4px);
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+}
+.task-file-upload-intro h4 {
+  grid-column: 2;
+  font-size: 14px;
+  font-weight: 600;
+}
+.task-file-upload-intro p {
+  grid-column: 2;
+  margin: 4px 0 12px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.task-file-upload-intro > button {
+  grid-column: 2;
+  justify-self: start;
+}
+.task-file-selection {
+  margin: 0 14px 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+}
+.task-file-upload > div:has(progress),
+.task-file-upload > p[role="alert"] {
+  margin: 0 16px 16px;
+}
+.task-file-policy {
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--background) 35%, transparent);
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.task-file-policy summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+.task-file-policy summary::-webkit-details-marker {
+  display: none;
+}
+.task-file-policy summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -3px;
+}
+.task-file-policy summary > span:last-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--foreground);
+}
+.task-file-policy[open] summary svg {
+  transform: rotate(180deg);
+}
+.task-file-policy p {
+  padding: 0 14px 12px;
+  line-height: 1.8;
+}
+.task-files-list-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.task-files-list-heading > span {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 400;
+}
+.task-files-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 16px;
+  text-align: center;
+  border-top: 1px solid var(--border);
+}
+.task-files-empty > p:last-child {
+  max-width: 29ch;
+}
+.task-files-empty-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 48px;
+  margin-bottom: 12px;
+  color: var(--muted-foreground);
+}
+.task-files-empty-icon > svg:last-child {
+  position: absolute;
+  right: 4px;
+  bottom: 6px;
+  color: var(--primary);
+  background: var(--card);
+  border-radius: 3px;
+}
+.task-files-list > li {
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+}
+.task-file-type {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  gap: 4px;
+  width: 40px;
+  min-height: 44px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--primary) 8%, var(--background));
+  color: var(--primary);
+}
+.task-file-type > span {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
 }
 .task-section-heading {
   display: flex;
@@ -1252,6 +1438,7 @@ html.theme-ripple::view-transition-group(root) {
   .task-sheet-details,
   .task-sheet-activity,
   .task-sheet-permissions,
+  .task-files-panel,
   .task-comments-panel {
     padding: 16px 20px;
   }
@@ -1496,6 +1683,17 @@ html.theme-ripple::view-transition-group(root) {
 }
 .yuzu-toast[data-state="open"] {
   animation: yuzu-toast-in 220ms ease-out;
+}
+/* Leave the task sheet and its close control clear during background work. */
+body:has(.task-sheet-panel[data-state="open"]) .yuzu-toast-viewport {
+  right: 434px;
+}
+@media (max-width: 860px) {
+  body:has(.task-sheet-panel[data-state="open"]) .yuzu-toast-viewport {
+    top: auto;
+    right: 20px;
+    bottom: 24px;
+  }
 }
 .yuzu-toast[data-state="closed"] {
   animation: yuzu-toast-out 160ms ease-in forwards;

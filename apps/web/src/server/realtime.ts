@@ -53,9 +53,31 @@ export async function notifyBoardMutation(input: unknown, result?: unknown) {
         userId: z.string().optional(),
         invalidated: z.number().optional(),
         affectedUserIds: z.array(z.string()).optional(),
+        notificationOnly: z.boolean().optional(),
       })
       .passthrough()
       .parse(input);
+    if (body.notificationOnly && body.boardId && body.userId) {
+      const response = await fetch(new URL("/events", internalURL), {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: signRealtimeToken(
+          {
+            purpose: "event",
+            boardId: body.boardId,
+            userIds: [body.userId],
+            notifyBoard: false,
+            eventId: crypto.randomUUID(),
+            expiresAt: Date.now() + 10_000,
+          },
+          secret,
+        ),
+        signal: AbortSignal.timeout(1000),
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error("Realtime service unavailable.");
+      return;
+    }
     const boardId =
       body.boardId ??
       (body.taskId
@@ -110,6 +132,11 @@ export async function notifyBoardMutation(input: unknown, result?: unknown) {
       where: { role: { in: ["OWNER", "ADMIN"] } },
       select: { id: true },
     });
+    const inboxRecipients = await getDatabase().notification.findMany({
+      where: { boardId, createdAt: { gte: new Date(Date.now() - 10_000) } },
+      distinct: ["recipientId"],
+      select: { recipientId: true },
+    });
     const recipients = [
       ...new Set(
         [
@@ -121,6 +148,7 @@ export async function notifyBoardMutation(input: unknown, result?: unknown) {
           ...(board?.managers.map((manager) => manager.userId) ?? []),
           ...affectedAuthors.map((item) => item.authorId),
           ...administrators.map((item) => item.id),
+          ...inboxRecipients.map((item) => item.recipientId),
         ].filter((id): id is string => Boolean(id)),
       ),
     ];

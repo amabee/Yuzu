@@ -1,7 +1,14 @@
+import { defaultViewConfig } from "../src/lib/saved-view-contract";
 import { test as base, expect } from "@playwright/test";
 import { SMTPServer } from "smtp-server";
+import { readdir, mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRecordId, getDatabase } from "@yuzu/database";
 import { upgradeRecordIds } from "@yuzu/database/upgrade-ids";
+import { readAttachmentObject } from "@yuzu/database/attachment-objects";
 import type { Page } from "@playwright/test";
 import { presets } from "../src/components/design-preview/theme-model";
 import { encryptSettings } from "../src/server/setup/security";
@@ -776,6 +783,10 @@ test("password recovery works from email and revokes every existing session", as
       await (await otherSession.request.get("/api/auth/get-session")).json(),
     ).toBeNull();
     await page.goto(`/boards/${board.id}`);
+    await expect(
+      page.getByRole("heading", { name: "Your session expired" }),
+    ).toBeVisible();
+    await page.getByRole("link", { name: "Sign in again" }).click();
     await expect(page).toHaveURL(/\/sign-in$/);
     const replay = await postRecovery(recoveryPage, "reset", {
       token,
@@ -1077,14 +1088,20 @@ test("teammate joins from email, signs in, and loses board access immediately on
     ).toHaveCount(0);
     await teammatePage.goto(`/boards/${otherBoard.id}`);
     await expect(
-      teammatePage.getByText("Page not found", { exact: true }),
+      teammatePage.getByRole("heading", {
+        name: "Hmm, we can't find that page",
+        exact: true,
+      }),
     ).toBeVisible();
     await expect(
       teammatePage.getByRole("heading", { name: "Restricted project" }),
     ).toHaveCount(0);
     await teammatePage.goto("/settings/team");
     await expect(
-      teammatePage.getByText("Page not found", { exact: true }),
+      teammatePage.getByRole("heading", {
+        name: "You don't have access",
+        exact: true,
+      }),
     ).toBeVisible();
     await expect(
       teammatePage.getByRole("heading", { name: "Team access" }),
@@ -1135,7 +1152,10 @@ test("teammate joins from email, signs in, and loses board access immediately on
     ).toBe(200);
     await teammatePage.goto(`/boards/${board.id}`);
     await expect(
-      teammatePage.getByText("Page not found", { exact: true }),
+      teammatePage.getByRole("heading", {
+        name: "Hmm, we can't find that page",
+        exact: true,
+      }),
     ).toBeVisible();
     await expect(
       teammatePage.getByRole("heading", { name: "Team project" }),
@@ -1468,10 +1488,45 @@ test("global themes persist, drafts stay scoped, modes remain personal, and prev
     page.getByRole("status").filter({ hasText: "revision 2" }),
   ).toBeVisible();
   expect(await rootPrimary()).toBe(presets[0].dark.primary);
-  await page.goto(`/boards/${board.id}`);
+  // Keep a real navigation pending so the visible loader can be checked.
+  let releaseNavigation!: () => void;
+  const navigationGate = new Promise<void>((resolve) => {
+    releaseNavigation = resolve;
+  });
+  await page.route(`**/boards/${board.id}?*`, async (route) => {
+    await navigationGate;
+    await route.continue();
+  });
+  await page.reload();
+  try {
+    await page.getByRole("link", { name: "Team project", exact: true }).click();
+    const bar = page.locator("#nprogress .bar");
+    await expect(bar).toBeVisible();
+    const rgb = (hex: string) =>
+      `rgb(${[1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16)).join(", ")})`;
+    await expect(bar).toHaveCSS(
+      "background-color",
+      rgb(presets[0].dark.primary),
+    );
+    await expect(page.locator("#nprogress .spinner")).toHaveCount(0);
+    await page.getByRole("switch", { name: "Dark mode" }).click();
+    await expect(bar).toHaveCSS(
+      "background-color",
+      rgb(presets[0].light.primary),
+    );
+    await expect(page.getByRole("switch", { name: "Dark mode" })).toBeEnabled();
+    await page.getByRole("switch", { name: "Dark mode" }).click();
+    await expect(bar).toHaveCSS(
+      "background-color",
+      rgb(presets[0].dark.primary),
+    );
+  } finally {
+    releaseNavigation();
+  }
   await expect(
     page.getByRole("heading", { name: "Team project", exact: true }),
   ).toBeVisible();
+  await expect(page.locator("#nprogress")).toHaveCount(0);
   await page.getByRole("button", { name: "Table", exact: true }).click();
   await expect(
     page.getByText("No sample records were created during installation."),
@@ -1602,7 +1657,7 @@ test("appearance writes reject members, malformed themes, cross-origin requests 
   await page.goto("/settings/appearance");
   await expect(
     page.getByRole("heading", {
-      name: "Let's get you back to your workspace.",
+      name: "You don't have access",
       exact: true,
     }),
   ).toBeVisible();
@@ -1800,7 +1855,8 @@ test("reference workspace search, board lanes and details use saved structure", 
   ).toBeVisible();
   await expect(page.locator(".board-lane")).toHaveCount(3);
   await page.getByRole("button", { name: "Filter", exact: true }).click();
-  await page.getByLabel("Filter board status").selectOption("In progress");
+  await page.getByLabel("Filter board status").click();
+  await page.getByRole("option", { name: "In progress", exact: true }).click();
   await expect(page.locator(".board-lane")).toHaveCount(1);
   await page.getByRole("button", { name: "Clear filter" }).click();
   await expect(page.locator(".board-lane")).toHaveCount(3);
@@ -2719,9 +2775,8 @@ test("board moves immediately, rolls back failed saves, and exposes option order
     .selectOption({ label: "Sprint 1" });
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await page
-    .getByLabel("Filter task group", { exact: true })
-    .selectOption({ label: "Sprint 1" });
+  await page.getByLabel("Filter task group", { exact: true }).click();
+  await page.getByRole("option", { name: "Sprint 1", exact: true }).click();
   await expect(page.locator(".task-card-tags").first()).toContainText(
     "Sprint 1",
   );
@@ -3466,6 +3521,42 @@ test("Yuzu toast design uses citrus assets, accessible actions, progress, dismis
   });
 });
 
+test("toast dismissal survives window blur and previous manual dismissal while loading stays visible", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await readyTeam(page);
+  await page.goto("/design/toasts");
+  await page.getByLabel("Toast duration", { exact: true }).selectOption("2000");
+  const toast = page.locator('[data-slot="board-notification"]');
+  await page.getByRole("button", { name: "Show success", exact: true }).click();
+  await toast
+    .getByRole("button", { name: "Dismiss notification", exact: true })
+    .click();
+  await expect(toast).toHaveCount(0);
+
+  for (const kind of ["info", "success", "warning", "error", "neutral"]) {
+    await page
+      .getByRole("button", { name: `Show ${kind}`, exact: true })
+      .click();
+    await expect(toast).toBeVisible();
+    await page.mouse.move(0, 0);
+    // Radix pauses on window blur; ordinary toasts must still expire.
+    await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+    await expect(toast).toHaveCount(0, { timeout: 5000 });
+  }
+
+  await page.getByRole("button", { name: "Show loading", exact: true }).click();
+  await expect(toast).toBeVisible();
+  await page.mouse.move(0, 0);
+  await page.waitForTimeout(5500);
+  await expect(toast).toBeVisible();
+  await page
+    .getByRole("button", { name: "Advance progress", exact: true })
+    .click();
+  await expect(toast.getByRole("progressbar")).toHaveAttribute("value", "75");
+});
+
 test("boards sync across people, preserve drafts and recover concurrent non-overlapping saves", async ({
   page,
   browser,
@@ -3798,6 +3889,1100 @@ const postApproval = (page: Page, action: string, input: unknown) =>
     headers: { origin: "http://127.0.0.1:3100" },
     data: input,
   });
+const readInbox = async (page: Page, suffix = "") =>
+  (
+    await (
+      await page.request.get(`/api/v1/notifications/inbox${suffix}`)
+    ).json()
+  ).data;
+const changeInbox = (
+  page: Page,
+  input: unknown,
+  origin = "http://127.0.0.1:3100",
+) =>
+  page.request.post("/api/v1/notifications/change", {
+    headers: { origin },
+    data: input,
+  });
+test("service recovery preserves form drafts through rate limits and offline reconnects", async ({
+  page,
+  context,
+}) => {
+  await readyTeam(page);
+  await context.clearCookies();
+  await page.goto("/sign-in");
+  await page.getByLabel("Email address").fill("draft@example.test");
+  await page.getByLabel("Password", { exact: true }).fill("draft-password-123");
+  await page.route("**/api/v1/session/sign-in", (route) =>
+    route.fulfill({
+      status: 429,
+      headers: { "Retry-After": "2" },
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: { code: "RATE_LIMITED", message: "Wait briefly." },
+        requestId: "limited-test",
+      }),
+    }),
+  );
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  const limit = page.getByRole("dialog", { name: "Request limit reached" });
+  await expect(
+    limit.getByRole("heading", { name: "Whoa, slow down a little" }),
+  ).toBeVisible();
+  await expect(
+    limit.getByRole("button", { name: /Try again in/ }),
+  ).toBeDisabled();
+  await expect(
+    limit.getByRole("button", { name: "Try again", exact: true }),
+  ).toBeEnabled({ timeout: 5000 });
+  await limit.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(page.getByLabel("Email address")).toHaveValue(
+    "draft@example.test",
+  );
+  await expect(page.getByLabel("Password", { exact: true })).toHaveValue(
+    "draft-password-123",
+  );
+
+  await context.setOffline(true);
+  const offline = page.getByRole("dialog", { name: "Connection unavailable" });
+  await expect(
+    offline.getByRole("heading", { name: "No connection" }),
+  ).toBeVisible();
+  await context.setOffline(false);
+  await expect(offline).toHaveCount(0);
+  await expect(page.getByLabel("Email address")).toHaveValue(
+    "draft@example.test",
+  );
+  await expect(page.getByLabel("Password", { exact: true })).toHaveValue(
+    "draft-password-123",
+  );
+  await page.unroute("**/api/v1/session/sign-in");
+  let maintenanceSubmissions = 0;
+  await page.route("**/api/v1/session/sign-in", (route) => {
+    maintenanceSubmissions++;
+    return route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: { code: "MAINTENANCE", message: "Paused." },
+        requestId: "maintenance-test",
+      }),
+    });
+  });
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  const maintenance = page.getByRole("dialog", {
+    name: "Maintenance in progress",
+  });
+  await expect(
+    maintenance.getByRole("heading", { name: "We'll be right back" }),
+  ).toBeVisible();
+  await maintenance.getByRole("button", { name: "Check again" }).click();
+  await expect(maintenance).toHaveCount(0);
+  await expect(page.getByLabel("Email address")).toHaveValue(
+    "draft@example.test",
+  );
+  expect(maintenanceSubmissions).toBe(1);
+});
+
+test("standalone offline recovery shares one server probe and returns to the workspace", async ({
+  page,
+}) => {
+  await readyTeam(page);
+  await page.goto("/offline");
+  await expect(
+    page.getByRole("heading", { name: "No connection" }),
+  ).toBeVisible();
+  let probes = 0;
+  await page.route("**/api/health/ready", (route) => {
+    probes++;
+    return route.continue();
+  });
+  await page
+    .getByRole("button", { name: "Retry connection", exact: true })
+    .click();
+  await expect(page).toHaveURL("http://127.0.0.1:3100/");
+  await expect(
+    page.getByRole("heading", { name: "Good work starts here." }),
+  ).toBeVisible();
+  expect(probes).toBe(1);
+});
+
+test("maintenance routes members to recovery, blocks API access, and keeps administrator access available", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  const db = getDatabase();
+  try {
+    await db.installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: true },
+    });
+    await team.author.page.goto(`/boards/${team.boardId}`);
+    await expect(team.author.page).toHaveURL(/\/maintenance$/);
+    await expect(
+      team.author.page.getByRole("heading", { name: "We'll be right back" }),
+    ).toBeVisible();
+    const blocked = await team.author.page.request.get(
+      "/api/v1/notifications/inbox",
+    );
+    expect(blocked.status()).toBe(503);
+    expect((await blocked.json()).error.code).toBe("MAINTENANCE");
+    expect(
+      (await (await team.author.page.request.get("/api/v1/status")).json())
+        .data,
+    ).toEqual({ maintenance: true });
+    await page.goto("/settings");
+    await expect(
+      page.getByRole("heading", { name: "Workspace settings" }),
+    ).toBeVisible();
+    expect((await page.request.get("/api/health/ready")).status()).toBe(200);
+    await db.installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: false },
+    });
+    await team.author.page.getByRole("link", { name: "Check again" }).click();
+    await expect(team.author.page).toHaveURL("http://127.0.0.1:3100/");
+    await expect(
+      team.author.page.getByRole("heading", { name: "Good work starts here." }),
+    ).toBeVisible();
+  } finally {
+    await db.installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: false },
+    });
+    await team.close();
+  }
+});
+
+test("page access shows forbidden and expired-session screens while preserving API errors and private boards", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  const visitor = await browser.newContext();
+  try {
+    // Fresh visitors still get the normal sign-in flow.
+    const freshPage = await visitor.newPage();
+    await freshPage.goto("/boards");
+    await expect(freshPage).toHaveURL(/\/sign-in$/);
+    expect((await freshPage.request.get("/api/v1/team/state")).status()).toBe(
+      401,
+    );
+
+    // Both admin-only pages use 403 rather than implying they do not exist.
+    for (const path of ["/settings/team", "/settings/appearance"]) {
+      await team.author.page.goto(path);
+      await expect(
+        team.author.page.getByRole("heading", {
+          name: "You don't have access",
+        }),
+      ).toBeVisible();
+      await expect(
+        team.author.page.getByRole("button", { name: "Toggle navigation" }),
+      ).toBeVisible();
+      await expect(
+        team.author.page.getByRole("link", {
+          name: "Back to home",
+          exact: true,
+        }),
+      ).toHaveAttribute("href", "/");
+    }
+    expect(
+      (await team.author.page.request.get("/api/v1/team/state")).status(),
+    ).toBe(403);
+    await page.goto("/settings/team");
+    await expect(
+      page.getByRole("heading", { name: "Team access", exact: true }),
+    ).toBeVisible();
+
+    // Removing workspace access must continue concealing its boards with 404.
+    await getDatabase().workspaceMember.deleteMany({
+      where: { workspaceId: team.workspaceId, userId: team.author.id },
+    });
+    await team.author.page.goto(`/boards/${team.boardId}`);
+    await expect(
+      team.author.page.getByRole("heading", {
+        name: "Hmm, we can't find that page",
+      }),
+    ).toBeVisible();
+
+    // A real signed session cookie with an expired database session shows 401.
+    await getDatabase().session.updateMany({
+      where: { userId: team.author.id },
+      data: { expiresAt: new Date(0) },
+    });
+    await team.author.page.goto("/boards");
+    await expect(
+      team.author.page.getByRole("heading", { name: "Your session expired" }),
+    ).toBeVisible();
+    await expect(
+      team.author.page.getByRole("link", { name: "Sign in again" }),
+    ).toHaveAttribute("href", "/sign-in");
+    expect(
+      (await team.author.page.request.get("/api/v1/team/state")).status(),
+    ).toBe(401);
+    await team.author.page.getByRole("link", { name: "Sign in again" }).click();
+    await expect(team.author.page).toHaveURL(/\/sign-in$/);
+    await expect(
+      team.author.page.getByRole("heading", { name: "Welcome back." }),
+    ).toBeVisible();
+  } finally {
+    await visitor.close();
+    await team.close();
+  }
+});
+
+async function postFile(
+  page: Page,
+  taskId: string,
+  fileName = "notes.txt",
+  content = Buffer.from("Yuzu task notes"),
+  uploadKey = createRecordId(),
+  mime = "text/plain",
+  origin = "http://127.0.0.1:3100",
+) {
+  return page.request.post(`/api/v1/attachments?taskId=${taskId}`, {
+    headers: {
+      origin,
+      "Content-Type": mime,
+      "X-Yuzu-File-Name": encodeURIComponent(fileName),
+      "X-Yuzu-Upload-Key": uploadKey,
+    },
+    data: content,
+  });
+}
+const removeFile = (page: Page, id: string) =>
+  page.request.delete(`/api/v1/attachments/${id}`, {
+    headers: { origin: "http://127.0.0.1:3100" },
+    data: {},
+  });
+
+test("file transfer toasts show pending work and settle on success, cancellation and failure", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(60_000);
+  const team = await approvalTeam(page, browser);
+  let releaseUpload = () => {};
+  let releaseDownload = () => {};
+  try {
+    expect(
+      (
+        await postBoard(page, "create-task", {
+          boardId: team.boardId,
+          createKey: createRecordId(),
+          name: "Transfer feedback",
+        })
+      ).status(),
+    ).toBe(200);
+    await page.goto(`/boards/${team.boardId}`);
+    await page
+      .getByRole("button", { name: "Transfer feedback", exact: true })
+      .click();
+    await page.getByRole("tab", { name: /Files/ }).click();
+    await expect(
+      page.getByText("No files attached yet", { exact: true }),
+    ).toBeVisible();
+    const toast = page.locator('[data-slot="board-notification"]');
+    const uploadPattern = "**/api/v1/attachments?**";
+    const held = new Promise<void>((resolve) => {
+      releaseUpload = resolve;
+    });
+    await page.route(uploadPattern, async (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      await held;
+      await route.continue().catch(() => {});
+    });
+    await page.getByLabel("Choose a file", { exact: true }).setInputFiles({
+      name: "Reference.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("Task reference"),
+    });
+    await page
+      .getByRole("button", { name: "Upload file", exact: true })
+      .click();
+    await expect(toast).toHaveAttribute("data-variant", "loading");
+    await expect(toast).toContainText("Reference.txt");
+    await expect(toast.locator("progress")).toBeVisible();
+    await expect(toast).toHaveCount(1);
+    await expect(
+      toast.getByRole("button", {
+        name: "Dismiss notification",
+        includeHidden: true,
+      }),
+    ).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(toast).toBeVisible();
+    await page.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(page.locator(".task-sheet-panel")).toHaveCount(0);
+    await expect(toast).toHaveAttribute("data-variant", "loading");
+    await expect(toast).toContainText("Uploading");
+    await page
+      .getByRole("button", { name: "Transfer feedback", exact: true })
+      .click();
+    await page.getByRole("tab", { name: /Files/ }).click();
+    await expect(
+      page.getByRole("button", { name: "Uploading…", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "Cancel upload", exact: true }),
+    ).toBeVisible();
+    await page.screenshot({
+      path: "../../artifacts/phase-3/file-upload-toast.png",
+      fullPage: true,
+    });
+    await page.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(page.locator(".task-sheet-panel")).toHaveCount(0);
+    releaseUpload();
+    await expect(toast).toHaveAttribute("data-variant", "success");
+    await expect(toast).toContainText("File uploaded");
+    await expect(toast.locator("progress")).toHaveAttribute("value", "100");
+    await expect(
+      toast.getByRole("button", {
+        name: "Dismiss notification",
+        includeHidden: true,
+      }),
+    ).toBeVisible();
+    await page.unroute(uploadPattern);
+    await page
+      .getByRole("button", { name: "Transfer feedback", exact: true })
+      .click();
+    await page.getByRole("tab", { name: /Files/ }).click();
+    await expect(
+      page.getByRole("button", { name: "Download Reference.txt", exact: true }),
+    ).toBeVisible();
+    const taskId = (await team.state()).tasks[0].id;
+    const file = await getDatabase().taskAttachment.findFirstOrThrow({
+      where: { taskId, removedAt: null },
+    });
+    const downloadPattern = `**/api/v1/attachments/${file.id}`;
+    const downloadGate = new Promise<void>((resolve) => {
+      releaseDownload = resolve;
+    });
+    await page.route(
+      downloadPattern,
+      async (route) => {
+        await downloadGate;
+        await route.continue();
+      },
+      { times: 1 },
+    );
+    const downloaded = page.waitForEvent("download");
+    await page
+      .getByRole("button", { name: "Download Reference.txt", exact: true })
+      .click();
+    await expect(toast).toHaveAttribute("data-variant", "loading");
+    await expect(toast).toContainText("Downloading");
+    releaseDownload();
+    expect((await downloaded).suggestedFilename()).toBe("Reference.txt");
+    await expect(toast).toHaveAttribute("data-variant", "success");
+    await expect(toast).toContainText("Download ready");
+    // A completed update of the same loading toast must start its dismissal timer.
+    await expect(toast).toBeHidden({ timeout: 8000 });
+    await page.route(
+      downloadPattern,
+      (route) =>
+        route.fulfill({
+          status: 403,
+          json: {
+            error: {
+              code: "FORBIDDEN",
+              message: "This file is no longer available.",
+            },
+          },
+        }),
+      { times: 1 },
+    );
+    await page
+      .getByRole("button", { name: "Download Reference.txt", exact: true })
+      .click();
+    await expect(toast).toHaveAttribute("data-variant", "error");
+    await expect(toast).toContainText("Download failed");
+    await expect(toast.locator("progress")).toHaveCount(0);
+    await page.route(uploadPattern, async (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      return route.fulfill({
+        status: 415,
+        json: {
+          error: {
+            code: "FILE_TYPE_NOT_ALLOWED",
+            message: "File type disabled.",
+          },
+        },
+      });
+    });
+    await page.getByLabel("Choose a file", { exact: true }).setInputFiles({
+      name: "Other.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("Another reference"),
+    });
+    await page
+      .getByRole("button", { name: "Upload file", exact: true })
+      .click();
+    await expect(toast).toHaveAttribute("data-variant", "error");
+    await expect(toast).toContainText("Upload failed");
+    await page.unroute(uploadPattern);
+    const cancelled = new Promise<void>((resolve) => {
+      releaseUpload = resolve;
+    });
+    await page.route(uploadPattern, async (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      await cancelled;
+      await route.continue().catch(() => {});
+    });
+    await page
+      .getByRole("button", { name: "Retry upload", exact: true })
+      .click();
+    await expect(toast).toHaveAttribute("data-variant", "loading");
+    await page
+      .getByRole("button", { name: "Cancel upload", exact: true })
+      .click();
+    await expect(toast).toHaveAttribute("data-variant", "neutral");
+    await expect(toast).toContainText("Upload cancelled");
+    await expect(toast.locator("progress")).toHaveCount(0);
+  } finally {
+    releaseUpload();
+    releaseDownload();
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await team.close();
+  }
+});
+
+test("JPG and PDF uploads validate in Next and keep the open task stable", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(120_000);
+  const team = await approvalTeam(page, browser);
+  try {
+    expect(
+      (
+        await postBoard(page, "create-task", {
+          boardId: team.boardId,
+          createKey: createRecordId(),
+          name: "Binary references",
+        })
+      ).status(),
+    ).toBe(200);
+    const taskId = (await team.state()).tasks[0].id;
+    await page.goto(`/boards/${team.boardId}`);
+    await page
+      .getByRole("button", { name: "Binary references", exact: true })
+      .click();
+    await page.getByRole("tab", { name: /Files/ }).click();
+    await expect(
+      page.getByText("No files attached yet", { exact: true }),
+    ).toBeVisible();
+    const probe = createRecordId();
+    await page.evaluate((value) => {
+      document.documentElement.dataset.reloadProbe = value;
+    }, probe);
+    const jpg = await readFile(
+      new URL("./fixtures/reference.jpg", import.meta.url),
+    );
+    const pdf = Buffer.from(
+      "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF",
+    );
+    for (const [name, content, mime] of [
+      ["reference.jpg", jpg, "image/jpeg"],
+      ["reference.pdf", pdf, "application/pdf"],
+    ] as const) {
+      await page
+        .getByLabel("Choose a file", { exact: true })
+        .setInputFiles({ name, mimeType: mime, buffer: content });
+      const response = page.waitForResponse(
+        (response) =>
+          response.url().includes("/api/v1/attachments?") &&
+          response.request().method() === "POST",
+      );
+      await page
+        .getByRole("button", { name: "Upload file", exact: true })
+        .click();
+      const uploaded = await response;
+      expect(uploaded.status(), await uploaded.text()).toBe(201);
+      const id = (await uploaded.json()).data.id;
+      await expect(
+        page.getByRole("button", { name: `Download ${name}`, exact: true }),
+      ).toBeVisible();
+      const downloaded = await page.request.get(`/api/v1/attachments/${id}`);
+      expect(downloaded.status()).toBe(200);
+      expect(await downloaded.body()).toEqual(content);
+      await expect(page.locator("html")).toHaveAttribute(
+        "data-reload-probe",
+        probe,
+      );
+    }
+    expect(
+      (
+        await postFile(
+          page,
+          taskId,
+          "fake.jpg",
+          Buffer.from("not a JPEG"),
+          createRecordId(),
+          "image/jpeg",
+        )
+      ).status(),
+    ).toBe(415);
+    if (process.env.YUZU_E2E_DEV === "1") {
+      // Runtime data and dev logs must not become HMR dependencies.
+      await page.waitForTimeout(15_000);
+      await expect(page.locator("html")).toHaveAttribute(
+        "data-reload-probe",
+        probe,
+      );
+      await expect(page.getByRole("tab", { name: /Files 2/ })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+    }
+  } finally {
+    await team.close();
+  }
+});
+
+test("local attachments migrate to S3 with verified bytes and safe reruns", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(60_000);
+  test.skip(
+    process.env.YUZU_E2E_S3 !== "1",
+    "Requires the isolated SeaweedFS test bucket.",
+  );
+  const team = await approvalTeam(page, browser);
+  const directory = fileURLToPath(
+    new URL("../../../artifacts/e2e-attachments/", import.meta.url),
+  );
+  const content = Buffer.from("Existing local reference 🍋");
+  try {
+    expect(
+      (
+        await postBoard(page, "create-task", {
+          boardId: team.boardId,
+          createKey: createRecordId(),
+          name: "Legacy file migration",
+        })
+      ).status(),
+    ).toBe(200);
+    const taskId = (await team.state()).tasks[0].id;
+    const storageKey = createRecordId();
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, `${storageKey}.bin`), content);
+    const file = await getDatabase().taskAttachment.create({
+      data: {
+        taskId,
+        uploadedById: team.ownerId,
+        uploadKey: createRecordId(),
+        storageKey,
+        fileName: "legacy.txt",
+        mimeType: "text/plain",
+        sizeBytes: content.length,
+        sha256: createHash("sha256").update(content).digest("hex"),
+      },
+    });
+    const before = await page.request.get(`/api/v1/attachments/${file.id}`);
+    expect(before.status()).toBe(200);
+    expect(await before.body()).toEqual(content);
+    const migrate = () =>
+      spawnSync("pnpm attachments:migrate-s3", {
+        shell: true,
+        encoding: "utf8",
+        timeout: 20_000,
+        cwd: fileURLToPath(new URL("../../../", import.meta.url)),
+        env: {
+          ...process.env,
+          DATABASE_URL: process.env.YUZU_E2E_DATABASE_URL,
+          YUZU_UPLOAD_DIR: directory,
+          YUZU_S3_BUCKET: "yuzu-e2e-attachments",
+        },
+      });
+    const first = migrate();
+    expect(first.status, first.stderr).toBe(0);
+    expect(first.stdout).toContain("verified 1 attachment(s)");
+    expect(
+      await getDatabase().taskAttachment.findUniqueOrThrow({
+        where: { id: file.id },
+      }),
+    ).toMatchObject({
+      storageProvider: "S3",
+      storageBucket: "yuzu-e2e-attachments",
+    });
+    expect(await readFile(join(directory, `${storageKey}.bin`))).toEqual(
+      content,
+    );
+    const after = await page.request.get(`/api/v1/attachments/${file.id}`);
+    expect(after.status()).toBe(200);
+    expect(await after.body()).toEqual(content);
+    const second = migrate();
+    expect(second.status, second.stderr).toBe(0);
+    expect(second.stdout).toContain("verified 0 attachment(s)");
+    const brokenKey = createRecordId();
+    await writeFile(join(directory, `${brokenKey}.bin`), "corrupted");
+    const broken = await getDatabase().taskAttachment.create({
+      data: {
+        taskId,
+        uploadedById: team.ownerId,
+        uploadKey: createRecordId(),
+        storageKey: brokenKey,
+        fileName: "broken.txt",
+        mimeType: "text/plain",
+        sizeBytes: content.length,
+        sha256: file.sha256,
+      },
+    });
+    expect(migrate().status).not.toBe(0);
+    expect(
+      (
+        await getDatabase().taskAttachment.findUniqueOrThrow({
+          where: { id: broken.id },
+        })
+      ).storageProvider,
+    ).toBe("LOCAL");
+    expect(await readFile(join(directory, `${brokenKey}.bin`), "utf8")).toBe(
+      "corrupted",
+    );
+  } finally {
+    await team.close();
+  }
+});
+
+test("attachments enforce scope, editor/manager ownership, policy, retry identity and archive preservation", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  const anonymous = await browser.newContext();
+  try {
+    const made = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Private documents",
+      assigneeIds: [team.author.id],
+    });
+    expect(made.status()).toBe(200);
+    const taskId = (await team.state()).tasks[0].id;
+    expect((await team.configure()).status()).toBe(200);
+    const key = createRecordId();
+    const uploads = await Promise.all([
+      postFile(page, taskId, "owner.txt", Buffer.from("Owner document"), key),
+      postFile(page, taskId, "owner.txt", Buffer.from("Owner document"), key),
+    ]);
+    for (const response of uploads) expect(response.status()).toBe(201);
+    const fileId = (await uploads[0].json()).data.id;
+    const stored = await getDatabase().taskAttachment.findUniqueOrThrow({
+      where: { id: fileId },
+    });
+    expect(stored.storageProvider).toBe(
+      process.env.YUZU_E2E_S3 === "1" ? "S3" : "LOCAL",
+    );
+    expect(stored.storageBucket).toBe(
+      process.env.YUZU_E2E_S3 === "1" ? "yuzu-e2e-attachments" : null,
+    );
+    expect((await uploads[1].json()).data.id).toBe(fileId);
+    expect((await team.state()).tasks[0].revision).toBe(1);
+    expect((await team.state()).pendingApprovals).toHaveLength(0);
+    expect(
+      await getDatabase().boardEvent.count({
+        where: { subjectId: fileId, action: "Uploaded task attachment" },
+      }),
+    ).toBe(1);
+    expect(
+      (
+        await postFile(
+          page,
+          taskId,
+          "owner.txt",
+          Buffer.from("Different bytes"),
+          key,
+        )
+      ).status(),
+    ).toBe(409);
+    expect((await postFile(team.backup.page, taskId)).status()).toBe(403);
+    expect((await removeFile(team.author.page, fileId)).status()).toBe(403);
+    const own = await postFile(team.author.page, taskId, "author.txt");
+    expect(own.status()).toBe(201);
+    const ownId = (await own.json()).data.id;
+    expect((await removeFile(team.author.page, ownId)).status()).toBe(200);
+    if (process.env.YUZU_E2E_S3 === "1") {
+      const removed = await getDatabase().taskAttachment.findUniqueOrThrow({
+        where: { id: ownId },
+      });
+      await expect(readAttachmentObject(removed)).rejects.toMatchObject({
+        $metadata: { httpStatusCode: 404 },
+      });
+    }
+    expect((await removeFile(team.author.page, ownId)).status()).toBe(200);
+    expect(
+      await getDatabase().boardEvent.count({
+        where: { subjectId: ownId, action: "Removed task attachment" },
+      }),
+    ).toBe(1);
+    expect(
+      (
+        await team.author.page.request.get(`/api/v1/attachments/${ownId}`)
+      ).status(),
+    ).toBe(404);
+    const downloaded = await team.backup.page.request.get(
+      `/api/v1/attachments/${fileId}`,
+    );
+    expect(downloaded.status()).toBe(200);
+    expect((await downloaded.body()).toString()).toBe("Owner document");
+    expect(downloaded.headers()["content-disposition"]).toContain(
+      "attachment;",
+    );
+    expect(downloaded.headers()["x-content-type-options"]).toBe("nosniff");
+    expect(downloaded.headers()["cache-control"]).toContain("no-store");
+    expect(
+      (
+        await anonymous.request.get(
+          `http://127.0.0.1:3100/api/v1/attachments/${fileId}`,
+        )
+      ).status(),
+    ).toBe(401);
+    const list = (
+      await (
+        await team.backup.page.request.get(
+          `/api/v1/attachments?taskId=${taskId}`,
+        )
+      ).json()
+    ).data;
+    expect(list.canUpload).toBe(false);
+    expect(list.maxSizeBytes).toBe(50_000_000);
+    expect(list.files[0].canRemove).toBe(false);
+    expect(list.files[0].storageKey).toBeUndefined();
+    expect(
+      (
+        await postFile(
+          page,
+          taskId,
+          "page.html",
+          Buffer.from("<html></html>"),
+          createRecordId(),
+          "text/html",
+        )
+      ).status(),
+    ).toBe(415);
+    expect(
+      (
+        await postFile(
+          page,
+          taskId,
+          "fake.png",
+          Buffer.from("not PNG"),
+          createRecordId(),
+          "image/png",
+        )
+      ).status(),
+    ).toBe(415);
+    expect(
+      (
+        await postFile(
+          page,
+          taskId,
+          "notes.txt",
+          Buffer.from("wrong origin"),
+          createRecordId(),
+          "text/plain",
+          "https://elsewhere.test",
+        )
+      ).status(),
+    ).toBe(403);
+    await getDatabase().installationSettings.update({
+      where: { id: "installation" },
+      data: { maxAttachmentSizeBytes: 32 },
+    });
+    expect(
+      (
+        await postFile(page, taskId, "large.txt", Buffer.alloc(33, 65))
+      ).status(),
+    ).toBe(413);
+    expect(
+      (
+        await postFile(page, taskId, "boundary.txt", Buffer.alloc(32, 65))
+      ).status(),
+    ).toBe(201);
+    await getDatabase().installationSettings.update({
+      where: { id: "installation" },
+      data: { allowedAttachmentMimeTypes: ["application/pdf"] },
+    });
+    expect((await postFile(page, taskId)).status()).toBe(415);
+    await getDatabase().workspaceMember.deleteMany({
+      where: { userId: team.backup.id, workspaceId: team.workspaceId },
+    });
+    expect(
+      (
+        await team.backup.page.request.get(`/api/v1/attachments/${fileId}`)
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await team.backup.page.request.get(
+          `/api/v1/attachments?taskId=${taskId}`,
+        )
+      ).status(),
+    ).toBe(404);
+    expect(
+      (await postBoard(page, "archive", { taskId, revision: 1 })).status(),
+    ).toBe(200);
+    expect(
+      (await page.request.get(`/api/v1/attachments/${fileId}`)).status(),
+    ).toBe(200);
+    expect((await removeFile(page, fileId)).status()).toBe(409);
+    expect((await postFile(page, taskId)).status()).toBe(409);
+    expect(
+      (await postBoard(page, "restore", { taskId, revision: 2 })).status(),
+    ).toBe(200);
+    expect((await removeFile(page, fileId)).status()).toBe(200);
+    expect((await team.state()).tasks[0].attachmentCount).toBe(1);
+    await getDatabase().installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: true },
+    });
+    expect((await postFile(page, taskId)).status()).toBe(503);
+  } finally {
+    await anonymous.close();
+    await team.close();
+  }
+});
+
+test("Files tab uploads and downloads, synchronizes across users, and confirms removal", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    expect(
+      (
+        await postBoard(page, "create-task", {
+          boardId: team.boardId,
+          createKey: createRecordId(),
+          name: "Release references",
+          assigneeIds: [team.author.id],
+        })
+      ).status(),
+    ).toBe(200);
+    for (const actor of [page, team.author.page]) {
+      await actor.goto(`/boards/${team.boardId}`);
+      await actor
+        .getByRole("button", { name: "Release references", exact: true })
+        .click();
+      await actor.getByRole("tab", { name: /Files/ }).click();
+      await expect(
+        actor.getByText("No files attached yet", { exact: true }),
+      ).toBeVisible();
+    }
+    const filesPanel = page.getByRole("tabpanel", { name: /Files/ });
+    await filesPanel.getByText("File types", { exact: true }).click();
+    await expect(filesPanel.locator("details p")).toContainText("PDF");
+    await filesPanel.getByText("File types", { exact: true }).click();
+    await page.screenshot({
+      path: "../../artifacts/phase-3/task-files-empty.png",
+      fullPage: true,
+    });
+    const picker = team.author.page.waitForEvent("filechooser");
+    await team.author.page
+      .getByRole("button", { name: "Browse files", exact: true })
+      .click();
+    await (
+      await picker
+    ).setFiles({
+      name: "Draft.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("Draft reference"),
+    });
+    await team.author.page
+      .getByRole("button", { name: "Clear selected file" })
+      .click();
+    await expect(
+      team.author.page.getByRole("button", {
+        name: "Upload file",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    await team.author.page
+      .getByLabel("Choose a file", { exact: true })
+      .setInputFiles({
+        name: "Release notes.txt",
+        mimeType: "text/plain",
+        buffer: Buffer.from("Approved release references"),
+      });
+    await team.author.page
+      .getByRole("button", { name: "Upload file", exact: true })
+      .click();
+    await expect(
+      team.author.page.getByRole("button", {
+        name: "Download Release notes.txt",
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Download Release notes.txt" }),
+    ).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("tab", { name: /Files 1/ })).toBeVisible();
+    const download = page.waitForEvent("download");
+    await page
+      .getByRole("button", { name: "Download Release notes.txt" })
+      .click();
+    expect((await download).suggestedFilename()).toBe("Release notes.txt");
+    await expect(page.locator("#nprogress")).toHaveCount(0);
+    await page
+      .getByRole("button", {
+        name: "Dismiss notification",
+        includeHidden: true,
+      })
+      .click();
+    await page.emulateMedia({ colorScheme: "dark" });
+    await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
+    await page.locator(".task-sheet-panel").evaluate(async (panel) => {
+      await Promise.all(
+        panel
+          .getAnimations()
+          .map((animation) => animation.finished.catch(() => {})),
+      );
+    });
+    await page.screenshot({
+      path: "../../artifacts/phase-3/task-files-desktop.png",
+      fullPage: true,
+    });
+    await page.emulateMedia({ colorScheme: "light" });
+    await expect(page.locator("html")).toHaveAttribute("data-mode", "light");
+    await page.locator(".task-sheet-panel").evaluate(async (panel) => {
+      await Promise.all(
+        panel
+          .getAnimations()
+          .map((animation) => animation.finished.catch(() => {})),
+      );
+    });
+    await page.screenshot({
+      path: "../../artifacts/phase-3/task-files-light.png",
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: "../../artifacts/phase-3/task-files-mobile.png",
+      fullPage: true,
+    });
+    await page
+      .getByRole("button", { name: "Remove Release notes.txt", exact: true })
+      .click();
+    await page.getByRole("button", { name: "Keep file", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Download Release notes.txt" }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Remove Release notes.txt", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Remove file", exact: true })
+      .click();
+    await expect(
+      team.author.page.getByText("No files attached yet", { exact: true }),
+    ).toBeVisible({ timeout: 10_000 });
+    await page.getByRole("tab", { name: "Activity", exact: true }).click();
+    await expect(
+      page.getByText("Uploaded task attachment: Release notes.txt", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Removed task attachment: Release notes.txt", {
+        exact: true,
+      }),
+    ).toBeVisible();
+  } finally {
+    await team.close();
+  }
+});
+
+test("uploads recheck task editing permission after a slow transfer and discard rejected bytes", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  let finish!: () => void;
+  const finished = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  let transfer: Promise<Response> | undefined;
+  try {
+    expect(
+      (
+        await postBoard(page, "create-task", {
+          boardId: team.boardId,
+          createKey: createRecordId(),
+          name: "Permission race",
+          assigneeIds: [team.author.id],
+        })
+      ).status(),
+    ).toBe(200);
+    const taskId = (await team.state()).tasks[0].id;
+    const directory = fileURLToPath(
+      new URL("../../../artifacts/e2e-attachments/", import.meta.url),
+    );
+    const before = await readdir(directory).catch(() => [] as string[]);
+    const cookie = (await team.author.context.cookies())
+      .map((item) => `${item.name}=${item.value}`)
+      .join("; ");
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(new TextEncoder().encode("Start"));
+        await finished;
+        controller.enqueue(new TextEncoder().encode("Finish"));
+        controller.close();
+      },
+    });
+    transfer = fetch(
+      `http://127.0.0.1:3100/api/v1/attachments?taskId=${taskId}`,
+      {
+        method: "POST",
+        headers: {
+          cookie,
+          origin: "http://127.0.0.1:3100",
+          "Content-Type": "text/plain",
+          "X-Yuzu-File-Name": "race.txt",
+          "X-Yuzu-Upload-Key": createRecordId(),
+        },
+        body: stream,
+        duplex: "half",
+      } as RequestInit,
+    );
+    await expect
+      .poll(
+        async () =>
+          (await readdir(directory)).filter((name) => !before.includes(name))
+            .length,
+      )
+      .toBe(1);
+    expect(
+      (
+        await postBoard(page, "update", {
+          taskId,
+          revision: 1,
+          changes: { assigneeIds: [] },
+        })
+      ).status(),
+    ).toBe(200);
+    finish();
+    expect((await transfer).status).toBe(403);
+    expect(
+      await getDatabase().taskAttachment.count({ where: { taskId } }),
+    ).toBe(0);
+    expect(
+      (await readdir(directory)).filter((name) => !before.includes(name)),
+    ).toEqual([]);
+  } finally {
+    finish();
+    await transfer?.catch(() => {});
+    await team.close();
+  }
+});
+
 async function approvalTeam(
   page: Page,
   browser: import("@playwright/test").Browser,
@@ -3880,6 +5065,835 @@ async function approvalTeam(
     },
   };
 }
+
+test("board checklist options can be cleared when unused and fields removed without losing task checklists", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const field = await postBoard(page, "field", {
+      boardId: team.boardId,
+      name: "Old checklist",
+      type: "MULTI_SELECT",
+      options: ["Old step"],
+    });
+    const fieldId = (await field.json()).data.id;
+    await page.goto(`/boards/${team.boardId}`);
+    await page
+      .getByRole("button", { name: "Board details", exact: true })
+      .click();
+    const section = page.locator("details").filter({
+      has: page.locator("summary", {
+        hasText: "Old checklist · multi select",
+      }),
+    });
+    await section.locator("summary").click();
+    await section
+      .getByRole("button", { name: "Remove Old step option", exact: true })
+      .click();
+    await section
+      .getByRole("button", { name: "Save field", exact: true })
+      .click();
+    await expect(
+      page.locator('[data-slot="board-notification"]'),
+    ).toContainText("Field saved");
+    let current = await team.state();
+    let saved = current.fields.find(
+      (item: { id: string }) => item.id === fieldId,
+    );
+    expect(saved.options).toEqual([]);
+    const configured = await postBoard(page, "configure-field", {
+      boardId: team.boardId,
+      fieldId,
+      version: saved.version,
+      name: saved.name,
+      options: [{ id: "old", label: "Old step" }],
+    });
+    expect(configured.status()).toBe(200);
+    const made = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Preserve checklist",
+      fieldValues: { [fieldId]: ["old"] },
+      checklist: [
+        { id: createRecordId(), text: "Independent step", done: false },
+      ],
+    });
+    expect(made.status()).toBe(200);
+    current = await team.state();
+    saved = current.fields.find((item: { id: string }) => item.id === fieldId);
+    const clearUsed = await postBoard(page, "configure-field", {
+      boardId: team.boardId,
+      fieldId,
+      version: saved.version,
+      name: saved.name,
+      options: [],
+    });
+    expect(clearUsed.status()).toBe(409);
+    expect((await clearUsed.json()).error.code).toBe("OPTION_IN_USE");
+    expect(
+      (
+        await postBoard(page, "remove-field", {
+          boardId: team.boardId,
+          fieldId,
+          version: saved.version,
+        })
+      ).status(),
+    ).toBe(200);
+    current = await team.state();
+    expect(
+      current.fields.some((item: { id: string }) => item.id === fieldId),
+    ).toBe(false);
+    expect(current.tasks[0].checklist[0].text).toBe("Independent step");
+    expect(
+      await getDatabase().taskFieldValue.count({ where: { fieldId } }),
+    ).toBe(1);
+    const status = current.fields.find(
+      (item: { key: string }) => item.key === "status",
+    );
+    const emptyStatus = await postBoard(page, "configure-field", {
+      boardId: team.boardId,
+      fieldId: status.id,
+      version: status.version,
+      name: status.name,
+      options: [],
+    });
+    expect(emptyStatus.status()).toBe(422);
+    expect((await emptyStatus.json()).error.message).toBe(
+      "Keep at least one status option.",
+    );
+  } finally {
+    await team.close();
+  }
+});
+
+test("task sheet avoids automatic avatar tooltips and table shows live task checklist progress", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const made = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Checklist table task",
+      assigneeIds: [team.author.id],
+      checklist: [{ id: createRecordId(), text: "Review draft", done: false }],
+    });
+    const taskId = (await made.json()).data.taskId;
+    await page.goto(`/boards/${team.boardId}`);
+    await page
+      .getByRole("button", { name: "Checklist table task", exact: true })
+      .click();
+    await expect(page.getByRole("dialog")).toBeFocused();
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("tooltip")).toContainText("Request Author");
+    await page.keyboard.press("Escape");
+    // Hover tooltips still work after deliberately moving onto the avatar.
+    await page
+      .getByRole("dialog")
+      .locator('.task-sheet-metadata [role="img"][aria-label="Request Author"]')
+      .hover();
+    await expect(page.getByRole("tooltip")).toContainText("Request Author");
+    await page.mouse.move(0, 0);
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Close", exact: true })
+      .click();
+    await page.getByRole("button", { name: "Table", exact: true }).click();
+    await expect(
+      page.getByRole("columnheader", { name: "Task checklist", exact: true }),
+    ).toBeVisible();
+    const row = page.locator(`tr[data-task-id="${taskId}"]`);
+    await expect(
+      row.getByRole("button", {
+        name: "Open checklist for Checklist table task",
+        exact: true,
+      }),
+    ).toContainText("0/1");
+    await expect(row).toContainText("Review draft");
+    await row
+      .getByRole("button", {
+        name: "Open checklist for Checklist table task",
+        exact: true,
+      })
+      .click();
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
+    await page
+      .getByRole("checkbox", { name: "Complete checklist item 1", exact: true })
+      .check();
+    await page
+      .getByRole("button", { name: "Save changes", exact: true })
+      .click();
+    await expect(
+      row.getByRole("button", {
+        name: "Open checklist for Checklist table task",
+        exact: true,
+      }),
+    ).toContainText("1/1");
+    await page.screenshot({
+      path: "../../artifacts/checklists/table-progress.png",
+      fullPage: true,
+    });
+  } finally {
+    await team.close();
+  }
+});
+
+test("task checklists belong to each task, save live and disappear from cards when empty", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const made = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Task with its own steps",
+      assigneeIds: [team.author.id],
+    });
+    const taskId = (await made.json()).data.taskId;
+    await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Task without steps",
+    });
+    await page.goto(`/boards/${team.boardId}`);
+    const card = page.locator(".task-card").filter({
+      has: page.getByRole("button", {
+        name: "Task with its own steps",
+        exact: true,
+      }),
+    });
+    const empty = page.locator(".task-card").filter({
+      has: page.getByRole("button", {
+        name: "Task without steps",
+        exact: true,
+      }),
+    });
+    await expect(card.locator(".task-checklist-summary")).toHaveCount(0);
+    await team.author.page.goto(`/boards/${team.boardId}?task=${taskId}`);
+    const section = team.author.page.getByRole("region", {
+      name: "Task checklist",
+      exact: true,
+    });
+    await section
+      .getByRole("textbox", { name: "New checklist item", exact: true })
+      .fill("Write the draft");
+    await section
+      .getByRole("textbox", { name: "New checklist item", exact: true })
+      .press("Enter");
+    await section
+      .getByRole("textbox", { name: "New checklist item", exact: true })
+      .fill("Review the draft");
+    await section
+      .getByRole("button", { name: "Add step", exact: true })
+      .click();
+    await section
+      .getByRole("checkbox", { name: "Complete checklist item 1", exact: true })
+      .check();
+    await team.author.page
+      .getByRole("button", { name: "Save changes", exact: true })
+      .click();
+    await expect(card.locator(".task-checklist-summary")).toContainText(
+      "Checklist1/2",
+    );
+    await expect(empty.locator(".task-checklist-summary")).toHaveCount(0);
+    await page
+      .getByRole("button", { name: "Task with its own steps", exact: true })
+      .click();
+    await expect(
+      page.getByRole("textbox", { name: "Checklist item 2", exact: true }),
+    ).toHaveValue("Review the draft");
+    await page
+      .getByRole("textbox", { name: "Checklist item 2", exact: true })
+      .fill("Review final copy");
+    await page
+      .getByRole("button", { name: "Remove checklist item 1", exact: true })
+      .click();
+    await page.screenshot({
+      path: "../../artifacts/checklists/task-checklist-desktop.png",
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({
+      path: "../../artifacts/checklists/task-checklist-mobile.png",
+      fullPage: true,
+    });
+    await page
+      .getByRole("button", { name: "Save changes", exact: true })
+      .click();
+    await expect(card.locator(".task-checklist-summary")).toContainText(
+      "Checklist0/1",
+    );
+    await expect
+      .poll(
+        async () =>
+          (await team.state()).tasks.find(
+            (task: { id: string }) => task.id === taskId,
+          ).checklist[0].text,
+      )
+      .toBe("Review final copy");
+    await page
+      .getByRole("button", { name: "Task with its own steps", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Remove checklist item 1", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Save changes", exact: true })
+      .click();
+    await expect(card.locator(".task-checklist-summary")).toHaveCount(0);
+    expect(
+      (await team.state()).tasks.find(
+        (task: { name: string }) => task.name === "Task without steps",
+      ).checklist,
+    ).toEqual([]);
+  } finally {
+    await team.close();
+  }
+});
+
+test("checklists validate input and follow task permissions, approvals and revision conflicts", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const items = [{ id: createRecordId(), text: "First step", done: false }];
+    const made = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Checklist rules",
+      assigneeIds: [team.author.id],
+      checklist: items,
+    });
+    expect(made.status()).toBe(200);
+    const taskId = (await made.json()).data.taskId;
+    const update = (
+      actor: Page,
+      revision: number,
+      checklist: unknown,
+      changes = {},
+    ) =>
+      postBoard(actor, "update", {
+        taskId,
+        revision,
+        requestKey: createRecordId(),
+        changes: { checklist, ...changes },
+      });
+    expect((await update(team.backup.page, 1, [])).status()).toBe(403);
+    expect((await update(page, 1, [items[0], items[0]])).status()).toBe(422);
+    expect((await update(page, 1, [{ ...items[0], text: " " }])).status()).toBe(
+      422,
+    );
+    expect(
+      (await update(page, 1, [{ ...items[0], done: "yes" }])).status(),
+    ).toBe(422);
+    const statusField = (await team.state()).fields.find(
+      (field: { key: string }) => field.key === "status",
+    ).id;
+    await team.configure({ protectedFieldIds: [statusField] });
+    const completed = [{ ...items[0], done: true }];
+    const request = await update(team.author.page, 1, completed, {
+      statusId: "in_progress",
+    });
+    expect((await request.json()).data.outcome).toBe("PENDING_APPROVAL");
+    expect((await team.state()).tasks[0].checklist).toEqual(items);
+    const proposalId = (await request.json()).data.proposalId;
+    expect(
+      (
+        await postApproval(page, "decide", { proposalId, action: "approve" })
+      ).status(),
+    ).toBe(200);
+    expect((await team.state()).tasks[0].checklist).toEqual(completed);
+    const pending = await update(team.author.page, 2, items, {
+      statusId: "done",
+    });
+    expect(
+      (
+        await update(team.author.page, 2, [
+          { ...items[0], text: "Changed step", done: true },
+        ])
+      ).status(),
+    ).toBe(200);
+    const stale = await postApproval(page, "decide", {
+      proposalId: (await pending.json()).data.proposalId,
+      action: "approve",
+    });
+    expect((await stale.json()).data.status).toBe("STALE");
+    expect((await team.state()).tasks[0].statusId).toBe("in_progress");
+    const race = await Promise.all([
+      update(page, 3, []),
+      update(page, 3, items),
+    ]);
+    expect(race.map((result) => result.status()).sort()).toEqual([200, 409]);
+    await postBoard(page, "archive", { taskId, revision: 4 });
+    expect((await update(team.author.page, 5, [])).status()).toBe(409);
+  } finally {
+    await team.close();
+  }
+});
+
+test("groups remove only when unused, including archived tasks, pending requests and concurrent assignment", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const group = async (name: string) =>
+      (
+        await (
+          await postBoard(page, "group", { boardId: team.boardId, name })
+        ).json()
+      ).data.id;
+    const usedId = await group("In use");
+    const emptyId = await group("Empty group");
+    const remove = (id: string, name: string, actor = page) =>
+      postBoard(actor, "remove-group", {
+        boardId: team.boardId,
+        groupId: id,
+        expectedName: name,
+      });
+    const made = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Grouped task",
+      groupId: usedId,
+    });
+    const taskId = (await made.json()).data.taskId;
+    expect((await remove(usedId, "In use")).status()).toBe(409);
+    await postBoard(page, "archive", { taskId, revision: 1 });
+    expect((await remove(usedId, "In use")).status()).toBe(409);
+    expect(
+      (await remove(emptyId, "Empty group", team.author.page)).status(),
+    ).toBe(403);
+    expect((await remove(emptyId, "Wrong name")).status()).toBe(409);
+    await page.goto(`/boards/${team.boardId}`);
+    await page
+      .getByRole("button", { name: "Board details", exact: true })
+      .click();
+    const usedRow = page.locator(`[data-group-id="${usedId}"]`);
+    await expect(
+      usedRow.getByRole("button", { name: "Remove In use group", exact: true }),
+    ).toBeDisabled();
+    const emptyRow = page.locator(`[data-group-id="${emptyId}"]`);
+    await emptyRow
+      .getByRole("button", { name: "Remove Empty group group", exact: true })
+      .click();
+    await emptyRow
+      .getByRole("button", { name: "Confirm group removal", exact: true })
+      .click();
+    await expect(emptyRow).toHaveCount(0);
+    await expect(
+      page.locator('[data-slot="board-notification"]'),
+    ).toContainText("Group removed");
+    const pendingId = await group("Pending group");
+    await team.configure({ requireCreation: true });
+    const proposed = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Proposed task",
+      groupId: pendingId,
+      checklist: [{ id: createRecordId(), text: "Pending step", done: false }],
+    });
+    const proposalId = (await proposed.json()).data.proposalId;
+    expect((await remove(pendingId, "Pending group")).status()).toBe(409);
+    await postApproval(page, "decide", { proposalId, action: "withdraw" });
+    expect((await remove(pendingId, "Pending group")).status()).toBe(200);
+    await team.configure({ enabled: false });
+    const raceId = await group("Race group");
+    const [creation, removal] = await Promise.all([
+      postBoard(page, "create-task", {
+        boardId: team.boardId,
+        createKey: createRecordId(),
+        name: "Race task",
+        groupId: raceId,
+      }),
+      remove(raceId, "Race group"),
+    ]);
+    expect([200, 422]).toContain(creation.status());
+    expect([200, 409]).toContain(removal.status());
+    expect(creation.status() === 200 && removal.status() === 200).toBe(false);
+    const orphan = await getDatabase().task.findMany({
+      where: { groupId: raceId },
+    });
+    if (orphan.length)
+      expect(
+        await getDatabase().boardGroup.findUnique({ where: { id: raceId } }),
+      ).not.toBeNull();
+  } finally {
+    await team.close();
+  }
+});
+
+test("comment mentions notify live, edits retain history and manager removal hides content", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const made = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Mention conversation",
+    });
+    const taskId = (await made.json()).data.taskId;
+    await team.backup.page.goto("/notifications");
+    await team.author.page.goto(
+      `/boards/${team.boardId}?task=${taskId}&tab=comments`,
+    );
+    await team.author.page
+      .getByRole("textbox", { name: "New comment", exact: true })
+      .fill("Please review this @Back");
+    await expect(
+      team.author.page.getByRole("listbox", { name: "Mention suggestions" }),
+    ).toBeVisible();
+    await expect(
+      team.author.page.getByRole("option", {
+        name: "Backup Reviewer",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      team.author.page.getByRole("option", { name: "Team Owner", exact: true }),
+    ).toHaveCount(0);
+    await team.author.page.screenshot({
+      path: "../../artifacts/comments/mention-picker-desktop.png",
+      fullPage: true,
+    });
+    await team.author.page
+      .getByRole("textbox", { name: "New comment", exact: true })
+      .press("Enter");
+    await expect(
+      team.author.page.getByRole("textbox", {
+        name: "New comment",
+        exact: true,
+      }),
+    ).toHaveValue("Please review this @Backup Reviewer ");
+    await expect(
+      team.author.page.getByRole("listbox", { name: "Mention suggestions" }),
+    ).toHaveCount(0);
+    await team.author.page
+      .getByRole("button", { name: "Post comment", exact: true })
+      .click();
+    await expect(
+      team.backup.page.getByRole("link", {
+        name: "Notifications (1 unread)",
+        exact: true,
+      }),
+    ).toBeVisible();
+    const comment = await getDatabase().taskComment.findFirstOrThrow({
+      where: { taskId },
+    });
+    const row = team.author.page.locator(`[data-comment-id="${comment.id}"]`);
+    await expect(row).toContainText("Please review this @Backup Reviewer");
+    const notification = (await readInbox(team.backup.page)).items[0];
+    expect(notification.kind).toBe("MENTION");
+    const link = await changeInbox(team.backup.page, {
+      action: "open",
+      id: notification.id,
+    });
+    await team.backup.page.goto((await link.json()).data.href);
+    await expect(team.backup.page.getByRole("dialog")).toBeVisible();
+    await expect(
+      team.backup.page.locator(".task-comments-panel"),
+    ).toBeVisible();
+    await expect(
+      team.backup.page.getByRole("button", { name: "Edit", exact: true }),
+    ).toHaveCount(0);
+    await row.getByRole("button", { name: "Edit", exact: true }).click();
+    await team.author.page
+      .getByRole("textbox", { name: "Edit comment", exact: true })
+      .fill("Updated review notes @Backup Reviewer");
+    const editor = team.author.page.getByRole("textbox", {
+      name: "Edit comment",
+      exact: true,
+    });
+    await editor.fill("Ask @Back about this");
+    await editor.press("Home");
+    for (let position = 0; position < 9; position++)
+      await editor.press("ArrowRight");
+    await team.author.page
+      .getByRole("option", { name: "Backup Reviewer", exact: true })
+      .click();
+    await expect(editor).toHaveValue("Ask @Backup Reviewer about this");
+    await editor.fill("Updated review notes @Backup Reviewer");
+    await team.author.page
+      .getByRole("textbox", { name: "Edit comment", exact: true })
+      .press("End");
+    await team.author.page
+      .getByRole("textbox", { name: "Edit comment", exact: true })
+      .pressSequentially(" @zzzz");
+    await expect(
+      team.author.page.getByText("No teammates match that name."),
+    ).toBeVisible();
+    await team.author.page
+      .getByRole("textbox", { name: "Edit comment", exact: true })
+      .press("Escape");
+    await expect(
+      team.author.page.getByRole("listbox", { name: "Mention suggestions" }),
+    ).toHaveCount(0);
+    await team.author.page
+      .getByRole("textbox", { name: "Edit comment", exact: true })
+      .fill("Updated review notes @Backup Reviewer");
+    await team.author.page
+      .getByRole("button", { name: "Save comment", exact: true })
+      .click();
+    await expect(row).toContainText("Updated review notes @Backup Reviewer");
+    // Existing mentions do not generate duplicate notifications on every edit.
+    expect(
+      await getDatabase().notification.count({
+        where: { kind: "MENTION", taskId },
+      }),
+    ).toBe(1);
+    await row.getByRole("button", { name: "History", exact: true }).click();
+    await expect(
+      team.author.page.getByLabel("Comment edit history"),
+    ).toContainText("Please review this @Backup Reviewer");
+    await team.author.page.screenshot({
+      path: "../../artifacts/comments/history-desktop.png",
+      fullPage: true,
+    });
+    await team.author.page.setViewportSize({ width: 390, height: 844 });
+    await team.author.page.screenshot({
+      path: "../../artifacts/comments/history-mobile.png",
+      fullPage: true,
+    });
+    await page.goto(`/boards/${team.boardId}?task=${taskId}&tab=comments`);
+    const managed = page.locator(`[data-comment-id="${comment.id}"]`);
+    await expect(
+      managed.getByRole("button", { name: "Edit", exact: true }),
+    ).toHaveCount(0);
+    await managed.getByRole("button", { name: "Remove", exact: true }).click();
+    await managed
+      .getByRole("button", { name: "Remove comment", exact: true })
+      .click();
+    await expect(row).toContainText("Comment removed");
+    await expect(row).not.toContainText("Updated review notes");
+    expect(
+      (
+        await (
+          await team.author.page.request.get(
+            `/api/v1/boards/comment-history?commentId=${comment.id}`,
+          )
+        ).json()
+      ).data,
+    ).toEqual([]);
+    expect(
+      await getDatabase().commentRevision.count({
+        where: { commentId: comment.id },
+      }),
+    ).toBe(3);
+    expect((await readInbox(team.backup.page)).items).toHaveLength(0);
+    expect((await team.state()).tasks[0].revision).toBe(1);
+    expect((await team.state()).tasks[0].commentCount).toBe(0);
+    expect(
+      (await team.state()).tasks[0].activity.some(
+        (event: { action: string }) => event.action === "Removed task comment",
+      ),
+    ).toBe(true);
+  } finally {
+    await team.close();
+  }
+});
+
+test("comment changes enforce author rights, revision races, mention eligibility and legacy retries", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const db = getDatabase();
+    const made = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Protected comments",
+    });
+    const taskId = (await made.json()).data.taskId;
+    const input = {
+      taskId,
+      createKey: createRecordId(),
+      body: "Hello @Backup Reviewer",
+      mentionIds: [team.backup.id],
+    };
+    const [one, two] = await Promise.all([
+      postBoard(team.author.page, "comment", input),
+      postBoard(team.author.page, "comment", input),
+    ]);
+    expect([one.status(), two.status()]).toEqual([200, 200]);
+    const commentId = (await one.json()).data.id;
+    expect(
+      await db.notification.count({ where: { kind: "MENTION", taskId } }),
+    ).toBe(1);
+    expect(
+      (
+        await postBoard(team.author.page, "comment", {
+          ...input,
+          mentionIds: [team.ownerId],
+        })
+      ).status(),
+    ).toBe(409);
+    expect(
+      (
+        await postBoard(team.author.page, "comment", {
+          ...input,
+          createKey: createRecordId(),
+          body: "No mention text",
+        })
+      ).status(),
+    ).toBe(422);
+    const outsider = await db.user.create({
+      data: { name: "Outsider", email: "outsider@mention.test" },
+    });
+    expect(
+      (
+        await postBoard(team.author.page, "comment", {
+          ...input,
+          createKey: createRecordId(),
+          body: "Hello @Outsider",
+          mentionIds: [outsider.id],
+        })
+      ).status(),
+    ).toBe(422);
+    const edit = {
+      action: "edit",
+      commentId,
+      revision: 1,
+      body: "First change @Backup Reviewer",
+      mentionIds: [team.backup.id],
+    };
+    expect((await postBoard(page, "change-comment", edit)).status()).toBe(403);
+    expect(
+      (
+        await postBoard(team.backup.page, "change-comment", {
+          action: "remove",
+          commentId,
+          revision: 1,
+        })
+      ).status(),
+    ).toBe(403);
+    const concurrent = await Promise.all([
+      postBoard(team.author.page, "change-comment", edit),
+      postBoard(team.author.page, "change-comment", {
+        ...edit,
+        body: "Second change @Backup Reviewer",
+      }),
+    ]);
+    expect(concurrent.map((response) => response.status()).sort()).toEqual([
+      200, 409,
+    ]);
+    expect(await db.commentRevision.count({ where: { commentId } })).toBe(2);
+    expect(
+      await db.notification.count({ where: { kind: "MENTION", taskId } }),
+    ).toBe(1);
+    expect((await postBoard(team.author.page, "comment", input)).status()).toBe(
+      200,
+    ); // Original creation retry survives edits.
+    expect(
+      (await postBoard(team.author.page, "change-comment", edit)).status(),
+    ).toBe(409);
+    const legacyKey = createRecordId();
+    const legacy = await db.taskComment.create({
+      data: {
+        taskId,
+        authorId: team.author.id,
+        createKey: legacyKey,
+        body: "Legacy text",
+      },
+    });
+    expect(
+      (
+        await postBoard(team.author.page, "change-comment", {
+          action: "edit",
+          commentId: legacy.id,
+          revision: 1,
+          body: "Modern text",
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postBoard(team.author.page, "comment", {
+          taskId,
+          createKey: legacyKey,
+          body: "Legacy text",
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await (
+          await team.author.page.request.get(
+            `/api/v1/boards/comment-history?commentId=${legacy.id}`,
+          )
+        ).json()
+      ).data.map((row: { body: string }) => row.body),
+    ).toEqual(["Modern text", "Legacy text"]);
+    await postBoard(page, "archive", { taskId, revision: 1 });
+    expect(
+      (
+        await postBoard(team.author.page, "change-comment", {
+          ...edit,
+          revision: 2,
+        })
+      ).status(),
+    ).toBe(409);
+    expect(
+      (
+        await postBoard(page, "change-comment", {
+          action: "remove",
+          commentId,
+          revision: 2,
+        })
+      ).status(),
+    ).toBe(409);
+    await postBoard(page, "restore", { taskId, revision: 2 });
+    await db.installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: true },
+    });
+    expect(
+      (
+        await postBoard(team.author.page, "change-comment", {
+          ...edit,
+          revision: 2,
+        })
+      ).status(),
+    ).toBe(503);
+    await db.installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: false },
+    });
+    await db.workspaceMember.delete({
+      where: {
+        workspaceId_userId: {
+          workspaceId: team.workspaceId,
+          userId: team.author.id,
+        },
+      },
+    });
+    expect(
+      (
+        await postBoard(team.author.page, "change-comment", {
+          ...edit,
+          revision: 2,
+        })
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await team.author.page.request.get(
+          `/api/v1/boards/comment-history?commentId=${commentId}`,
+        )
+      ).status(),
+    ).toBe(404);
+  } finally {
+    await team.close();
+  }
+});
 
 test("approval UI keeps pending moves off the board and routes owner requests to the backup", async ({
   page,
@@ -4510,4 +6524,931 @@ test("creation approvals hide drafts, deduplicate retries and revalidate people,
   } finally {
     await team.close();
   }
+});
+
+test("notification inbox delivers assignments live, persists read state and opens the task sheet", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  const mirrorContext = await browser.newContext({
+    storageState: await team.author.context.storageState(),
+  });
+  try {
+    await team.author.page.goto("/notifications");
+    await expect(team.author.page.getByText("Nothing here yet")).toBeVisible();
+    const input = {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Ship notification inbox",
+      assigneeIds: [team.author.id],
+    };
+    const made = await postBoard(page, "create-task", input);
+    expect(made.status()).toBe(200);
+    const taskId = (await made.json()).data.taskId;
+    // Same intent retry must not create another inbox record.
+    expect((await postBoard(page, "create-task", input)).status()).toBe(200);
+    await expect(
+      team.author.page.getByRole("link", {
+        name: "Notifications (1 unread)",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      team.author.page.getByText("Ship notification inbox", { exact: true }),
+    ).toBeVisible();
+    const id = (await readInbox(team.author.page)).items[0].id;
+    const mirror = await mirrorContext.newPage();
+    await mirror.goto("/notifications");
+    await expect(
+      mirror.getByRole("link", {
+        name: "Notifications (1 unread)",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await team.author.page.evaluate(() => document.fonts.ready);
+    await team.author.page.screenshot({
+      path: "../../artifacts/notifications/inbox-desktop.png",
+      fullPage: true,
+    });
+    await team.author.page.setViewportSize({ width: 390, height: 844 });
+    await team.author.page.screenshot({
+      path: "../../artifacts/notifications/inbox-mobile.png",
+      fullPage: true,
+    });
+    await team.author.page
+      .getByRole("switch", { name: "Dark mode", exact: true })
+      .click();
+    await expect(
+      team.author.page.getByRole("switch", { name: "Dark mode", exact: true }),
+    ).toBeEnabled();
+    await team.author.page.screenshot({
+      path: "../../artifacts/notifications/inbox-dark-mobile.png",
+      fullPage: true,
+    });
+    await team.author.page
+      .getByRole("button", {
+        name: "Mark as read: Ship notification inbox",
+        exact: true,
+      })
+      .click();
+    await expect
+      .poll(async () => (await readInbox(team.author.page)).unreadCount)
+      .toBe(0);
+    await expect(
+      mirror.getByRole("link", { name: "Notifications", exact: true }),
+    ).toBeVisible();
+    await expect(
+      team.author.page.getByRole("button", {
+        name: "Mark as unread: Ship notification inbox",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await team.author.page
+      .getByRole("button", {
+        name: "Mark as unread: Ship notification inbox",
+        exact: true,
+      })
+      .click();
+    await expect
+      .poll(async () => (await readInbox(team.author.page)).unreadCount)
+      .toBe(1);
+    await team.author.page
+      .locator(`[data-notification-id="${id}"]`)
+      .getByRole("button")
+      .first()
+      .click();
+    await expect(team.author.page).toHaveURL(
+      new RegExp(`/boards/${team.boardId}\\?task=${taskId}`),
+    );
+    await expect(team.author.page.getByRole("dialog")).toBeVisible();
+    await expect
+      .poll(async () => (await readInbox(team.author.page)).unreadCount)
+      .toBe(0);
+    await team.author.page.reload();
+    await expect(team.author.page.getByRole("dialog")).toBeVisible();
+    expect((await readInbox(team.author.page)).items).toHaveLength(1);
+    expect((await changeInbox(page, { action: "open", id })).status()).toBe(
+      404,
+    );
+    expect(
+      (
+        await changeInbox(team.backup.page, { action: "read", id, read: true })
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await changeInbox(
+          team.author.page,
+          { action: "read", id, read: false },
+          "https://other.test",
+        )
+      ).status(),
+    ).toBe(403);
+    await getDatabase().workspaceMember.delete({
+      where: {
+        workspaceId_userId: {
+          workspaceId: team.workspaceId,
+          userId: team.author.id,
+        },
+      },
+    });
+    expect((await readInbox(team.author.page)).items).toHaveLength(0);
+    expect((await readInbox(team.author.page)).unreadCount).toBe(0);
+    expect(
+      (await changeInbox(team.author.page, { action: "open", id })).status(),
+    ).toBe(404);
+  } finally {
+    await mirrorContext.close();
+    await team.close();
+  }
+});
+
+test("approval notifications wait for acceptance and follow reviewer reassignment without leaking old requests", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const current = await team.state();
+    const assigneeField = current.fields.find(
+      (field: { key: string }) => field.key === "assignees",
+    ).id;
+    const made = await postBoard(team.author.page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Approval notification task",
+    });
+    expect(made.status(), JSON.stringify(await made.json())).toBe(200);
+    const taskId = (await made.json()).data.taskId;
+    expect(
+      (
+        await team.configure({
+          protectedFieldIds: [assigneeField],
+          primaryApproverId: team.backup.id,
+          backupApproverId: null,
+        })
+      ).status(),
+    ).toBe(200);
+    const requestKey = createRecordId();
+    const body = {
+      taskId,
+      revision: 1,
+      requestKey,
+      changes: { assigneeIds: [team.ownerId] },
+    };
+    const submitted = await postBoard(team.author.page, "update", body);
+    expect(submitted.status(), JSON.stringify(await submitted.json())).toBe(
+      200,
+    );
+    const proposalId = (await submitted.json()).data.proposalId;
+    expect((await postBoard(team.author.page, "update", body)).status()).toBe(
+      200,
+    );
+    let inbox = await readInbox(team.backup.page);
+    expect(inbox.items).toHaveLength(1);
+    expect(inbox.items[0].kind).toBe("APPROVAL_REQUEST");
+    expect((await readInbox(page)).items).toHaveLength(0); // Proposed assignment is not active.
+    const link = await changeInbox(team.backup.page, {
+      action: "open",
+      id: inbox.items[0].id,
+    });
+    await team.backup.page.goto((await link.json()).data.href);
+    await expect(team.backup.page.getByRole("dialog")).toBeVisible();
+    await expect(
+      team.backup.page.getByRole("button", {
+        name: "Approve request",
+        exact: true,
+      }),
+    ).toBeVisible();
+    expect(
+      (
+        await team.configure({
+          primaryApproverId: team.ownerId,
+          backupApproverId: null,
+        })
+      ).status(),
+    ).toBe(200);
+    expect((await readInbox(team.backup.page)).items).toHaveLength(0);
+    expect(
+      (
+        await changeInbox(team.backup.page, {
+          action: "open",
+          id: inbox.items[0].id,
+        })
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await postApproval(team.backup.page, "decide", {
+          proposalId,
+          action: "approve",
+        })
+      ).status(),
+    ).toBe(403);
+    // Approve as owner; self-assignment by the applying actor is deliberately quiet.
+    expect(
+      (
+        await postApproval(page, "decide", { proposalId, action: "approve" })
+      ).status(),
+    ).toBe(200);
+    inbox = await readInbox(team.author.page);
+    expect(inbox.items).toHaveLength(1);
+    expect(inbox.items[0].kind).toBe("APPROVAL_DECISION");
+    expect(inbox.items[0].message).toBe("approved your request");
+    expect(
+      (
+        await postApproval(page, "decide", { proposalId, action: "approve" })
+      ).status(),
+    ).toBe(409);
+    expect((await readInbox(team.author.page)).items).toHaveLength(1);
+    const revision = (await team.state()).tasks[0].revision;
+    const request = await postBoard(team.author.page, "update", {
+      taskId,
+      revision,
+      requestKey: createRecordId(),
+      changes: { assigneeIds: [team.backup.id] },
+    });
+    const next = (await request.json()).data.proposalId;
+    expect((await readInbox(team.backup.page)).items).toHaveLength(0);
+    expect(
+      (
+        await postApproval(page, "decide", {
+          proposalId: next,
+          action: "approve",
+        })
+      ).status(),
+    ).toBe(200);
+    expect((await readInbox(team.backup.page)).items[0].kind).toBe(
+      "ASSIGNMENT",
+    );
+    const rejection = await postBoard(team.author.page, "update", {
+      taskId,
+      revision: revision + 1,
+      requestKey: createRecordId(),
+      changes: { assigneeIds: [] },
+    });
+    expect(
+      (
+        await postApproval(page, "decide", {
+          proposalId: (await rejection.json()).data.proposalId,
+          action: "reject",
+          reason: "Keep the reviewer assigned",
+        })
+      ).status(),
+    ).toBe(200);
+    expect((await readInbox(team.author.page)).items[0].message).toBe(
+      "rejected your request",
+    );
+  } finally {
+    await team.close();
+  }
+});
+
+test("inbox pagination and concurrent read controls preserve new arrivals and enforce recipient scope", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const db = getDatabase();
+    const made = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Inbox pagination task",
+    });
+    const taskId = (await made.json()).data.taskId;
+    await db.notification.createMany({
+      data: Array.from({ length: 33 }, (_, i) => ({
+        id: createRecordId(),
+        recipientId: team.author.id,
+        actorId: team.ownerId,
+        boardId: team.boardId,
+        taskId,
+        kind: "ASSIGNMENT",
+        message: "assigned you to this task",
+        eventKey: `test-event:${i}`,
+      })),
+    });
+    const first = await readInbox(team.author.page);
+    expect(first.items).toHaveLength(30);
+    expect(first.unreadCount).toBe(33);
+    const second = await readInbox(
+      team.author.page,
+      `?cursor=${first.nextCursor}`,
+    );
+    expect(second.items).toHaveLength(3);
+    expect(second.nextCursor).toBeNull();
+    expect(
+      new Set([...first.items, ...second.items].map((item) => item.id)).size,
+    ).toBe(33);
+    const arriving = await db.notification.create({
+      data: {
+        recipientId: team.author.id,
+        actorId: team.ownerId,
+        boardId: team.boardId,
+        taskId,
+        kind: "ASSIGNMENT",
+        message: "assigned you to this task",
+        eventKey: "new-arrival",
+      },
+    });
+    expect(
+      (
+        await changeInbox(team.author.page, {
+          action: "read-all",
+          throughId: first.items[0].id,
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (await readInbox(team.author.page, "?filter=UNREAD")).items.map(
+        (item: { id: string }) => item.id,
+      ),
+    ).toEqual([arriving.id]);
+    const results = await Promise.all([
+      changeInbox(team.author.page, {
+        action: "read",
+        id: arriving.id,
+        read: true,
+      }),
+      changeInbox(team.author.page, {
+        action: "read",
+        id: arriving.id,
+        read: true,
+      }),
+    ]);
+    expect(results.map((result) => result.status())).toEqual([200, 200]);
+    expect((await readInbox(team.author.page)).unreadCount).toBe(0);
+    expect(
+      (
+        await changeInbox(team.backup.page, {
+          action: "read-all",
+          throughId: arriving.id,
+        })
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await team.author.page.request.get(
+          "/api/v1/notifications/inbox?cursor=invalid",
+        )
+      ).status(),
+    ).toBe(422);
+    const anonymous = await browser.newContext();
+    try {
+      expect(
+        (
+          await anonymous.request.get(
+            "http://127.0.0.1:3100/api/v1/notifications/inbox",
+          )
+        ).status(),
+      ).toBe(401);
+    } finally {
+      await anonymous.close();
+    }
+    await db.installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: true },
+    });
+    // Read controls are personal preferences, not task changes, and remain usable.
+    expect(
+      (
+        await changeInbox(team.author.page, {
+          action: "read",
+          id: arriving.id,
+          read: false,
+        })
+      ).status(),
+    ).toBe(200);
+  } finally {
+    await team.close();
+  }
+});
+
+test("personal saved views persist filters and layout, update with revision checks and remove safely", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(90_000);
+  const team = await approvalTeam(page, browser);
+  try {
+    const state = await team.state();
+    const status = state.fields.find(
+      (field: { key: string }) => field.key === "status",
+    ).options[0];
+    for (const [name, priority, assigneeIds] of [
+      ["Release work", "HIGH", [team.ownerId]],
+      ["Other work", "LOW", []],
+    ] as const) {
+      expect(
+        (
+          await postBoard(page, "create-task", {
+            boardId: team.boardId,
+            createKey: createRecordId(),
+            name,
+            priority,
+            assigneeIds,
+            statusId: status.id,
+          })
+        ).status(),
+      ).toBe(200);
+    }
+    await page.goto(`/boards/${team.boardId}`);
+    await page.getByRole("button", { name: "Filter", exact: true }).click();
+    await page.getByLabel("Filter board status").click();
+    await page.getByRole("option", { name: status.label, exact: true }).click();
+    await page.getByLabel("Search tasks", { exact: true }).fill("Release");
+    await page.getByLabel("Filter task assignee").click();
+    await page
+      .getByRole("option", { name: "Assigned to me", exact: true })
+      .click();
+    await page.getByLabel("Filter task priority").click();
+    await page.getByRole("option", { name: "High", exact: true }).click();
+    await page.getByLabel("Filter task due date").click();
+    await page
+      .getByRole("option", { name: "No due date", exact: true })
+      .click();
+    await page.getByLabel("Sort tasks", { exact: true }).click();
+    await page.getByRole("option", { name: "Name", exact: true }).click();
+    await page.getByRole("button", { name: "Table", exact: true }).click();
+    await page.getByRole("button", { name: "Save view", exact: true }).click();
+    await page.getByLabel("View name", { exact: true }).fill("My release work");
+    await page
+      .getByRole("button", { name: "Save new view", exact: true })
+      .click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(
+      page.locator('[data-slot="board-notification"]'),
+    ).toContainText("View saved");
+    const saved = (await team.state()).savedViews[0];
+    expect(saved.config).toMatchObject({
+      layout: "table",
+      statusId: status.id,
+      assignee: "me",
+      priority: "HIGH",
+      due: "none",
+      sort: "name",
+      search: "Release",
+    });
+    await page.reload();
+    await expect(page.getByLabel("Saved board view")).toHaveValue(saved.id);
+    await expect(
+      page.getByRole("button", { name: "Table", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await expect(
+      page.getByRole("button", { name: "Release work", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Other work", exact: true }),
+    ).toHaveCount(0);
+    await page.getByRole("button", { name: "Filter", exact: true }).click();
+    await expect(page.getByLabel("Search tasks", { exact: true })).toHaveValue(
+      "Release",
+    );
+    await page.getByLabel("Search tasks", { exact: true }).fill("No match");
+    await expect(
+      page.getByText("Unsaved changes", { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Reset filters", exact: true })
+      .click();
+    await expect(page.getByLabel("Search tasks", { exact: true })).toHaveValue(
+      "Release",
+    );
+    await page
+      .getByRole("button", { name: "Manage view", exact: true })
+      .click();
+    await page.getByLabel("View name", { exact: true }).fill("Release focus");
+    await page
+      .getByRole("button", { name: "Update view", exact: true })
+      .click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect((await team.state()).savedViews[0]).toMatchObject({
+      name: "Release focus",
+      revision: 2,
+    });
+    await page.screenshot({
+      path: "../../artifacts/phase-3/saved-view-desktop.png",
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    expect(
+      (await page.getByLabel("Saved board view").boundingBox())!.width,
+    ).toBeGreaterThan(150);
+    await page.screenshot({
+      path: "../../artifacts/phase-3/saved-view-mobile.png",
+      fullPage: true,
+    });
+    await page
+      .getByRole("button", { name: "Manage view", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Remove view", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Remove saved view?", exact: true }),
+    ).toBeVisible();
+    expect((await team.state()).savedViews).toHaveLength(1);
+    await page
+      .getByRole("button", { name: "Confirm remove view", exact: true })
+      .click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.getByLabel("Saved board view")).toHaveValue("");
+    expect((await team.state()).tasks).toHaveLength(2);
+    await page.reload();
+    await expect(page.getByLabel("Saved board view")).toHaveValue("");
+  } finally {
+    await team.close();
+  }
+});
+
+test("saved views enforce privacy, shared management, live updates and current reference validation", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(90_000);
+  const team = await approvalTeam(page, browser);
+  const member = team.author.page;
+  try {
+    const base = {
+      boardId: team.boardId,
+      id: createRecordId(),
+      revision: 0,
+      name: "Private focus",
+      visibility: "PERSONAL",
+      config: { ...defaultViewConfig, assignee: "me" },
+    };
+    expect((await postBoard(member, "save-view", base)).status()).toBe(200);
+    expect((await postBoard(member, "save-view", base)).status()).toBe(200);
+    expect((await team.state()).savedViews).toHaveLength(0);
+    expect(
+      (
+        await postBoard(page, "select-view", {
+          boardId: team.boardId,
+          viewId: base.id,
+        })
+      ).status(),
+    ).toBe(404);
+    expect(
+      (await postBoard(page, "save-view", { ...base, revision: 1 })).status(),
+    ).toBe(403);
+    expect(
+      (
+        await postBoard(page, "remove-view", {
+          boardId: team.boardId,
+          id: base.id,
+          revision: 1,
+        })
+      ).status(),
+    ).toBe(403);
+    expect(
+      (
+        await postBoard(member, "save-view", {
+          ...base,
+          id: createRecordId(),
+          visibility: "SHARED",
+        })
+      ).status(),
+    ).toBe(403);
+    await member.goto(`/boards/${team.boardId}`);
+    const sameUserTab = await team.author.context.newPage();
+    await sameUserTab.goto(`/boards/${team.boardId}`);
+    await expect(sameUserTab.locator(".board-surface")).toHaveAttribute(
+      "data-connection",
+      "live",
+    );
+    const secondPrivate = {
+      ...base,
+      id: createRecordId(),
+      name: "Second private view",
+    };
+    expect((await postBoard(member, "save-view", secondPrivate)).status()).toBe(
+      200,
+    );
+    await expect(
+      sameUserTab
+        .getByLabel("Saved board view")
+        .locator("option")
+        .filter({ hasText: "Second private view" }),
+    ).toHaveCount(1, { timeout: 10_000 });
+    expect((await team.state()).savedViews).toHaveLength(0);
+    const shared = {
+      ...base,
+      id: createRecordId(),
+      visibility: "SHARED",
+      name: "Team focus",
+      config: { ...defaultViewConfig, layout: "table" },
+    };
+    expect((await postBoard(page, "save-view", shared)).status()).toBe(200);
+    await expect(
+      member
+        .getByLabel("Saved board view")
+        .locator("option")
+        .filter({ hasText: "Team focus" }),
+    ).toHaveCount(1, { timeout: 10_000 });
+    await expect(member.getByLabel("Saved board view")).toHaveValue(base.id);
+    await member.getByLabel("Saved board view").selectOption(shared.id);
+    await expect(
+      member.getByRole("button", { name: "Table", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await expect(
+      member.getByRole("button", { name: "Manage view", exact: true }),
+    ).toHaveCount(0);
+    expect(
+      (
+        await postBoard(member, "save-view", { ...shared, revision: 1 })
+      ).status(),
+    ).toBe(403);
+    expect(
+      (
+        await postBoard(member, "remove-view", {
+          boardId: team.boardId,
+          id: shared.id,
+          revision: 1,
+        })
+      ).status(),
+    ).toBe(403);
+    const results = await Promise.all([
+      postBoard(page, "save-view", {
+        ...shared,
+        revision: 1,
+        name: "First rename",
+      }),
+      postBoard(page, "save-view", {
+        ...shared,
+        revision: 1,
+        name: "Second rename",
+      }),
+    ]);
+    expect(results.map((result) => result.status()).sort()).toEqual([200, 409]);
+    await expect(
+      member.getByRole("button", { name: "Reload saved view", exact: true }),
+    ).toBeVisible({ timeout: 10_000 });
+    await member
+      .getByRole("button", { name: "Reload saved view", exact: true })
+      .click();
+    await expect(
+      member.getByRole("button", { name: "Reload saved view", exact: true }),
+    ).toHaveCount(0);
+    expect(
+      (
+        await postBoard(page, "remove-view", {
+          boardId: team.boardId,
+          id: shared.id,
+          revision: 1,
+        })
+      ).status(),
+    ).toBe(409);
+    expect(
+      (
+        await postBoard(page, "save-view", {
+          ...shared,
+          id: createRecordId(),
+          config: { ...defaultViewConfig, statusId: "not-a-status" },
+        })
+      ).status(),
+    ).toBe(422);
+    expect(
+      (
+        await postBoard(page, "save-view", {
+          ...shared,
+          id: createRecordId(),
+          config: { ...defaultViewConfig, groupId: createRecordId() },
+        })
+      ).status(),
+    ).toBe(422);
+    const foreignBoard = await getDatabase().board.findFirstOrThrow({
+      where: { name: "Restricted project" },
+    });
+    expect(
+      (
+        await postBoard(member, "select-view", {
+          boardId: foreignBoard.id,
+          viewId: shared.id,
+        })
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await postBoard(page, "select-view", {
+          boardId: foreignBoard.id,
+          viewId: shared.id,
+        })
+      ).status(),
+    ).toBe(404);
+    // Removing a shared view clears everyone else's persisted selection too.
+    expect(
+      (
+        await postBoard(page, "remove-view", {
+          boardId: team.boardId,
+          id: shared.id,
+          revision: 2,
+        })
+      ).status(),
+    ).toBe(200);
+    await member.reload();
+    await expect(member.getByLabel("Saved board view")).toHaveValue("");
+    expect(
+      await getDatabase().boardViewSelection.findUnique({
+        where: {
+          boardId_userId: { boardId: team.boardId, userId: team.author.id },
+        },
+      }),
+    ).toMatchObject({ viewId: null });
+    await getDatabase().workspaceMember.delete({
+      where: {
+        workspaceId_userId: {
+          workspaceId: team.workspaceId,
+          userId: team.author.id,
+        },
+      },
+    });
+    expect(
+      (
+        await postBoard(member, "select-view", {
+          boardId: team.boardId,
+          viewId: base.id,
+        })
+      ).status(),
+    ).toBe(404);
+  } finally {
+    await team.close();
+  }
+});
+
+test("saved status IDs survive renames and removed references stay explicit", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const state = await team.state();
+    const field = state.fields.find(
+      (field: { key: string }) => field.key === "status",
+    );
+    const option = field.options[0];
+    const view = {
+      boardId: team.boardId,
+      id: createRecordId(),
+      revision: 0,
+      name: "Stable status",
+      visibility: "PERSONAL",
+      config: { ...defaultViewConfig, statusId: option.id },
+    };
+    expect((await postBoard(page, "save-view", view)).status()).toBe(200);
+    expect(
+      (
+        await postBoard(page, "configure-field", {
+          boardId: team.boardId,
+          fieldId: field.id,
+          version: field.version,
+          name: field.name,
+          options: field.options.map((item: { id: string; label: string }) => ({
+            ...item,
+            label: item.id === option.id ? "Renamed status" : item.label,
+          })),
+        })
+      ).status(),
+    ).toBe(200);
+    await page.goto(`/boards/${team.boardId}`);
+    await page.getByRole("button", { name: "Filter", exact: true }).click();
+    await expect(page.getByLabel("Filter board status")).toHaveAttribute(
+      "data-value",
+      option.id,
+    );
+    await expect(page.locator(".board-lane")).toHaveCount(1);
+    await expect(page.locator(".board-lane")).toContainText("Renamed status");
+    const renamed = (await team.state()).fields.find(
+      (item: { id: string }) => item.id === field.id,
+    );
+    expect(
+      (
+        await postBoard(page, "configure-field", {
+          boardId: team.boardId,
+          fieldId: field.id,
+          version: renamed.version,
+          name: field.name,
+          options: renamed.options.filter(
+            (item: { id: string }) => item.id !== option.id,
+          ),
+        })
+      ).status(),
+    ).toBe(200);
+    await expect(
+      page.getByText("This view uses a removed group or status.", {
+        exact: false,
+      }),
+    ).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator(".board-lane")).toHaveCount(0);
+    expect(
+      (await postBoard(page, "save-view", { ...view, revision: 1 })).status(),
+    ).toBe(422);
+    await getDatabase().installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: true },
+    });
+    expect(
+      (
+        await postBoard(page, "save-view", {
+          ...view,
+          id: createRecordId(),
+          config: defaultViewConfig,
+        })
+      ).status(),
+    ).toBe(503);
+  } finally {
+    await team.close();
+  }
+});
+
+test("board filters provide roomy dropdowns, keyboard selection and responsive themed layouts", async ({
+  page,
+}) => {
+  const { workspace } = await readyTeam(page);
+  const made = await postBoard(page, "create-board", {
+    workspaceId: workspace.id,
+    name: "Filter layout",
+  });
+  const boardId = (await made.json()).data.id;
+  await page.goto(`/boards/${boardId}`);
+  await page.getByRole("button", { name: "Filter", exact: true }).click();
+  const panel = page.getByRole("region", { name: "Task filters" });
+  await expect(
+    panel.getByRole("heading", { name: "Filter tasks", exact: true }),
+  ).toBeVisible();
+  for (const label of [
+    "Filter board status",
+    "Filter task assignee",
+    "Filter task priority",
+    "Filter task due date",
+    "Sort tasks",
+  ]) {
+    const box = await page.getByLabel(label, { exact: true }).boundingBox();
+    expect(box!.height).toBeGreaterThanOrEqual(40);
+    expect(box!.width).toBeGreaterThan(160);
+  }
+  const status = page.getByLabel("Filter board status");
+  await status.click();
+  const option = page.getByRole("option", { name: "In progress", exact: true });
+  await expect(option).toBeVisible();
+  expect((await option.boundingBox())!.height).toBeGreaterThanOrEqual(40);
+  const popup = page.locator('[data-slot="select-content"]');
+  expect((await popup.boundingBox())!.width).toBeGreaterThanOrEqual(
+    (await status.boundingBox())!.width - 1,
+  );
+  await page.screenshot({
+    path: "../../artifacts/phase-3/filters-light.png",
+    fullPage: false,
+  });
+  await page.keyboard.press("Escape");
+  await expect(status).toBeFocused();
+  await status.press("ArrowDown");
+  await expect(
+    page.getByRole("option", { name: "All statuses", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(
+    page.getByRole("option", { name: "No status", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(status).toHaveAttribute("data-value", "__none__");
+  await expect(page.locator(".board-lane")).toHaveCount(1);
+  await page.getByRole("button", { name: /Clear filters/ }).click();
+  await expect(status).toHaveAttribute("data-value", "");
+  await page.getByRole("switch", { name: "Dark mode", exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
+  await expect(page.locator("html")).not.toHaveClass(/theme-ripple/);
+  await page.getByLabel("Filter task priority").click();
+  await page.screenshot({
+    path: "../../artifacts/phase-3/filters-dark.png",
+    fullPage: false,
+  });
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 390, height: 844 });
+  const assignee = page.getByLabel("Filter task assignee");
+  await assignee.click();
+  expect((await assignee.boundingBox())!.width).toBeGreaterThan(250);
+  await expect(
+    page.getByRole("option", { name: "Assigned to me", exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "../../artifacts/phase-3/filters-mobile.png",
+    fullPage: false,
+  });
+  await page.keyboard.press("Escape");
+  await page.screenshot({
+    path: "../../artifacts/phase-3/filters-mobile-panel.png",
+    fullPage: true,
+  });
 });

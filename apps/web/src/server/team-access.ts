@@ -5,7 +5,10 @@ import { SetupError } from "./setup/security";
 export const isAdministrator = (role: string) =>
   role === "OWNER" || role === "ADMIN";
 
-export async function requireIdentity(headers: Headers) {
+export async function requireIdentity(
+  headers: Headers,
+  { allowMaintenance = false }: { allowMaintenance?: boolean } = {},
+) {
   const db = getDatabase();
   const settings = await db.installationSettings.findUnique({
     where: { id: "installation" },
@@ -19,6 +22,16 @@ export async function requireIdentity(headers: Headers) {
   const user = await db.user.findUnique({ where: { id: session.user.id } });
   if (!user)
     throw new SetupError(401, "SIGN_IN_REQUIRED", "Sign in to continue.");
+  if (
+    settings.maintenanceMode &&
+    !allowMaintenance &&
+    !isAdministrator(user.role)
+  )
+    throw new SetupError(
+      503,
+      "MAINTENANCE",
+      "Yuzu is undergoing maintenance. Try again shortly.",
+    );
   return { settings, session, user };
 }
 

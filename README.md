@@ -84,14 +84,30 @@ workspaces, boards, flexible fields, and core collaboration.
 - [x] Revision conflict protection, task history, archive/restore
 - [x] Task comments, configurable tag/status/priority appearance, and operation toasts
 - [ ] Remaining profile/account and workspace lifecycle administration
-- [ ] Approval policies and decision queue
-- [ ] Files, inbox notifications, and saved views
+- [x] Approval policies, primary/backup decisions, and a private review queue
+- [x] Realtime board synchronization and persistent assignment/approval notifications
+- [x] Teammate mentions, comment editing with history, and authorized removal
+- [ ] Files and saved views
 - [ ] Dashboards, CSV exchange, and complete OpenAPI documentation
 - [ ] Workflow automation and Blueprint/App Builder exploration
 - [ ] Release deployment, recovery, and pilot verification
 
 Use **Boards → Create board** or open an existing board and choose **Add task**.
-New boards use direct editing; approval policies are the next milestone.
+New boards use direct editing. Configure approvals in **Board details** and
+review requests under **Approvals**. **Inbox** and the header bell show your
+assignments, approval requests and decisions, including updates received offline.
+Opening a notification rechecks current access before linking to its task or
+review sheet. Mark individual notifications read/unread or clear the current
+unread backlog; newer arrivals remain unread.
+In a task's **Comments** tab, type `@` and a name, then choose the teammate from
+the inline suggestions to notify them. Authors can edit their comments and inspect previous versions;
+authors and board managers can remove comments. Removal hides the content and
+keeps an audit record. Archived tasks remain read-only.
+Each task also has its own checklist: add, rename, complete or remove steps in
+the task details, then save. Empty checklists stay off task cards. Multi-select
+custom fields continue to use the board's shared options. In **Board details**,
+managers can remove a group only when no active/archived task or pending approval
+request references it.
 See [Board engine](docs/board-engine.md) for permissions and API contracts.
 
 ## Technology
@@ -199,6 +215,71 @@ target.
 Production deployment guidance will include environment configuration, secure
 secrets, database migrations, file storage, backups, restore testing, and
 upgrade procedures before Yuzu is considered production-ready.
+
+## Private task files
+
+The task Files tab supports uploads, downloads and permission-checked removal.
+The default upload limit is **50 MB (50,000,000 bytes)**. Supported formats are
+JPEG, PNG, GIF, WebP, PDF, UTF-8 TXT/CSV and modern Office documents. The server
+enforces the installation's size/MIME policy and checks file contents. Signature
+checks identify formats; they do not replace malware scanning.
+
+New installations use **SeaweedFS through the S3 API**. Run `pnpm setup:keys` to
+generate server-only storage credentials, then `pnpm services:up`. Docker runs a
+pinned SeaweedFS Mini image with persistent `seaweedfs_data`, authenticated S3 on
+`127.0.0.1:8333`, and a private `yuzu-attachments` bucket. The authenticated admin
+console is available at **http://127.0.0.1:23646**. Use `YUZU_SEAWEED_ADMIN_USER`
+(default `admin`) and the generated `YUZU_SEAWEED_ADMIN_PASSWORD` from `.env`.
+Open the file browser and navigate to `/buckets/yuzu-attachments/attachments/`.
+Objects use UUID filenames; original filenames are stored in Yuzu's database.
+The console can bypass Yuzu's task permissions, so use the app to add/remove task
+attachments. Other storage interfaces are not published. This is a single-node deployment; it does not provide host
+failure redundancy.
+
+`YUZU_STORAGE_PROVIDER=S3` selects storage for **new** uploads. Configure
+`YUZU_S3_ENDPOINT`, `YUZU_S3_BUCKET`, `YUZU_S3_REGION`, `YUZU_S3_ACCESS_KEY_ID`, and
+`YUZU_S3_SECRET_ACCESS_KEY` on the server. `YUZU_S3_FORCE_PATH_STYLE=true` supports
+SeaweedFS; it can be disabled for providers using virtual-host bucket addressing.
+Provision the bucket before starting Yuzu. If the web app runs in Docker, use
+`http://seaweedfs:8333` on its private Docker network rather than the host address.
+Credentials never reach browsers; Yuzu checks task access and streams downloads.
+Readiness checks include access to the configured S3 bucket.
+
+Each attachment records its provider and bucket. Existing disk attachments stay
+readable when enabling S3; changing the default does not move them. Keep the S3
+endpoint configured while any S3 attachments remain. Changing endpoints requires
+copying existing objects and verifying them first.
+
+`YUZU_UPLOAD_DIR` is the private local staging directory for size/content checks
+(default `apps/web/storage/attachments`). In S3 mode, validated uploads are copied
+to object storage and staging files are removed. `LOCAL` mode retains files on
+disk instead. Set an absolute directory on a shared server; keep it outside
+public/static hosting. Web instances using LOCAL must share this directory.
+Reverse proxies must allow the configured request size and upload duration.
+
+To move existing files, apply migrations with `pnpm db:deploy`, configure S3,
+then run `pnpm attachments:migrate-s3`. It verifies the local source and a full
+S3 download against the database size and SHA-256 before changing each row.
+It preserves local originals and can resume safely after interruption. Enable
+maintenance mode and drain active uploads/removals before migrating or backing
+up. Back up PostgreSQL **and** SeaweedFS's persistent volume (plus any remaining
+local files); restore matching metadata and file contents together. Preserved
+local originals are rollback copies, not automatic rollback of database locations.
+
+Archived tasks preserve files. Removal hides the attachment immediately, then
+attempts physical cleanup. `pnpm attachments:cleanup` removes unreferenced UUIDv7
+disk files and, in S3 mode, objects under `attachments/` in the configured bucket
+that are older than 24 hours. Active references, migration originals, and recent
+files are preserved. Run cleanup for each previous bucket if bucket configuration
+changes. No recurring cleanup job is installed automatically.
+
+Run `pnpm --filter @yuzu/database test:storage` for real S3 integrity/access tests
+against local SeaweedFS. Browser tests default to isolated LOCAL storage; set
+`YUZU_E2E_S3=1` to exercise the same upload/permission/download workflows against
+the separate `yuzu-e2e-attachments` bucket.
+Set `YUZU_E2E_DEV=1` to run the browser tests through Turbopack development mode
+with separate build output. The binary-file regression checks JPG/PDF validation
+and verifies that runtime uploads do not trigger unsolicited document reloads.
 
 ## Contributing
 

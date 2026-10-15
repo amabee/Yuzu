@@ -1,3 +1,4 @@
+import { savedViewSchema, type SavedView } from "./saved-view-contract";
 import { z } from "zod";
 import { recordId, personId } from "./id-contract";
 export { recordId, personId } from "./id-contract";
@@ -40,6 +41,22 @@ export const coreKeys = [
   "due_date",
 ];
 const names = z.string().trim().min(1).max(200);
+export const checklistSchema = z
+  .array(
+    z
+      .object({
+        id: recordId,
+        text: z.string().trim().min(1).max(300),
+        done: z.boolean(),
+      })
+      .strict(),
+  )
+  .max(100)
+  .refine(
+    (items) => new Set(items.map((item) => item.id)).size === items.length,
+    "Give each checklist item a unique ID.",
+  );
+export type TaskChecklist = z.infer<typeof checklistSchema>;
 const ids = z
   .array(personId)
   .max(50)
@@ -51,6 +68,7 @@ const changes = z
   .object({
     name: names,
     description: z.string().max(10000),
+    checklist: checklistSchema,
     statusId: z.string().max(100).nullable(),
     priority: z.enum(priorities),
     dueDate: dateOnly.nullable(),
@@ -149,6 +167,7 @@ export type BoardTask = {
   id: string;
   name: string;
   description: string;
+  checklist: TaskChecklist;
   statusId: string | null;
   priority: string;
   dueDate: string | null;
@@ -162,9 +181,13 @@ export type BoardTask = {
   fieldValues: Record<string, FieldValue>;
   canEdit: boolean;
   commentCount?: number;
+  attachmentCount?: number;
   activity: { id: string; action: string; actor: string; createdAt: string }[];
 };
 export type BoardState = {
+  calendarDate?: string;
+  savedViews?: SavedView[];
+  selectedViewId?: string | null;
   boardId: string;
   canManage: boolean;
   canManageManagers: boolean;
@@ -179,6 +202,9 @@ export type BoardState = {
 };
 
 export const boardStateSchema = z.object({
+  calendarDate: dateOnly.optional(),
+  savedViews: z.array(savedViewSchema).default([]),
+  selectedViewId: recordId.nullable().default(null),
   boardId: recordId,
   approvalPolicy: approvalPolicySchema,
   pendingApprovals: z.array(pendingApprovalSchema),
@@ -211,6 +237,7 @@ export const boardStateSchema = z.object({
       id: recordId,
       name: z.string(),
       description: z.string(),
+      checklist: checklistSchema.default([]),
       statusId: z.string().nullable(),
       priority: z.string(),
       dueDate: z.string().nullable(),
@@ -229,6 +256,7 @@ export const boardStateSchema = z.object({
       ),
       canEdit: z.boolean(),
       commentCount: z.number().int().nonnegative().default(0),
+      attachmentCount: z.number().int().nonnegative().default(0),
       activity: z.array(
         z.object({
           id: recordId,
@@ -265,6 +293,9 @@ export const renameGroupSchema = z
     name: z.string().trim().min(1).max(80),
   })
   .strict();
+export const removeGroupSchema = renameGroupSchema
+  .pick({ boardId: true, groupId: true, expectedName: true })
+  .strict();
 
 export const boardManagerSchema = z
   .object({ boardId: recordId, userId: personId, grant: z.boolean() })
@@ -279,6 +310,7 @@ export const commentCreateSchema = z
     taskId: recordId,
     createKey: recordId,
     body: z.string().trim().min(1).max(5000),
+    mentionIds: ids.default([]),
   })
   .strict();
 export const commentsSchema = z.array(
@@ -287,6 +319,38 @@ export const commentsSchema = z.array(
     authorId: personId,
     authorName: z.string(),
     body: z.string(),
+    createdAt: z.string(),
+    revision: z.number().int().positive(),
+    mentions: z.array(z.object({ id: personId, name: z.string() })),
+    deletedAt: z.string().nullable(),
+    canEdit: z.boolean(),
+    canRemove: z.boolean(),
+  }),
+);
+export const commentChangeSchema = z.discriminatedUnion("action", [
+  z
+    .object({
+      action: z.literal("edit"),
+      commentId: recordId,
+      revision: z.number().int().positive(),
+      body: z.string().trim().min(1).max(5000),
+      mentionIds: ids.default([]),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("remove"),
+      commentId: recordId,
+      revision: z.number().int().positive(),
+    })
+    .strict(),
+]);
+export const commentHistorySchema = z.array(
+  z.object({
+    revision: z.number().int().positive(),
+    action: z.string(),
+    body: z.string(),
+    actorName: z.string(),
     createdAt: z.string(),
   }),
 );

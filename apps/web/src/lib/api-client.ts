@@ -1,3 +1,5 @@
+import { retryDeadline, signalServiceStatus } from "./service-status";
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -40,7 +42,15 @@ export async function apiRequest<T>(
     credentials: "same-origin",
     headers,
     body: json !== undefined ? JSON.stringify(json) : requestOptions.body,
+  }).catch((error: unknown) => {
+    if (error instanceof TypeError) signalServiceStatus({ kind: "network" });
+    throw error;
   });
+  if (response.status === 429)
+    signalServiceStatus({
+      kind: "rate-limited",
+      retryAt: retryDeadline(response.headers.get("Retry-After")),
+    });
   let payload: unknown;
   try {
     payload = await response.json();
@@ -54,6 +64,8 @@ export async function apiRequest<T>(
   if (!response.ok) {
     const error =
       isRecord(payload) && isRecord(payload.error) ? payload.error : {};
+    if (response.status === 503 && error.code === "MAINTENANCE")
+      signalServiceStatus({ kind: "maintenance" });
     throw new ApiError(
       response.status,
       typeof error.code === "string" ? error.code : "REQUEST_FAILED",
@@ -83,6 +95,10 @@ export async function apiRequest<T>(
 export function retryQuery(failureCount: number, error: Error): boolean {
   if (error.name === "AbortError" || failureCount >= 2) return false;
   if (error instanceof ApiError)
-    return error.status >= 500 && error.code !== "INVALID_RESPONSE";
+    return (
+      error.status >= 500 &&
+      error.code !== "INVALID_RESPONSE" &&
+      error.code !== "MAINTENANCE"
+    );
   return error instanceof TypeError; // Fetch network failure, not arbitrary application errors.
 }

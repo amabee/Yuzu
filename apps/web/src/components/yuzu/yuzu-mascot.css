@@ -1,0 +1,238 @@
+.ym {
+  width: min(280px, 70vw);
+  height: auto;
+  overflow: visible;
+}
+.ym * {
+  transform-box: fill-box;
+}
+.ym-char {
+  transform-origin: 50% 100%;
+}
+.ym-blink {
+  transform-origin: 50% 50%;
+  animation: ym-blink 5s infinite;
+}
+.ym-leaves {
+  transform-origin: 50% 100%;
+  animation: ym-leaf 3.4s ease-in-out infinite;
+}
+.ym-confused .ym-char {
+  animation: ym-tilt 4.2s ease-in-out infinite;
+}
+.ym-sad .ym-char {
+  animation: ym-sag 3.4s ease-in-out infinite;
+}
+.ym-sleepy .ym-char {
+  animation: ym-nod 4s ease-in-out infinite;
+}
+.ym-dizzy .ym-char {
+  animation: ym-sway 2.4s ease-in-out infinite;
+}
+.ym-builder .ym-char {
+  animation: ym-bounce 1.6s ease-in-out infinite;
+}
+.ym-cold .ym-char {
+  animation: ym-shiver 0.35s linear infinite;
+}
+.ym-stern .ym-char {
+  animation: ym-breathe 3.6s ease-in-out infinite;
+}
+.ym-float {
+  opacity: 0;
+  animation: ym-float 3.6s ease-in-out infinite;
+}
+.ym-d2 {
+  animation-delay: 1.2s;
+}
+.ym-d3 {
+  animation-delay: 2.4s;
+}
+.ym-tear {
+  transform-origin: 50% 0;
+  opacity: 0;
+  animation: ym-tear 2.6s ease-in infinite;
+}
+.ym-spin {
+  transform-origin: 50% 50%;
+  animation: ym-spin 1.6s linear infinite;
+}
+.ym-orbit {
+  transform-box: view-box;
+  transform-origin: 138px 70px;
+  animation: ym-spin 3s linear infinite;
+}
+.ym-wrench {
+  transform-box: view-box;
+  transform-origin: 212px 236px;
+  animation: ym-turn 1.6s ease-in-out infinite;
+}
+.ym-lock {
+  transform-origin: 50% 100%;
+  animation: ym-shake 3s ease-in-out infinite;
+}
+.ym-wave {
+  opacity: 0;
+  animation: ym-pulse 2s ease-in-out infinite;
+}
+@keyframes ym-blink {
+  0%,
+  92%,
+  100% {
+    transform: scaleY(1);
+  }
+  96% {
+    transform: scaleY(0.1);
+  }
+}
+@keyframes ym-leaf {
+  0%,
+  100% {
+    transform: rotate(-4deg);
+  }
+  50% {
+    transform: rotate(5deg);
+  }
+}
+@keyframes ym-tilt {
+  0%,
+  100% {
+    transform: rotate(-7deg);
+  }
+  50% {
+    transform: rotate(7deg);
+  }
+}
+@keyframes ym-sag {
+  0%,
+  100% {
+    transform: none;
+  }
+  50% {
+    transform: scale(1.02, 0.96) translateY(3px);
+  }
+}
+@keyframes ym-nod {
+  0%,
+  100% {
+    transform: rotate(-3deg);
+  }
+  50% {
+    transform: rotate(5deg) translateY(4px);
+  }
+}
+@keyframes ym-sway {
+  0%,
+  100% {
+    transform: rotate(-5deg);
+  }
+  50% {
+    transform: rotate(5deg);
+  }
+}
+@keyframes ym-bounce {
+  0%,
+  100% {
+    transform: none;
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+@keyframes ym-shiver {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-1.6px);
+  }
+  75% {
+    transform: translateX(1.6px);
+  }
+}
+@keyframes ym-breathe {
+  0%,
+  100% {
+    transform: none;
+  }
+  50% {
+    transform: scale(1.015, 0.985);
+  }
+}
+@keyframes ym-float {
+  0% {
+    opacity: 0;
+    transform: translateY(14px) scale(0.6);
+  }
+  25%,
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-26px);
+  }
+}
+@keyframes ym-tear {
+  0% {
+    opacity: 0;
+    transform: translateY(0);
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(44px);
+  }
+}
+@keyframes ym-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes ym-turn {
+  0%,
+  100% {
+    transform: rotate(-24deg);
+  }
+  50% {
+    transform: rotate(18deg);
+  }
+}
+@keyframes ym-shake {
+  0%,
+  70%,
+  100% {
+    transform: rotate(0);
+  }
+  74% {
+    transform: rotate(-8deg);
+  }
+  82% {
+    transform: rotate(8deg);
+  }
+  90% {
+    transform: rotate(0);
+  }
+}
+@keyframes ym-pulse {
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ym * {
+    animation: none !important;
+  }
+  .ym-float,
+  .ym-tear,
+  .ym-wave {
+    opacity: 0.8;
+  }
+}

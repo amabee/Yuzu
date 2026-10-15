@@ -38,6 +38,7 @@ import {
   workspaceScope,
 } from "./team-access";
 import { SetupError } from "./setup/security";
+import { createNotifications } from "./notification-events";
 const missing = () =>
   new SetupError(
     404,
@@ -115,6 +116,8 @@ export async function configureApprovals(input: unknown, headers: Headers) {
       select: {
         id: true,
         operation: true,
+        authorId: true,
+        taskId: true,
         changes: true,
         policySnapshot: true,
       },
@@ -142,6 +145,35 @@ export async function configureApprovals(input: unknown, headers: Headers) {
           decidedById: user.id,
         },
       });
+    for (const proposal of pending) {
+      if (invalid.includes(proposal.id)) {
+        await createNotifications(tx, {
+          recipientIds: [proposal.authorId],
+          actorId: user.id,
+          boardId,
+          taskId: proposal.taskId,
+          proposalId: proposal.id,
+          kind: "APPROVAL_DECISION",
+          message:
+            "closed your approval request because the approval settings changed",
+          eventKey: `proposal:${proposal.id}:decision`,
+        });
+      } else {
+        const reviewer = eligibleReviewer(policy, proposal.authorId, eligible);
+        const previous = eligibleReviewer(before, proposal.authorId, eligible);
+        if (reviewer && reviewer !== previous)
+          await createNotifications(tx, {
+            recipientIds: [reviewer],
+            actorId: user.id,
+            boardId,
+            taskId: proposal.taskId,
+            proposalId: proposal.id,
+            kind: "APPROVAL_REQUEST",
+            message: "assigned you an approval request",
+            eventKey: `proposal:${proposal.id}:review:${policy.version}`,
+          });
+      }
+    }
     await tx.boardEvent.create({
       data: {
         boardId,
@@ -219,6 +251,28 @@ export async function decideApproval(input: unknown, headers: Headers) {
           "PROPOSAL_CLOSED",
           "This request has already been decided.",
         );
+      await createNotifications(tx, {
+        recipientIds:
+          status === "WITHDRAWN"
+            ? reviewerId
+              ? [reviewerId]
+              : []
+            : [proposal.authorId],
+        actorId: user.id,
+        boardId: proposal.boardId,
+        taskId: applied?.taskId ?? proposal.taskId,
+        proposalId: proposal.id,
+        kind: "APPROVAL_DECISION",
+        message:
+          status === "APPROVED"
+            ? "approved your request"
+            : status === "REJECTED"
+              ? "rejected your request"
+              : status === "WITHDRAWN"
+                ? "withdrew an approval request"
+                : "closed your approval request because it needs to be resubmitted",
+        eventKey: `proposal:${proposal.id}:decision`,
+      });
       await tx.boardEvent.create({
         data: {
           boardId: proposal.boardId,
@@ -347,6 +401,7 @@ export async function approvalQueue(
   headers: Headers,
   filter = "PENDING",
   cursor?: string,
+  requestId?: string,
 ): Promise<ApprovalQueue> {
   const { user } = await requireIdentity(headers);
   const status =
@@ -354,6 +409,7 @@ export async function approvalQueue(
   return getDatabase().$transaction(async (tx) => {
     const rows = await tx.boardProposal.findMany({
       where: {
+        ...(requestId ? { id: recordId.parse(requestId) } : {}),
         board: { workspace: workspaceScope(user) },
         ...(isAdministrator(user.role)
           ? {}

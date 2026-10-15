@@ -1,5 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 import { config } from "dotenv";
+import { fileURLToPath } from "node:url";
 config({ path: new URL("../../.env", import.meta.url), quiet: true });
 const testDatabase = new URL(process.env.DATABASE_URL!);
 process.env.YUZU_E2E_ADMIN_URL = process.env.DATABASE_URL;
@@ -29,7 +30,10 @@ export default defineConfig({
       timeout: 30_000,
     },
     {
-      command: "pnpm start --port 3100",
+      command:
+        process.env.YUZU_E2E_DEV === "1"
+          ? "pnpm dev --port 3100"
+          : "pnpm start --port 3100",
       url: "http://127.0.0.1:3100/api/health",
       reuseExistingServer: false,
       env: {
@@ -41,6 +45,11 @@ export default defineConfig({
         BETTER_AUTH_SECRET: "browser-tests-only-auth-secret-not-a-real-secret",
         YUZU_SETUP_KEY: process.env.YUZU_E2E_SETUP_KEY,
         SETTINGS_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64url"),
+        YUZU_UPLOAD_DIR: fileURLToPath(
+          new URL("../../artifacts/e2e-attachments/", import.meta.url),
+        ),
+        YUZU_STORAGE_PROVIDER: process.env.YUZU_E2E_S3 === "1" ? "S3" : "LOCAL",
+        YUZU_S3_BUCKET: "yuzu-e2e-attachments",
       },
       timeout: 60_000,
     },

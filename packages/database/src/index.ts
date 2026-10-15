@@ -7,12 +7,18 @@ const databaseGlobal = globalThis as unknown as {
   yuzuDatabase?: PrismaClient;
   yuzuDatabaseSchemaVersion?: string;
 };
-const schemaVersion = "approval-engine-v1";
+const schemaVersion = "saved-board-views-v1";
 
 export function getDatabase(): PrismaClient {
   if (
     databaseGlobal.yuzuDatabase &&
-    databaseGlobal.yuzuDatabaseSchemaVersion === schemaVersion
+    databaseGlobal.yuzuDatabaseSchemaVersion === schemaVersion &&
+    databaseGlobal.yuzuDatabase.boardApprovalPolicy &&
+    databaseGlobal.yuzuDatabase.boardProposal &&
+    databaseGlobal.yuzuDatabase.notification &&
+    databaseGlobal.yuzuDatabase.taskAttachment &&
+    databaseGlobal.yuzuDatabase.savedBoardView &&
+    databaseGlobal.yuzuDatabase.boardViewSelection
   )
     return databaseGlobal.yuzuDatabase;
   const connectionString = process.env.DATABASE_URL;
@@ -36,7 +42,15 @@ export async function checkDatabase(): Promise<void> {
   // Verify required feature migrations, not just TCP connectivity.
   await Promise.all([
     db.installationSettings.count(),
+    db.savedBoardView.findFirst({ select: { id: true } }),
+    db.boardViewSelection.findFirst({ select: { boardId: true } }),
     db.boardApprovalPolicy.findFirst({ select: { boardId: true } }),
     db.boardProposal.findFirst({ select: { id: true } }),
+    db.notification.findFirst({ select: { id: true } }),
+    db.commentRevision.findFirst({ select: { id: true } }),
+    db.task.findFirst({ select: { checklist: true } }),
+    db.taskAttachment.findFirst({
+      select: { id: true, storageProvider: true, storageBucket: true },
+    }),
   ]);
 }

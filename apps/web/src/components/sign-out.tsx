@@ -1,6 +1,6 @@
 "use client";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
+import { useRouter } from "nextjs-toploader/app";
 import { LogOut } from "lucide-react";
 import { apiRequest } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";

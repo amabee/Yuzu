@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { headers } from "next/headers";
-import { notFound } from "next/navigation";
+import { forbidden } from "next/navigation";
 import { workspaceContext } from "@/server/workspace-access";
 import { isAdministrator } from "@/server/team-access";
 import { appearanceState } from "@/server/appearance-service";
@@ -10,7 +10,7 @@ import "@/components/design-preview/appearance-preview.css";
 export const metadata = { title: "Appearance" };
 export default async function AppearancePage() {
   const { user } = await workspaceContext();
-  if (!isAdministrator(user.role)) notFound();
+  if (!isAdministrator(user.role)) forbidden();
   const initial = await appearanceState(await headers());
   return (
     <div>

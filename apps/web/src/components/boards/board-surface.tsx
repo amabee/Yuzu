@@ -1,4 +1,12 @@
 "use client";
+import { BoardFilters, BoardFilterSelect } from "./board-filters";
+import { SavedViewControls } from "./saved-view-controls";
+import {
+  defaultViewConfig,
+  dueMatches,
+  type ViewConfig,
+  type SavedView,
+} from "@/lib/saved-view-contract";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, apiRequest } from "@/lib/api-client";
 import {
@@ -14,9 +22,9 @@ import {
 } from "@/lib/board-contract";
 import { OperationToast, type BoardNotice } from "./operation-toast";
 import { TaskEditor } from "./task-editor";
+import { useTaskUploads } from "./use-task-uploads";
 import { BoardManagement } from "./board-management";
-import { Input } from "@/components/ui/input";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import Link from "next/link";
 import { needsApproval } from "@/lib/approval-rules";
 import { taskMutationResultSchema } from "@/lib/approval-contract";
@@ -60,10 +68,14 @@ export function BoardSurface({
   name,
   statuses: initialStatuses,
   initialState,
+  initialTaskId,
+  initialCommentsTab,
   group,
   info,
 }: {
   initialState: BoardState;
+  initialTaskId?: string;
+  initialCommentsTab?: boolean;
   name: string;
   fields: { id: string; name: string; type?: string }[];
   statuses: string[];
@@ -71,6 +83,25 @@ export function BoardSurface({
   info?: BoardInfo;
 }) {
   const [notice, setNotice] = useState<BoardNotice | null>(null);
+  const [pendingUploads, setPendingUploads] = useState<
+    Record<string, BoardNotice>
+  >({});
+  const transferNotice = (update: BoardNotice) => {
+    setPendingUploads((current) => {
+      const next = { ...current };
+      if (update.kind === "loading" && update.icon === "upload")
+        next[update.id] = update;
+      else delete next[update.id];
+      return next;
+    });
+    setNotice(update);
+  };
+  const uploads = useTaskUploads(
+    initialState.currentUserId,
+    initialState.boardId,
+    transferNotice,
+  );
+  const taskSheetRef = useRef<HTMLDivElement>(null);
   const notify = (message: string, kind: BoardNotice["kind"]) =>
     setNotice({ id: crypto.randomUUID(), message, kind });
   const queryClient = useQueryClient();
@@ -107,20 +138,72 @@ export function BoardSurface({
   const fields = state.fields;
   const savedStatuses =
     state.fields.find((field) => field.key === "status")?.options ?? [];
-  const [archived, setArchived] = useState(false);
-  const [search, setSearch] = useState("");
-  const [groupFilter, setGroupFilter] = useState("");
-  const [sort, setSort] = useState("created");
-  const [selectedTab, setSelectedTab] = useState<"details" | "comments">(
-    "details",
+  const initialView =
+    initialState.savedViews?.find(
+      (view) => view.id === initialState.selectedViewId,
+    ) ?? null;
+  const [activeView, setActiveView] = useState<SavedView | null>(initialView);
+  const [viewConfig, setViewConfig] = useState<ViewConfig>({
+    ...(initialView?.config ?? defaultViewConfig),
+    ...(initialTaskId
+      ? {
+          archived: Boolean(
+            initialState.tasks.find((task) => task.id === initialTaskId)
+              ?.archivedAt,
+          ),
+        }
+      : {}),
+  });
+  const configureView = <K extends keyof ViewConfig>(
+    key: K,
+    value: ViewConfig[K],
+  ) => setViewConfig((current) => ({ ...current, [key]: value }));
+  const archived = viewConfig.archived;
+  const setArchived = (value: boolean) => configureView("archived", value);
+  const search = viewConfig.search;
+  const activeGroupFilter = viewConfig.groupId ?? "";
+  const setGroupFilter = (value: string) =>
+    configureView("groupId", value || null);
+  const sort = viewConfig.sort;
+  const statusFilter = viewConfig.statusId ?? "";
+  const missingReferences = Boolean(
+    (activeGroupFilter &&
+      !state.groups.some((group) => group.id === activeGroupFilter)) ||
+    (statusFilter &&
+      statusFilter !== "__none__" &&
+      !savedStatuses.some((status) => status.id === statusFilter)),
   );
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedTab, setSelectedTab] = useState<"details" | "comments">(
+    initialCommentsTab ? "comments" : "details",
+  );
+  const [selectedId, setSelectedId] = useState<string | null>(
+    initialState.tasks.some((task) => task.id === initialTaskId)
+      ? initialTaskId!
+      : null,
+  );
   const [creating, setCreating] = useState(false);
   const tasks = state.tasks
     .filter(
       (task) =>
         Boolean(task.archivedAt) === archived &&
-        (!groupFilter || task.groupId === groupFilter) &&
+        (!statusFilter ||
+          (statusFilter === "__none__"
+            ? !task.statusId
+            : task.statusId === statusFilter)) &&
+        (viewConfig.assignee === "all" ||
+          (viewConfig.assignee === "me"
+            ? task.assigneeIds.includes(state.currentUserId)
+            : !task.assigneeIds.length)) &&
+        (viewConfig.priority === "all" ||
+          task.priority === viewConfig.priority) &&
+        dueMatches(
+          task.dueDate,
+          viewConfig.due,
+          state.calendarDate
+            ? new Date(`${state.calendarDate}T12:00:00`)
+            : new Date(),
+        ) &&
+        (!activeGroupFilter || task.groupId === activeGroupFilter) &&
         `${task.name} ${task.description}`
           .toLowerCase()
           .includes(search.toLowerCase()),
@@ -141,7 +224,9 @@ export function BoardSurface({
   const statuses = savedStatuses.length
     ? [
         ...savedStatuses.map((option) => option.label),
-        ...(tasks.some((task) => !task.statusId) ? [emptyStatusLabel] : []),
+        ...(statusFilter === "__none__" || tasks.some((task) => !task.statusId)
+          ? [emptyStatusLabel]
+          : []),
       ]
     : initialStatuses;
   const mutation = useMutation({
@@ -196,6 +281,7 @@ export function BoardSurface({
         "configure-field": "Field saved",
         "remove-field": "Field removed",
         "rename-group": "Group renamed",
+        "remove-group": "Group removed",
         manager: "Board managers updated",
       };
       notify(
@@ -335,19 +421,45 @@ export function BoardSurface({
           : "No"
         : String(value);
   };
-  const [view, setView] = useState<"board" | "table">("board");
+  const view = viewConfig.layout;
+  const setView = (value: ViewConfig["layout"]) =>
+    configureView("layout", value);
   const [filterOpen, setFilterOpen] = useState(false);
-  const [requestedStatusFilter, setStatusFilter] = useState("");
-  const statusFilter = statuses.includes(requestedStatusFilter)
-    ? requestedStatusFilter
-    : "";
   const [detailsOpen, setDetailsOpen] = useState(false);
   const visibleStatuses = (statuses.length ? statuses : [group]).filter(
-    (status) => !statusFilter || status === statusFilter,
+    (status) =>
+      !statusFilter ||
+      (statusFilter === "__none__"
+        ? status === emptyStatusLabel
+        : savedStatuses.find((option) => option.id === statusFilter)?.label ===
+          status),
   );
   return (
     <section className="board-surface" data-connection={live.status}>
-      <OperationToast notice={notice} />
+      <OperationToast
+        notice={notice}
+        pinnedNotices={Object.values(pendingUploads)}
+      />
+      <SavedViewControls
+        views={state.savedViews ?? []}
+        active={activeView}
+        config={viewConfig}
+        userId={state.currentUserId}
+        canManage={state.canManage}
+        boardId={state.boardId}
+        onApply={(view, config) => {
+          setActiveView(view);
+          setViewConfig(config);
+        }}
+        onRefresh={() => query.refetch()}
+        notify={notify}
+      />
+      {missingReferences && (
+        <p role="status" className="mb-3 text-sm text-muted-foreground">
+          This view uses a removed group or status. Choose a current filter and
+          save the view again.
+        </p>
+      )}
       <div className="board-view-tabs" aria-label="Board view">
         <Button
           variant="ghost"
@@ -385,28 +497,37 @@ export function BoardSurface({
       )}
       <div className="board-toolbar">
         <div className="flex flex-wrap items-center gap-2">
-          <select
-            aria-label="Filter task group"
-            className="task-select w-auto"
-            value={groupFilter}
-            onChange={(event) => setGroupFilter(event.target.value)}
-          >
-            <option value="">All groups</option>
-            {state.groups.map((group) => (
-              <option key={group.id} value={group.id}>
-                {group.name}
-              </option>
-            ))}
-          </select>
+          <BoardFilterSelect
+            label="Filter task group"
+            value={activeGroupFilter}
+            onChange={setGroupFilter}
+            className="w-44 max-w-full"
+            options={[
+              { value: "", label: "All groups" },
+              ...(activeGroupFilter &&
+              !state.groups.some((group) => group.id === activeGroupFilter)
+                ? [{ value: activeGroupFilter, label: "Removed group" }]
+                : []),
+              ...state.groups.map((group) => ({
+                value: group.id,
+                label: group.name,
+              })),
+            ]}
+          />
           <Button
             variant="outline"
             size="sm"
+            className="h-[40px]"
             aria-expanded={filterOpen}
             onClick={() => setFilterOpen(!filterOpen)}
           >
             <SlidersHorizontal size={14} />
             Filter
-            {statusFilter && (
+            {(statusFilter ||
+              search ||
+              viewConfig.assignee !== "all" ||
+              viewConfig.priority !== "all" ||
+              viewConfig.due !== "all") && (
               <span className="size-1.5 rounded-full bg-primary" />
             )}
           </Button>
@@ -462,48 +583,14 @@ export function BoardSurface({
         </p>
       )}
       {filterOpen && (
-        <div className="board-filter-bar">
-          <label className="flex items-center gap-3 text-xs">
-            Status
-            <select
-              aria-label="Filter board status"
-              className="h-8 rounded-md border bg-card px-3 text-foreground"
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value)}
-            >
-              <option value="">All statuses</option>
-              {(statuses.length ? statuses : [group]).map((status) => (
-                <option key={status}>{status}</option>
-              ))}
-            </select>
-          </label>
-          <Input
-            aria-label="Search tasks"
-            placeholder="Search tasks…"
-            className="max-w-48"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-          <select
-            aria-label="Sort tasks"
-            className="task-select w-auto"
-            value={sort}
-            onChange={(event) => setSort(event.target.value)}
-          >
-            <option value="created">Created order</option>
-            <option value="name">Name</option>
-            <option value="due">Due date</option>
-          </select>
-          {statusFilter && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setStatusFilter("")}
-            >
-              Clear filter
-            </Button>
-          )}
-        </div>
+        <BoardFilters
+          config={viewConfig}
+          statuses={savedStatuses}
+          priorities={priorityOptions(state)}
+          groupActive={!!activeGroupFilter}
+          count={tasks.length}
+          onChange={setViewConfig}
+        />
       )}
       {view === "board" ? (
         <div className="board-lanes-scroll">
@@ -754,7 +841,11 @@ export function BoardSurface({
                           })}
                       </div>
                       {state.fields
-                        .filter((field) => field.type === "MULTI_SELECT")
+                        .filter(
+                          (field) =>
+                            field.type === "MULTI_SELECT" &&
+                            selectedChoices(task, field.id).length > 0,
+                        )
                         .map((field) => (
                           <div
                             className="task-checklist-summary"
@@ -769,6 +860,19 @@ export function BoardSurface({
                             </span>
                           </div>
                         ))}
+                      {task.checklist.length > 0 && (
+                        <div
+                          className="task-checklist-summary"
+                          aria-label={`Checklist progress for ${task.name}`}
+                        >
+                          <ListChecks size={13} />
+                          <span>Checklist</span>
+                          <span>
+                            {task.checklist.filter((item) => item.done).length}/
+                            {task.checklist.length}
+                          </span>
+                        </div>
+                      )}
                       {task.description && (
                         <p className="task-card-description">
                           {task.description}
@@ -845,6 +949,11 @@ export function BoardSurface({
             <caption className="sr-only">{name} fields</caption>
             <thead>
               <tr>
+                {!fields.length && (
+                  <th scope="col" className="border-b px-5 py-4 font-medium">
+                    Task
+                  </th>
+                )}
                 {fields.map((field) => (
                   <th
                     scope="col"
@@ -854,12 +963,19 @@ export function BoardSurface({
                     {field.name}
                   </th>
                 ))}
+                <th scope="col" className="border-b px-5 py-4 font-medium">
+                  Task checklist
+                </th>
               </tr>
             </thead>
             <tbody>
               {tasks
                 .filter(
-                  (task) => !statusFilter || statusLabel(task) === statusFilter,
+                  (task) =>
+                    !statusFilter ||
+                    (statusFilter === "__none__"
+                      ? !task.statusId
+                      : task.statusId === statusFilter),
                 )
                 .map((task) => (
                   <tr key={task.id} data-task-id={task.id}>
@@ -973,12 +1089,37 @@ export function BoardSurface({
                         )}
                       </td>
                     ))}
+                    <td className="border-b px-4 py-3">
+                      {task.checklist.length ? (
+                        <button
+                          type="button"
+                          className="flex items-center gap-2 text-left text-primary"
+                          aria-label={`Open checklist for ${task.name}`}
+                          onClick={() => {
+                            mutation.reset();
+                            setSelectedTab("details");
+                            setSelectedId(task.id);
+                          }}
+                        >
+                          <ListChecks size={15} />
+                          <span>
+                            {task.checklist.filter((item) => item.done).length}/
+                            {task.checklist.length}
+                          </span>
+                          <span className="max-w-48 truncate text-xs text-muted-foreground">
+                            {task.checklist.map((item) => item.text).join(", ")}
+                          </span>
+                        </button>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               {!tasks.length && (
                 <tr>
                   <td
-                    colSpan={Math.max(1, fields.length)}
+                    colSpan={Math.max(1, fields.length) + 1}
                     className="p-12 text-center"
                   >
                     <Columns3 size={26} className="mx-auto mb-4 text-primary" />
@@ -1123,7 +1264,15 @@ export function BoardSurface({
           }
         }}
       >
-        <SheetContent className="board-details-panel task-sheet-panel">
+        <SheetContent
+          ref={taskSheetRef}
+          tabIndex={-1}
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            taskSheetRef.current?.focus();
+          }}
+          className="board-details-panel task-sheet-panel outline-none"
+        >
           <TaskEditor
             key={selected?.id ?? "create"}
             state={state}
@@ -1131,6 +1280,8 @@ export function BoardSurface({
             initialTab={selectedTab}
             syncInterval={live.syncInterval}
             onNotice={notify}
+            onTransferNotice={transferNotice}
+            uploads={uploads}
             pending={busy}
             error={mutation.error?.message}
             onSubmit={(input) =>

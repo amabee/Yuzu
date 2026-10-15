@@ -3,6 +3,7 @@ import { CalendarDays, Paperclip, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { workspaceContext } from "@/server/workspace-access";
 import { isAdministrator } from "@/server/team-access";
+import { formatFileSize } from "@/lib/attachment-contract";
 
 export const metadata: Metadata = { title: "Settings" };
 const settings = [
@@ -16,7 +17,7 @@ const settings = [
     icon: Paperclip,
     title: "Files and uploads",
     description: "Attachment limits and supported file types.",
-    value: "50 MB per file · planned default",
+    value: "",
   },
   {
     icon: ShieldCheck,
@@ -26,7 +27,7 @@ const settings = [
   },
 ];
 export default async function SettingsPage() {
-  const { user } = await workspaceContext();
+  const { user, settings: installation } = await workspaceContext();
   return (
     <div>
       <p className="mb-2 text-[11px] font-semibold tracking-[0.15em] text-brand-secondary uppercase">
@@ -71,7 +72,11 @@ export default async function SettingsPage() {
                 </p>
               </div>
             </div>
-            <span className="text-xs text-muted-foreground">{value}</span>
+            <span className="text-xs text-muted-foreground">
+              {title === "Files and uploads"
+                ? `${formatFileSize(installation.maxAttachmentSizeBytes)} per file`
+                : value}
+            </span>
           </section>
         ))}
       </div>
