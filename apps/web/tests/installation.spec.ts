@@ -776,6 +776,10 @@ test("password recovery works from email and revokes every existing session", as
       await (await otherSession.request.get("/api/auth/get-session")).json(),
     ).toBeNull();
     await page.goto(`/boards/${board.id}`);
+    await expect(
+      page.getByRole("heading", { name: "Your session expired" }),
+    ).toBeVisible();
+    await page.getByRole("link", { name: "Sign in again" }).click();
     await expect(page).toHaveURL(/\/sign-in$/);
     const replay = await postRecovery(recoveryPage, "reset", {
       token,
@@ -1077,14 +1081,20 @@ test("teammate joins from email, signs in, and loses board access immediately on
     ).toHaveCount(0);
     await teammatePage.goto(`/boards/${otherBoard.id}`);
     await expect(
-      teammatePage.getByText("Page not found", { exact: true }),
+      teammatePage.getByRole("heading", {
+        name: "Hmm, we can't find that page",
+        exact: true,
+      }),
     ).toBeVisible();
     await expect(
       teammatePage.getByRole("heading", { name: "Restricted project" }),
     ).toHaveCount(0);
     await teammatePage.goto("/settings/team");
     await expect(
-      teammatePage.getByText("Page not found", { exact: true }),
+      teammatePage.getByRole("heading", {
+        name: "You don't have access",
+        exact: true,
+      }),
     ).toBeVisible();
     await expect(
       teammatePage.getByRole("heading", { name: "Team access" }),
@@ -1135,7 +1145,10 @@ test("teammate joins from email, signs in, and loses board access immediately on
     ).toBe(200);
     await teammatePage.goto(`/boards/${board.id}`);
     await expect(
-      teammatePage.getByText("Page not found", { exact: true }),
+      teammatePage.getByRole("heading", {
+        name: "Hmm, we can't find that page",
+        exact: true,
+      }),
     ).toBeVisible();
     await expect(
       teammatePage.getByRole("heading", { name: "Team project" }),
@@ -3813,6 +3826,84 @@ const changeInbox = (
     headers: { origin },
     data: input,
   });
+test("page access shows forbidden and expired-session screens while preserving API errors and private boards", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  const visitor = await browser.newContext();
+  try {
+    // Fresh visitors still get the normal sign-in flow.
+    const freshPage = await visitor.newPage();
+    await freshPage.goto("/boards");
+    await expect(freshPage).toHaveURL(/\/sign-in$/);
+    expect((await freshPage.request.get("/api/v1/team/state")).status()).toBe(
+      401,
+    );
+
+    // Both admin-only pages use 403 rather than implying they do not exist.
+    for (const path of ["/settings/team", "/settings/appearance"]) {
+      await team.author.page.goto(path);
+      await expect(
+        team.author.page.getByRole("heading", {
+          name: "You don't have access",
+        }),
+      ).toBeVisible();
+      await expect(
+        team.author.page.getByRole("button", { name: "Toggle navigation" }),
+      ).toBeVisible();
+      await expect(
+        team.author.page.getByRole("link", {
+          name: "Back to home",
+          exact: true,
+        }),
+      ).toHaveAttribute("href", "/");
+    }
+    expect(
+      (await team.author.page.request.get("/api/v1/team/state")).status(),
+    ).toBe(403);
+    await page.goto("/settings/team");
+    await expect(
+      page.getByRole("heading", { name: "Team access", exact: true }),
+    ).toBeVisible();
+
+    // Removing workspace access must continue concealing its boards with 404.
+    await getDatabase().workspaceMember.deleteMany({
+      where: { workspaceId: team.workspaceId, userId: team.author.id },
+    });
+    await team.author.page.goto(`/boards/${team.boardId}`);
+    await expect(
+      team.author.page.getByRole("heading", {
+        name: "Hmm, we can't find that page",
+      }),
+    ).toBeVisible();
+
+    // A real signed session cookie with an expired database session shows 401.
+    await getDatabase().session.updateMany({
+      where: { userId: team.author.id },
+      data: { expiresAt: new Date(0) },
+    });
+    await team.author.page.goto("/boards");
+    await expect(
+      team.author.page.getByRole("heading", { name: "Your session expired" }),
+    ).toBeVisible();
+    await expect(
+      team.author.page.getByRole("link", { name: "Sign in again" }),
+    ).toHaveAttribute("href", "/sign-in");
+    expect(
+      (await team.author.page.request.get("/api/v1/team/state")).status(),
+    ).toBe(401);
+    await team.author.page.getByRole("link", { name: "Sign in again" }).click();
+    await expect(team.author.page).toHaveURL(/\/sign-in$/);
+    await expect(
+      team.author.page.getByRole("heading", { name: "Welcome back." }),
+    ).toBeVisible();
+  } finally {
+    await visitor.close();
+    await team.close();
+  }
+});
+
 async function approvalTeam(
   page: Page,
   browser: import("@playwright/test").Browser,

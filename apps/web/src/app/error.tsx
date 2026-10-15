@@ -1,16 +1,44 @@
 "use client";
-import { Button } from "@/components/ui/button";
 
-export default function ErrorPage({ reset }: { reset: () => void }) {
+import Link from "next/link";
+import { useEffect } from "react";
+import {
+  ErrorShell,
+  btnPrimary,
+  btnSecondary,
+} from "@/components/yuzu/error-shell";
+
+export default function Error({
+  error,
+  retry,
+}: {
+  error: Error & { digest?: string };
+  retry: () => void;
+}) {
+  useEffect(() => {
+    console.error(error);
+  }, [error]);
   return (
-    <div role="alert" className="py-16">
-      <h1 className="text-2xl font-semibold">This page couldn&apos;t load.</h1>
-      <p className="mt-3 text-sm text-muted-foreground">
-        Try again to return to your workspace.
-      </p>
-      <Button onClick={reset} className="mt-6">
+    <ErrorShell
+      mood="sad"
+      code="Error 500"
+      title="Something went wrong"
+      description="Yuzu hit an unexpected snag on our end. Your work is safe. Give it another try, and if it keeps happening, let us know."
+      footer={
+        error.digest && (
+          <p className="mt-4 text-sm text-muted-foreground">
+            Error ID{" "}
+            <code className="font-mono text-foreground">{error.digest}</code>
+          </p>
+        )
+      }
+    >
+      <button type="button" onClick={retry} className={btnPrimary}>
         Try again
-      </Button>
-    </div>
+      </button>
+      <Link href="/" className={btnSecondary}>
+        Back to home
+      </Link>
+    </ErrorShell>
   );
 }

@@ -1,6 +1,6 @@
 import { cache } from "react";
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
+import { cookies, headers } from "next/headers";
+import { redirect, unauthorized } from "next/navigation";
 import { getDatabase } from "@yuzu/database";
 import { getAuth } from "./auth";
 import { workspaceScope } from "./team-access";
@@ -12,12 +12,18 @@ export const workspaceContext = cache(async () => {
   });
   if (settings?.setupState !== "READY")
     redirect(settings?.ownerId ? "/setup" : "/welcome");
-  const session = await getAuth().api.getSession({ headers: await headers() });
-  if (!session) redirect("/sign-in");
+  const auth = getAuth();
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) {
+    const { authCookies } = await auth.$context;
+    // A stale/revoked session gets a recovery page; new visitors go to sign-in.
+    if ((await cookies()).has(authCookies.sessionToken.name)) unauthorized();
+    redirect("/sign-in");
+  }
   const user = await getDatabase().user.findUnique({
     where: { id: session.user.id },
   });
-  if (!user) redirect("/sign-in");
+  if (!user) unauthorized();
   const workspaces = await getDatabase().workspace.findMany({
     where: workspaceScope(user),
     orderBy: { createdAt: "asc" },

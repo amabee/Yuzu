@@ -7,5 +7,6 @@ const nextConfig: NextConfig = {
   transpilePackages: ["@yuzu/database"],
   poweredByHeader: false,
   devIndicators: false,
+  experimental: { authInterrupts: true },
 };
 export default nextConfig;
