@@ -99,8 +99,8 @@ assignments, approval requests and decisions, including updates received offline
 Opening a notification rechecks current access before linking to its task or
 review sheet. Mark individual notifications read/unread or clear the current
 unread backlog; newer arrivals remain unread.
-In a task's **Comments** tab, choose a teammate under **Mention a teammate** to
-notify them. Authors can edit their comments and inspect previous versions;
+In a task's **Comments** tab, type `@` and a name, then choose the teammate from
+the inline suggestions to notify them. Authors can edit their comments and inspect previous versions;
 authors and board managers can remove comments. Removal hides the content and
 keeps an audit record. Archived tasks remain read-only.
 See [Board engine](docs/board-engine.md) for permissions and API contracts.

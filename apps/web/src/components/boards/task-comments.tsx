@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef } from "react";
+import { useState, useRef, useId } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api-client";
 import {
@@ -8,10 +8,10 @@ import {
   type BoardState,
   type BoardTask,
 } from "@/lib/board-contract";
-import { mentionPresent } from "@/lib/comment-mentions";
+import { mentionPresent, activeMention } from "@/lib/comment-mentions";
 import { Button } from "@/components/ui/button";
 import { AssigneeAvatars } from "./board-presentation";
-import { AtSign, History, Pencil, Trash2, X } from "lucide-react";
+import { History, Pencil, Trash2, X } from "lucide-react";
 type Person = { id: string; name: string };
 function Composer({
   people,
@@ -30,75 +30,196 @@ function Composer({
   disabled: boolean;
   label: string;
 }) {
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  const listId = useId();
+  const [trigger, setTrigger] =
+    useState<ReturnType<typeof activeMention>>(null);
+  const [highlight, setHighlight] = useState(0);
+  const dismissed = useRef("");
+  const matches = trigger
+    ? people
+        .filter((person) =>
+          person.name
+            .toLocaleLowerCase()
+            .includes(trigger.query.trim().toLocaleLowerCase()),
+        )
+        .slice(0, 8)
+    : [];
+  const updateTrigger = (value: string, caret: number, end = caret) => {
+    if (
+      disabled ||
+      caret !== end ||
+      dismissed.current === `${value}\0${caret}`
+    ) {
+      setTrigger(null);
+      return;
+    }
+    setTrigger(
+      activeMention(
+        value,
+        caret,
+        people
+          .filter((person) => ids.includes(person.id))
+          .map((person) => person.name),
+      ),
+    );
+    setHighlight(0);
+  };
+  const choose = (person: Person) => {
+    if (!trigger || !textarea.current) return;
+    const caret = textarea.current.selectionStart;
+    const insertion = `@${person.name}${/^\s/.test(body.slice(caret)) ? "" : " "}`;
+    const next = body.slice(0, trigger.start) + insertion + body.slice(caret);
+    if (next.length > 5000) return;
+    const position = trigger.start + insertion.length;
+    dismissed.current = `${next}\0${position}`;
+    setBody(next);
+    setIds([...new Set([...ids, person.id])]);
+    setTrigger(null);
+    requestAnimationFrame(() => {
+      textarea.current?.focus();
+      textarea.current?.setSelectionRange(position, position);
+    });
+  };
   return (
     <div className="space-y-3">
       <label className="task-field-label">
         {label}
-        <textarea
-          className="task-textarea"
-          aria-label={label}
-          maxLength={5000}
-          rows={3}
-          required
-          value={body}
-          disabled={disabled}
-          onChange={(event) => {
-            setBody(event.target.value);
-            setIds(
-              ids.filter((id) => {
-                const person = people.find((person) => person.id === id);
-                return (
-                  person && mentionPresent(event.target.value, person.name)
-                );
-              }),
-            );
-          }}
-        />
-      </label>
-      <div className="flex flex-wrap items-center gap-2">
-        <AtSign size={14} className="text-primary" />
-        <select
-          aria-label={`Mention teammate: ${label}`}
-          className="max-w-full rounded-lg border bg-background px-2 py-1 text-xs"
-          value=""
-          disabled={disabled}
-          onChange={(event) => {
-            const person = people.find(
-              (person) => person.id === event.target.value,
-            );
-            if (!person) return;
-            setBody(
-              `${body}${body && !/\s$/.test(body) ? " " : ""}@${person.name} `,
-            );
-            setIds([...ids, person.id]);
-          }}
-        >
-          <option value="">Mention a teammate</option>
-          {people
-            .filter((person) => !ids.includes(person.id))
-            .map((person) => (
-              <option key={person.id} value={person.id}>
-                {person.name}
-              </option>
-            ))}
-        </select>
-        {ids.map((id) => (
-          <button
-            type="button"
-            key={id}
+        <div className="relative">
+          <textarea
+            ref={textarea}
+            aria-autocomplete="list"
+            aria-haspopup="listbox"
+            aria-controls={trigger ? listId : undefined}
+            aria-activedescendant={
+              trigger && matches[highlight]
+                ? `${listId}-${highlight}`
+                : undefined
+            }
+            className="task-textarea"
+            aria-label={label}
+            maxLength={5000}
+            rows={3}
+            required
+            value={body}
             disabled={disabled}
-            className="inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-1 text-xs text-secondary-foreground"
-            aria-label={`Stop notifying ${people.find((person) => person.id === id)?.name ?? "unavailable teammate"}`}
-            onClick={() => setIds(ids.filter((personId) => personId !== id))}
-          >
-            {people.find((person) => person.id === id)?.name ??
-              "Unavailable teammate"}
-            <X size={11} />
-          </button>
-        ))}
-      </div>
+            onSelect={(event) =>
+              updateTrigger(
+                event.currentTarget.value,
+                event.currentTarget.selectionStart,
+                event.currentTarget.selectionEnd,
+              )
+            }
+            onBlur={() => setTrigger(null)}
+            onCompositionStart={() => setTrigger(null)}
+            onCompositionEnd={(event) =>
+              updateTrigger(
+                event.currentTarget.value,
+                event.currentTarget.selectionStart,
+              )
+            }
+            onKeyDown={(event) => {
+              if (!trigger || event.nativeEvent.isComposing) return;
+              if (event.key === "Escape") {
+                event.preventDefault();
+                dismissed.current = `${body}\0${event.currentTarget.selectionStart}`;
+                setTrigger(null);
+              } else if (
+                matches.length &&
+                ["ArrowDown", "ArrowUp"].includes(event.key)
+              ) {
+                event.preventDefault();
+                const next =
+                  (highlight +
+                    (event.key === "ArrowDown" ? 1 : -1) +
+                    matches.length) %
+                  matches.length;
+                setHighlight(next);
+                requestAnimationFrame(() =>
+                  document
+                    .getElementById(`${listId}-${next}`)
+                    ?.scrollIntoView({ block: "nearest" }),
+                );
+              } else if (
+                matches.length &&
+                ["Enter", "Tab"].includes(event.key)
+              ) {
+                event.preventDefault();
+                choose(matches[highlight] ?? matches[0]!);
+              }
+            }}
+            onChange={(event) => {
+              dismissed.current = "";
+              updateTrigger(event.target.value, event.target.selectionStart);
+              setBody(event.target.value);
+              setIds(
+                ids.filter((id) => {
+                  const person = people.find((person) => person.id === id);
+                  return (
+                    person && mentionPresent(event.target.value, person.name)
+                  );
+                }),
+              );
+            }}
+          />
+          {trigger && !disabled && (
+            <div
+              id={listId}
+              role="listbox"
+              aria-label="Mention suggestions"
+              className="absolute right-0 bottom-full left-0 z-40 mb-2 max-h-48 overflow-auto rounded-xl border bg-popover p-1 text-popover-foreground shadow-lg"
+            >
+              {matches.map((person, index) => (
+                <button
+                  key={person.id}
+                  id={`${listId}-${index}`}
+                  type="button"
+                  role="option"
+                  aria-label={person.name}
+                  aria-selected={index === highlight}
+                  className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm ${index === highlight ? "bg-accent text-accent-foreground" : "hover:bg-accent"}`}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseEnter={() => setHighlight(index)}
+                  onClick={() => choose(person)}
+                >
+                  <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-xs text-secondary-foreground">
+                    {person.name.charAt(0)}
+                  </span>
+                  <span className="min-w-0 break-words">{person.name}</span>
+                </button>
+              ))}
+              {!matches.length && (
+                <p
+                  role="status"
+                  className="px-3 py-2 text-sm text-muted-foreground"
+                >
+                  No teammates match that name.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </label>
+      {ids.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          {ids.map((id) => (
+            <button
+              type="button"
+              key={id}
+              disabled={disabled}
+              className="inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-1 text-xs text-secondary-foreground"
+              aria-label={`Stop notifying ${people.find((person) => person.id === id)?.name ?? "unavailable teammate"}`}
+              onClick={() => setIds(ids.filter((personId) => personId !== id))}
+            >
+              {people.find((person) => person.id === id)?.name ??
+                "Unavailable teammate"}
+              <X size={11} />
+            </button>
+          ))}
+        </div>
+      )}
       <p className="text-xs text-muted-foreground">
-        Choose a teammate to notify them when you post or save.
+        Type @ and a name to mention a teammate.
       </p>
     </div>
   );

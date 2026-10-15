@@ -3914,10 +3914,35 @@ test("comment mentions notify live, edits retain history and manager removal hid
     );
     await team.author.page
       .getByRole("textbox", { name: "New comment", exact: true })
-      .fill("Please review this");
+      .fill("Please review this @Back");
+    await expect(
+      team.author.page.getByRole("listbox", { name: "Mention suggestions" }),
+    ).toBeVisible();
+    await expect(
+      team.author.page.getByRole("option", {
+        name: "Backup Reviewer",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      team.author.page.getByRole("option", { name: "Team Owner", exact: true }),
+    ).toHaveCount(0);
+    await team.author.page.screenshot({
+      path: "../../artifacts/comments/mention-picker-desktop.png",
+      fullPage: true,
+    });
     await team.author.page
-      .getByLabel("Mention teammate: New comment", { exact: true })
-      .selectOption(team.backup.id);
+      .getByRole("textbox", { name: "New comment", exact: true })
+      .press("Enter");
+    await expect(
+      team.author.page.getByRole("textbox", {
+        name: "New comment",
+        exact: true,
+      }),
+    ).toHaveValue("Please review this @Backup Reviewer ");
+    await expect(
+      team.author.page.getByRole("listbox", { name: "Mention suggestions" }),
+    ).toHaveCount(0);
     await team.author.page
       .getByRole("button", { name: "Post comment", exact: true })
       .click();
@@ -3947,6 +3972,37 @@ test("comment mentions notify live, edits retain history and manager removal hid
       team.backup.page.getByRole("button", { name: "Edit", exact: true }),
     ).toHaveCount(0);
     await row.getByRole("button", { name: "Edit", exact: true }).click();
+    await team.author.page
+      .getByRole("textbox", { name: "Edit comment", exact: true })
+      .fill("Updated review notes @Backup Reviewer");
+    const editor = team.author.page.getByRole("textbox", {
+      name: "Edit comment",
+      exact: true,
+    });
+    await editor.fill("Ask @Back about this");
+    await editor.press("Home");
+    for (let position = 0; position < 9; position++)
+      await editor.press("ArrowRight");
+    await team.author.page
+      .getByRole("option", { name: "Backup Reviewer", exact: true })
+      .click();
+    await expect(editor).toHaveValue("Ask @Backup Reviewer about this");
+    await editor.fill("Updated review notes @Backup Reviewer");
+    await team.author.page
+      .getByRole("textbox", { name: "Edit comment", exact: true })
+      .press("End");
+    await team.author.page
+      .getByRole("textbox", { name: "Edit comment", exact: true })
+      .pressSequentially(" @zzzz");
+    await expect(
+      team.author.page.getByText("No teammates match that name."),
+    ).toBeVisible();
+    await team.author.page
+      .getByRole("textbox", { name: "Edit comment", exact: true })
+      .press("Escape");
+    await expect(
+      team.author.page.getByRole("listbox", { name: "Mention suggestions" }),
+    ).toHaveCount(0);
     await team.author.page
       .getByRole("textbox", { name: "Edit comment", exact: true })
       .fill("Updated review notes @Backup Reviewer");
