@@ -125,6 +125,16 @@ h3 {
   background: color-mix(in srgb, var(--card) var(--theme-opacity), transparent);
   backdrop-filter: blur(var(--theme-blur));
 }
+.yuzu-error-shell {
+  min-height: 100svh;
+  background: var(--background);
+}
+
+/* Embedded errors share the workspace canvas beneath its header and padding. */
+.workspace-content .yuzu-error-shell {
+  min-height: calc(100svh - 7rem);
+  background: transparent;
+}
 .yuzu-workspace main :is(section, div, a).bg-card {
   box-shadow: var(--theme-card-shadow);
 }
