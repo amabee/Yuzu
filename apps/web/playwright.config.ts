@@ -1,5 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 import { config } from "dotenv";
+import { fileURLToPath } from "node:url";
 config({ path: new URL("../../.env", import.meta.url), quiet: true });
 const testDatabase = new URL(process.env.DATABASE_URL!);
 process.env.YUZU_E2E_ADMIN_URL = process.env.DATABASE_URL;
@@ -41,6 +42,9 @@ export default defineConfig({
         BETTER_AUTH_SECRET: "browser-tests-only-auth-secret-not-a-real-secret",
         YUZU_SETUP_KEY: process.env.YUZU_E2E_SETUP_KEY,
         SETTINGS_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64url"),
+        YUZU_UPLOAD_DIR: fileURLToPath(
+          new URL("../../artifacts/e2e-attachments/", import.meta.url),
+        ),
       },
       timeout: 60_000,
     },

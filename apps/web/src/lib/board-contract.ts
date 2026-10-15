@@ -180,6 +180,7 @@ export type BoardTask = {
   fieldValues: Record<string, FieldValue>;
   canEdit: boolean;
   commentCount?: number;
+  attachmentCount?: number;
   activity: { id: string; action: string; actor: string; createdAt: string }[];
 };
 export type BoardState = {
@@ -248,6 +249,7 @@ export const boardStateSchema = z.object({
       ),
       canEdit: z.boolean(),
       commentCount: z.number().int().nonnegative().default(0),
+      attachmentCount: z.number().int().nonnegative().default(0),
       activity: z.array(
         z.object({
           id: recordId,

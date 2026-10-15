@@ -216,6 +216,30 @@ Production deployment guidance will include environment configuration, secure
 secrets, database migrations, file storage, backups, restore testing, and
 upgrade procedures before Yuzu is considered production-ready.
 
+## Private task files
+
+The task Files tab supports uploads, downloads and permission-checked removal.
+The default upload limit is **50 MB (50,000,000 bytes)**. Supported formats are
+JPEG, PNG, GIF, WebP, PDF, UTF-8 TXT/CSV and modern Office documents. The server
+enforces the installation's size/MIME policy and checks file contents. Signature
+checks identify formats; they do not replace malware scanning.
+
+Set the server-only `YUZU_UPLOAD_DIR` to an **absolute persistent directory** when
+deploying to a shared server. Local development defaults to
+`apps/web/storage/attachments`. Keep this directory outside public/static hosting
+and mount persistent storage if running the web process in a container. Multiple
+web instances must share the same private files. Reverse proxies must allow the
+configured request size and the two-minute upload timeout.
+
+Back up PostgreSQL **and** the upload directory together. Enable maintenance mode
+and drain active uploads before backing up; restore the matching database and
+files together. Archived tasks preserve files. Removed files become unavailable
+immediately; physical cleanup is attempted after the metadata change commits.
+Run `pnpm attachments:cleanup` against the intended database/storage configuration
+to remove unreferenced UUIDv7 files older than 24 hours after interrupted uploads
+or failed cleanup. Active references and recent files are preserved. No recurring
+cleanup job is installed automatically.
+
 ## Contributing
 
 Contributions, feedback, bug reports, and thoughtful feature ideas are welcome

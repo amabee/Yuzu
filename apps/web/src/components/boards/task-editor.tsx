@@ -20,6 +20,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { TaskComments } from "./task-comments";
+import { TaskFiles } from "./task-files";
 import {
   AssigneeAvatars,
   StatusIcon,
@@ -135,7 +136,7 @@ export function TaskEditor({
     });
   };
   const [createKey, setCreateKey] = useState(() => crypto.randomUUID());
-  const [tab, setTab] = useState<"details" | "comments" | "activity">(
+  const [tab, setTab] = useState<"details" | "comments" | "activity" | "files">(
     task ? initialTab : "details",
   );
   const [accessPerson, setAccessPerson] = useState("");
@@ -272,14 +273,17 @@ export function TaskEditor({
             const keys = ["ArrowRight", "ArrowLeft", "Home", "End"];
             if (!keys.includes(event.key)) return;
             event.preventDefault();
-            const tabs = ["details", "comments", "activity"] as const;
+            const tabs = ["details", "comments", "activity", "files"] as const;
             const index = tabs.indexOf(tab);
             const next =
               event.key === "Home"
                 ? 0
                 : event.key === "End"
-                  ? 2
-                  : (index + (event.key === "ArrowRight" ? 1 : -1) + 3) % 3;
+                  ? tabs.length - 1
+                  : (index +
+                      (event.key === "ArrowRight" ? 1 : -1) +
+                      tabs.length) %
+                    tabs.length;
             setTab(tabs[next]!);
             event.currentTarget
               .querySelectorAll<HTMLButtonElement>('[role="tab"]')
@@ -318,6 +322,17 @@ export function TaskEditor({
             onClick={() => setTab("activity")}
           >
             Activity
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="task-tab-files"
+            aria-controls="task-panel-files"
+            tabIndex={tab === "files" ? 0 : -1}
+            aria-selected={tab === "files"}
+            onClick={() => setTab("files")}
+          >
+            Files <span>{task.attachmentCount ?? 0}</span>
           </button>
         </div>
       )}
@@ -914,6 +929,20 @@ export function TaskEditor({
                   </li>
                 ))}
               </ul>
+            </section>
+            <section
+              id="task-panel-files"
+              role="tabpanel"
+              aria-labelledby="task-tab-files"
+              hidden={tab !== "files"}
+            >
+              <TaskFiles
+                state={state}
+                task={task}
+                active={tab === "files"}
+                syncInterval={syncInterval}
+                onNotice={onNotice}
+              />
             </section>
             {state.canManage && !task.archivedAt && (
               <section

@@ -312,7 +312,12 @@ export async function saveValues(
   }
 }
 const taskInclude = {
-  _count: { select: { comments: { where: { deletedAt: null } } } },
+  _count: {
+    select: {
+      comments: { where: { deletedAt: null } },
+      attachments: { where: { removedAt: null } },
+    },
+  },
   createdBy: { select: { name: true } },
   assignees: true,
   editors: true,
@@ -399,6 +404,8 @@ export async function boardState(
             "Added task comment",
             "Edited task comment",
             "Removed task comment",
+            "Uploaded task attachment",
+            "Removed task attachment",
           ],
         },
       },
@@ -466,6 +473,7 @@ export async function boardState(
         revision: task.revision,
         canEdit: !task.archivedAt && canEdit(task, context),
         commentCount: task._count.comments,
+        attachmentCount: task._count.attachments,
         activity: [
           ...task.activity,
           ...commentEvents.filter(
@@ -477,7 +485,12 @@ export async function boardState(
           .slice(0, 20)
           .map((event) => ({
             id: event.id,
-            action: event.action,
+            action:
+              event.action +
+              (event.action === "Uploaded task attachment" ||
+              event.action === "Removed task attachment"
+                ? `: ${(event as { after?: { fileName?: string } }).after?.fileName ?? "File"}`
+                : ""),
             actor: event.actor.name,
             createdAt: event.createdAt.toISOString(),
           })),

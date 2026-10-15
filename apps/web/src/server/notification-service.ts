@@ -100,7 +100,8 @@ export async function notificationInbox(
   });
 }
 export async function changeNotification(headers: Headers, input: unknown) {
-  const { user } = await requireIdentity(headers);
+  // Read/unread is a scoped personal preference, not a task mutation.
+  const { user } = await requireIdentity(headers, { allowMaintenance: true });
   const body = notificationActionSchema.parse(input);
   return serial(async (tx) => {
     const scope = visibility(user);

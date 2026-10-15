@@ -7,7 +7,7 @@ const databaseGlobal = globalThis as unknown as {
   yuzuDatabase?: PrismaClient;
   yuzuDatabaseSchemaVersion?: string;
 };
-const schemaVersion = "task-checklists-v1";
+const schemaVersion = "task-attachments-v1";
 
 export function getDatabase(): PrismaClient {
   if (
@@ -15,7 +15,8 @@ export function getDatabase(): PrismaClient {
     databaseGlobal.yuzuDatabaseSchemaVersion === schemaVersion &&
     databaseGlobal.yuzuDatabase.boardApprovalPolicy &&
     databaseGlobal.yuzuDatabase.boardProposal &&
-    databaseGlobal.yuzuDatabase.notification
+    databaseGlobal.yuzuDatabase.notification &&
+    databaseGlobal.yuzuDatabase.taskAttachment
   )
     return databaseGlobal.yuzuDatabase;
   const connectionString = process.env.DATABASE_URL;
@@ -44,5 +45,6 @@ export async function checkDatabase(): Promise<void> {
     db.notification.findFirst({ select: { id: true } }),
     db.commentRevision.findFirst({ select: { id: true } }),
     db.task.findFirst({ select: { checklist: true } }),
+    db.taskAttachment.findFirst({ select: { id: true } }),
   ]);
 }

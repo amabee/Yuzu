@@ -54,6 +54,10 @@ function useLiveSync(boardId: string | undefined, principalId: string) {
             { cancelRefetch: false },
           ),
           queryClient.invalidateQueries(
+            { queryKey: ["principal", principalId, "task-files"] },
+            { cancelRefetch: false },
+          ),
+          queryClient.invalidateQueries(
             { queryKey: ["principal", principalId, "notifications"] },
             { cancelRefetch: false },
           ),

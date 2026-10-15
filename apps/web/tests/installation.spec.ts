@@ -1,5 +1,7 @@
 import { test as base, expect } from "@playwright/test";
 import { SMTPServer } from "smtp-server";
+import { readdir } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { createRecordId, getDatabase } from "@yuzu/database";
 import { upgradeRecordIds } from "@yuzu/database/upgrade-ids";
 import type { Page } from "@playwright/test";
@@ -1650,7 +1652,7 @@ test("appearance writes reject members, malformed themes, cross-origin requests 
   await page.goto("/settings/appearance");
   await expect(
     page.getByRole("heading", {
-      name: "Let's get you back to your workspace.",
+      name: "You don't have access",
       exact: true,
     }),
   ).toBeVisible();
@@ -4086,6 +4088,393 @@ test("page access shows forbidden and expired-session screens while preserving A
     ).toBeVisible();
   } finally {
     await visitor.close();
+    await team.close();
+  }
+});
+
+async function postFile(
+  page: Page,
+  taskId: string,
+  fileName = "notes.txt",
+  content = Buffer.from("Yuzu task notes"),
+  uploadKey = createRecordId(),
+  mime = "text/plain",
+  origin = "http://127.0.0.1:3100",
+) {
+  return page.request.post(`/api/v1/attachments?taskId=${taskId}`, {
+    headers: {
+      origin,
+      "Content-Type": mime,
+      "X-Yuzu-File-Name": encodeURIComponent(fileName),
+      "X-Yuzu-Upload-Key": uploadKey,
+    },
+    data: content,
+  });
+}
+const removeFile = (page: Page, id: string) =>
+  page.request.delete(`/api/v1/attachments/${id}`, {
+    headers: { origin: "http://127.0.0.1:3100" },
+    data: {},
+  });
+
+test("attachments enforce scope, editor/manager ownership, policy, retry identity and archive preservation", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  const anonymous = await browser.newContext();
+  try {
+    const made = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Private documents",
+      assigneeIds: [team.author.id],
+    });
+    expect(made.status()).toBe(200);
+    const taskId = (await team.state()).tasks[0].id;
+    expect((await team.configure()).status()).toBe(200);
+    const key = createRecordId();
+    const uploads = await Promise.all([
+      postFile(page, taskId, "owner.txt", Buffer.from("Owner document"), key),
+      postFile(page, taskId, "owner.txt", Buffer.from("Owner document"), key),
+    ]);
+    for (const response of uploads) expect(response.status()).toBe(201);
+    const fileId = (await uploads[0].json()).data.id;
+    expect((await uploads[1].json()).data.id).toBe(fileId);
+    expect((await team.state()).tasks[0].revision).toBe(1);
+    expect((await team.state()).pendingApprovals).toHaveLength(0);
+    expect(
+      await getDatabase().boardEvent.count({
+        where: { subjectId: fileId, action: "Uploaded task attachment" },
+      }),
+    ).toBe(1);
+    expect(
+      (
+        await postFile(
+          page,
+          taskId,
+          "owner.txt",
+          Buffer.from("Different bytes"),
+          key,
+        )
+      ).status(),
+    ).toBe(409);
+    expect((await postFile(team.backup.page, taskId)).status()).toBe(403);
+    expect((await removeFile(team.author.page, fileId)).status()).toBe(403);
+    const own = await postFile(team.author.page, taskId, "author.txt");
+    expect(own.status()).toBe(201);
+    const ownId = (await own.json()).data.id;
+    expect((await removeFile(team.author.page, ownId)).status()).toBe(200);
+    expect((await removeFile(team.author.page, ownId)).status()).toBe(200);
+    expect(
+      await getDatabase().boardEvent.count({
+        where: { subjectId: ownId, action: "Removed task attachment" },
+      }),
+    ).toBe(1);
+    expect(
+      (
+        await team.author.page.request.get(`/api/v1/attachments/${ownId}`)
+      ).status(),
+    ).toBe(404);
+    const downloaded = await team.backup.page.request.get(
+      `/api/v1/attachments/${fileId}`,
+    );
+    expect(downloaded.status()).toBe(200);
+    expect((await downloaded.body()).toString()).toBe("Owner document");
+    expect(downloaded.headers()["content-disposition"]).toContain(
+      "attachment;",
+    );
+    expect(downloaded.headers()["x-content-type-options"]).toBe("nosniff");
+    expect(downloaded.headers()["cache-control"]).toContain("no-store");
+    expect(
+      (
+        await anonymous.request.get(
+          `http://127.0.0.1:3100/api/v1/attachments/${fileId}`,
+        )
+      ).status(),
+    ).toBe(401);
+    const list = (
+      await (
+        await team.backup.page.request.get(
+          `/api/v1/attachments?taskId=${taskId}`,
+        )
+      ).json()
+    ).data;
+    expect(list.canUpload).toBe(false);
+    expect(list.maxSizeBytes).toBe(50_000_000);
+    expect(list.files[0].canRemove).toBe(false);
+    expect(list.files[0].storageKey).toBeUndefined();
+    expect(
+      (
+        await postFile(
+          page,
+          taskId,
+          "page.html",
+          Buffer.from("<html></html>"),
+          createRecordId(),
+          "text/html",
+        )
+      ).status(),
+    ).toBe(415);
+    expect(
+      (
+        await postFile(
+          page,
+          taskId,
+          "fake.png",
+          Buffer.from("not PNG"),
+          createRecordId(),
+          "image/png",
+        )
+      ).status(),
+    ).toBe(415);
+    expect(
+      (
+        await postFile(
+          page,
+          taskId,
+          "notes.txt",
+          Buffer.from("wrong origin"),
+          createRecordId(),
+          "text/plain",
+          "https://elsewhere.test",
+        )
+      ).status(),
+    ).toBe(403);
+    await getDatabase().installationSettings.update({
+      where: { id: "installation" },
+      data: { maxAttachmentSizeBytes: 32 },
+    });
+    expect(
+      (
+        await postFile(page, taskId, "large.txt", Buffer.alloc(33, 65))
+      ).status(),
+    ).toBe(413);
+    expect(
+      (
+        await postFile(page, taskId, "boundary.txt", Buffer.alloc(32, 65))
+      ).status(),
+    ).toBe(201);
+    await getDatabase().installationSettings.update({
+      where: { id: "installation" },
+      data: { allowedAttachmentMimeTypes: ["application/pdf"] },
+    });
+    expect((await postFile(page, taskId)).status()).toBe(415);
+    await getDatabase().workspaceMember.deleteMany({
+      where: { userId: team.backup.id, workspaceId: team.workspaceId },
+    });
+    expect(
+      (
+        await team.backup.page.request.get(`/api/v1/attachments/${fileId}`)
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await team.backup.page.request.get(
+          `/api/v1/attachments?taskId=${taskId}`,
+        )
+      ).status(),
+    ).toBe(404);
+    expect(
+      (await postBoard(page, "archive", { taskId, revision: 1 })).status(),
+    ).toBe(200);
+    expect(
+      (await page.request.get(`/api/v1/attachments/${fileId}`)).status(),
+    ).toBe(200);
+    expect((await removeFile(page, fileId)).status()).toBe(409);
+    expect((await postFile(page, taskId)).status()).toBe(409);
+    expect(
+      (await postBoard(page, "restore", { taskId, revision: 2 })).status(),
+    ).toBe(200);
+    expect((await removeFile(page, fileId)).status()).toBe(200);
+    expect((await team.state()).tasks[0].attachmentCount).toBe(1);
+    await getDatabase().installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: true },
+    });
+    expect((await postFile(page, taskId)).status()).toBe(503);
+  } finally {
+    await anonymous.close();
+    await team.close();
+  }
+});
+
+test("Files tab uploads and downloads, synchronizes across users, and confirms removal", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    expect(
+      (
+        await postBoard(page, "create-task", {
+          boardId: team.boardId,
+          createKey: createRecordId(),
+          name: "Release references",
+          assigneeIds: [team.author.id],
+        })
+      ).status(),
+    ).toBe(200);
+    for (const actor of [page, team.author.page]) {
+      await actor.goto(`/boards/${team.boardId}`);
+      await actor
+        .getByRole("button", { name: "Release references", exact: true })
+        .click();
+      await actor.getByRole("tab", { name: /Files/ }).click();
+      await expect(
+        actor.getByText("No files attached yet", { exact: true }),
+      ).toBeVisible();
+    }
+    await team.author.page
+      .getByLabel("Choose a file", { exact: true })
+      .setInputFiles({
+        name: "Release notes.txt",
+        mimeType: "text/plain",
+        buffer: Buffer.from("Approved release references"),
+      });
+    await team.author.page
+      .getByRole("button", { name: "Upload file", exact: true })
+      .click();
+    await expect(
+      team.author.page.getByRole("button", {
+        name: "Download Release notes.txt",
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Download Release notes.txt" }),
+    ).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("tab", { name: /Files 1/ })).toBeVisible();
+    const download = page.waitForEvent("download");
+    await page
+      .getByRole("button", { name: "Download Release notes.txt" })
+      .click();
+    expect((await download).suggestedFilename()).toBe("Release notes.txt");
+    await expect(page.locator("#nprogress")).toHaveCount(0);
+    await page.screenshot({
+      path: "../../artifacts/phase-3/task-files-desktop.png",
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: "../../artifacts/phase-3/task-files-mobile.png",
+      fullPage: true,
+    });
+    await page
+      .getByRole("button", { name: "Remove Release notes.txt", exact: true })
+      .click();
+    await page.getByRole("button", { name: "Keep file", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Download Release notes.txt" }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Remove Release notes.txt", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Remove file", exact: true })
+      .click();
+    await expect(
+      team.author.page.getByText("No files attached yet", { exact: true }),
+    ).toBeVisible({ timeout: 10_000 });
+    await page.getByRole("tab", { name: "Activity", exact: true }).click();
+    await expect(
+      page.getByText("Uploaded task attachment: Release notes.txt", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Removed task attachment: Release notes.txt", {
+        exact: true,
+      }),
+    ).toBeVisible();
+  } finally {
+    await team.close();
+  }
+});
+
+test("uploads recheck task editing permission after a slow transfer and discard rejected bytes", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  let finish!: () => void;
+  const finished = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  let transfer: Promise<Response> | undefined;
+  try {
+    expect(
+      (
+        await postBoard(page, "create-task", {
+          boardId: team.boardId,
+          createKey: createRecordId(),
+          name: "Permission race",
+          assigneeIds: [team.author.id],
+        })
+      ).status(),
+    ).toBe(200);
+    const taskId = (await team.state()).tasks[0].id;
+    const directory = fileURLToPath(
+      new URL("../../../artifacts/e2e-attachments/", import.meta.url),
+    );
+    const before = await readdir(directory).catch(() => [] as string[]);
+    const cookie = (await team.author.context.cookies())
+      .map((item) => `${item.name}=${item.value}`)
+      .join("; ");
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(new TextEncoder().encode("Start"));
+        await finished;
+        controller.enqueue(new TextEncoder().encode("Finish"));
+        controller.close();
+      },
+    });
+    transfer = fetch(
+      `http://127.0.0.1:3100/api/v1/attachments?taskId=${taskId}`,
+      {
+        method: "POST",
+        headers: {
+          cookie,
+          origin: "http://127.0.0.1:3100",
+          "Content-Type": "text/plain",
+          "X-Yuzu-File-Name": "race.txt",
+          "X-Yuzu-Upload-Key": createRecordId(),
+        },
+        body: stream,
+        duplex: "half",
+      } as RequestInit,
+    );
+    await expect
+      .poll(
+        async () =>
+          (await readdir(directory)).filter((name) => !before.includes(name))
+            .length,
+      )
+      .toBe(1);
+    expect(
+      (
+        await postBoard(page, "update", {
+          taskId,
+          revision: 1,
+          changes: { assigneeIds: [] },
+        })
+      ).status(),
+    ).toBe(200);
+    finish();
+    expect((await transfer).status).toBe(403);
+    expect(
+      await getDatabase().taskAttachment.count({ where: { taskId } }),
+    ).toBe(0);
+    expect(
+      (await readdir(directory)).filter((name) => !before.includes(name)),
+    ).toEqual([]);
+  } finally {
+    finish();
+    await transfer?.catch(() => {});
     await team.close();
   }
 });

@@ -14,6 +14,7 @@
     "deploy": "prisma migrate deploy --config prisma7.config.ts",
     "check": "tsx src/check.ts",
     "upgrade:ids": "tsx src/upgrade-ids.ts",
+    "attachments:cleanup": "tsx src/cleanup-attachments.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
