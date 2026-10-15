@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { useOffline } from "@/hooks/use-offline";
 import { Dialog } from "radix-ui";
 import { useRouter } from "next/navigation";
 import {
@@ -15,62 +16,22 @@ import {
 
 export function ServiceStatusRuntime() {
   const router = useRouter();
-  const [offline, setOffline] = useState(false);
+  const { isOffline: offline, isChecking, retry } = useOffline();
   const [maintenance, setMaintenance] = useState(false);
   const [retryAt, setRetryAt] = useState<number | null>(null);
   const [checking, setChecking] = useState(false);
-  const probing = useRef(false);
-  const checkConnection = useCallback(async () => {
-    if (probing.current) return;
-    probing.current = true;
-    setChecking(true);
-    try {
-      const response = await fetch("/api/health/ready", {
-        cache: "no-store",
-        signal: AbortSignal.timeout(5000),
-      });
-      setOffline(!response.ok);
-    } catch {
-      setOffline(true);
-    } finally {
-      probing.current = false;
-      setChecking(false);
-    }
-  }, []);
-
   useEffect(() => {
-    const disconnected = () => setOffline(true);
-    const reconnected = () => {
-      void checkConnection();
-    };
     const receive = (event: Event) => {
       const signal = (event as CustomEvent<ServiceStatusSignal>).detail;
       if (signal.kind === "rate-limited")
         setRetryAt((previous) => Math.max(previous ?? 0, signal.retryAt));
       else if (signal.kind === "maintenance") setMaintenance(true);
-      else void checkConnection();
     };
-    window.addEventListener("offline", disconnected);
-    window.addEventListener("online", reconnected);
     window.addEventListener(SERVICE_STATUS_EVENT, receive);
-    const initialCheck = window.setTimeout(() => {
-      if (!navigator.onLine) void checkConnection();
-    }, 0);
     return () => {
-      window.clearTimeout(initialCheck);
-      window.removeEventListener("offline", disconnected);
-      window.removeEventListener("online", reconnected);
       window.removeEventListener(SERVICE_STATUS_EVENT, receive);
     };
-  }, [checkConnection]);
-
-  useEffect(() => {
-    if (!offline) return;
-    const timer = window.setInterval(() => {
-      void checkConnection();
-    }, 5000);
-    return () => window.clearInterval(timer);
-  }, [offline, checkConnection]);
+  }, []);
 
   async function checkMaintenance() {
     setChecking(true);
@@ -84,7 +45,7 @@ export function ServiceStatusRuntime() {
         router.refresh();
       }
     } catch {
-      setOffline(true);
+      await retry();
     } finally {
       setChecking(false);
     }
@@ -109,10 +70,7 @@ export function ServiceStatusRuntime() {
                 : "Request limit reached"}
           </Dialog.Title>
           {offline ? (
-            <OfflineScreen
-              checking={checking}
-              onRetry={() => void checkConnection()}
-            />
+            <OfflineScreen checking={isChecking} onRetry={() => void retry()} />
           ) : maintenance ? (
             <MaintenanceScreen
               checking={checking}

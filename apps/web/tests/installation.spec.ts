@@ -3906,6 +3906,29 @@ test("service recovery preserves form drafts through rate limits and offline rec
   expect(maintenanceSubmissions).toBe(1);
 });
 
+test("standalone offline recovery shares one server probe and returns to the workspace", async ({
+  page,
+}) => {
+  await readyTeam(page);
+  await page.goto("/offline");
+  await expect(
+    page.getByRole("heading", { name: "No connection" }),
+  ).toBeVisible();
+  let probes = 0;
+  await page.route("**/api/health/ready", (route) => {
+    probes++;
+    return route.continue();
+  });
+  await page
+    .getByRole("button", { name: "Retry connection", exact: true })
+    .click();
+  await expect(page).toHaveURL("http://127.0.0.1:3100/");
+  await expect(
+    page.getByRole("heading", { name: "Good work starts here." }),
+  ).toBeVisible();
+  expect(probes).toBe(1);
+});
+
 test("maintenance routes members to recovery, blocks API access, and keeps administrator access available", async ({
   page,
   browser,
