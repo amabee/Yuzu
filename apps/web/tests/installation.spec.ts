@@ -3520,6 +3520,42 @@ test("Yuzu toast design uses citrus assets, accessible actions, progress, dismis
   });
 });
 
+test("toast dismissal survives window blur and previous manual dismissal while loading stays visible", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await readyTeam(page);
+  await page.goto("/design/toasts");
+  await page.getByLabel("Toast duration", { exact: true }).selectOption("2000");
+  const toast = page.locator('[data-slot="board-notification"]');
+  await page.getByRole("button", { name: "Show success", exact: true }).click();
+  await toast
+    .getByRole("button", { name: "Dismiss notification", exact: true })
+    .click();
+  await expect(toast).toHaveCount(0);
+
+  for (const kind of ["info", "success", "warning", "error", "neutral"]) {
+    await page
+      .getByRole("button", { name: `Show ${kind}`, exact: true })
+      .click();
+    await expect(toast).toBeVisible();
+    await page.mouse.move(0, 0);
+    // Radix pauses on window blur; ordinary toasts must still expire.
+    await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+    await expect(toast).toHaveCount(0, { timeout: 5000 });
+  }
+
+  await page.getByRole("button", { name: "Show loading", exact: true }).click();
+  await expect(toast).toBeVisible();
+  await page.mouse.move(0, 0);
+  await page.waitForTimeout(5500);
+  await expect(toast).toBeVisible();
+  await page
+    .getByRole("button", { name: "Advance progress", exact: true })
+    .click();
+  await expect(toast.getByRole("progressbar")).toHaveAttribute("value", "75");
+});
+
 test("boards sync across people, preserve drafts and recover concurrent non-overlapping saves", async ({
   page,
   browser,
