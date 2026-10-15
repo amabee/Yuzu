@@ -1,3 +1,4 @@
+import { savedViewSchema } from "@/lib/saved-view-contract";
 import {
   createRecordId,
   getDatabase,
@@ -387,7 +388,7 @@ export async function boardState(
   boardId: string,
   headers: Headers,
 ): Promise<BoardState> {
-  const { user } = await requireIdentity(headers);
+  const { user, settings } = await requireIdentity(headers);
   return db().$transaction(async (tx) => {
     const context = await access(tx, user.id, boardId);
     const tasks = await tx.task.findMany({
@@ -433,7 +434,24 @@ export async function boardState(
       },
       orderBy: { createdAt: "asc" },
     });
+    const savedViews = await tx.savedBoardView.findMany({
+      where: { boardId, OR: [{ ownerId: user.id }, { visibility: "SHARED" }] },
+      orderBy: [{ name: "asc" }, { id: "asc" }],
+    });
+    const selection = await tx.boardViewSelection.findUnique({
+      where: { boardId_userId: { boardId, userId: user.id } },
+    });
     return {
+      calendarDate: new Intl.DateTimeFormat("en-CA", {
+        timeZone: settings.timezone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date()),
+      savedViews: savedViews.map((view) => savedViewSchema.parse(view)),
+      selectedViewId: savedViews.some((view) => view.id === selection?.viewId)
+        ? selection!.viewId
+        : null,
       boardId,
       approvalPolicy: policy,
       pendingApprovals: visiblePending.map((proposal) => ({

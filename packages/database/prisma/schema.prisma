@@ -53,6 +53,8 @@ model User {
   role                    String                @default("MEMBER")
   createdAt               DateTime              @default(now())
   updatedAt               DateTime              @updatedAt
+  savedBoardViews         SavedBoardView[]
+  boardViewSelections     BoardViewSelection[]
   sessions                Session[]
   accounts                Account[]
   installation            InstallationSettings?
@@ -206,6 +208,8 @@ model Board {
   approvalPolicy BoardApprovalPolicy?
   proposals      BoardProposal[]
   notifications  Notification[]
+  savedViews     SavedBoardView[]
+  viewSelections BoardViewSelection[]
   tasks          Task[]
   columns        BoardColumn[]
   groups         BoardGroup[]
@@ -510,4 +514,33 @@ model Notification {
   @@unique([recipientId, eventKey])
   @@index([recipientId, readAt, id])
   @@index([boardId])
+}
+
+model SavedBoardView {
+  id         String               @id @default(uuid(7))
+  boardId    String
+  board      Board                @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  ownerId    String
+  owner      User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name       String
+  visibility String               @default("PERSONAL")
+  config     Json
+  revision   Int                  @default(1)
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
+  selections BoardViewSelection[]
+
+  @@index([boardId, ownerId])
+}
+
+model BoardViewSelection {
+  boardId String
+  board   Board           @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  userId  String
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  viewId  String?
+  view    SavedBoardView? @relation(fields: [viewId], references: [id], onDelete: SetNull)
+
+  @@id([boardId, userId])
+  @@index([viewId])
 }

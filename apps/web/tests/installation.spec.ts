@@ -1,3 +1,4 @@
+import { defaultViewConfig } from "../src/lib/saved-view-contract";
 import { test as base, expect } from "@playwright/test";
 import { SMTPServer } from "smtp-server";
 import { readdir, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -1854,7 +1855,9 @@ test("reference workspace search, board lanes and details use saved structure", 
   ).toBeVisible();
   await expect(page.locator(".board-lane")).toHaveCount(3);
   await page.getByRole("button", { name: "Filter", exact: true }).click();
-  await page.getByLabel("Filter board status").selectOption("In progress");
+  await page
+    .getByLabel("Filter board status")
+    .selectOption({ label: "In progress" });
   await expect(page.locator(".board-lane")).toHaveCount(1);
   await page.getByRole("button", { name: "Clear filter" }).click();
   await expect(page.locator(".board-lane")).toHaveCount(3);
@@ -6920,6 +6923,435 @@ test("inbox pagination and concurrent read controls preserve new arrivals and en
         })
       ).status(),
     ).toBe(200);
+  } finally {
+    await team.close();
+  }
+});
+
+test("personal saved views persist filters and layout, update with revision checks and remove safely", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(90_000);
+  const team = await approvalTeam(page, browser);
+  try {
+    const state = await team.state();
+    const status = state.fields.find(
+      (field: { key: string }) => field.key === "status",
+    ).options[0];
+    for (const [name, priority, assigneeIds] of [
+      ["Release work", "HIGH", [team.ownerId]],
+      ["Other work", "LOW", []],
+    ] as const) {
+      expect(
+        (
+          await postBoard(page, "create-task", {
+            boardId: team.boardId,
+            createKey: createRecordId(),
+            name,
+            priority,
+            assigneeIds,
+            statusId: status.id,
+          })
+        ).status(),
+      ).toBe(200);
+    }
+    await page.goto(`/boards/${team.boardId}`);
+    await page.getByRole("button", { name: "Filter", exact: true }).click();
+    await page.getByLabel("Filter board status").selectOption(status.id);
+    await page.getByLabel("Search tasks", { exact: true }).fill("Release");
+    await page.getByLabel("Filter task assignee").selectOption("me");
+    await page.getByLabel("Filter task priority").selectOption("HIGH");
+    await page.getByLabel("Filter task due date").selectOption("none");
+    await page.getByLabel("Sort tasks", { exact: true }).selectOption("name");
+    await page.getByRole("button", { name: "Table", exact: true }).click();
+    await page.getByRole("button", { name: "Save view", exact: true }).click();
+    await page.getByLabel("View name", { exact: true }).fill("My release work");
+    await page
+      .getByRole("button", { name: "Save new view", exact: true })
+      .click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(
+      page.locator('[data-slot="board-notification"]'),
+    ).toContainText("View saved");
+    const saved = (await team.state()).savedViews[0];
+    expect(saved.config).toMatchObject({
+      layout: "table",
+      statusId: status.id,
+      assignee: "me",
+      priority: "HIGH",
+      due: "none",
+      sort: "name",
+      search: "Release",
+    });
+    await page.reload();
+    await expect(page.getByLabel("Saved board view")).toHaveValue(saved.id);
+    await expect(
+      page.getByRole("button", { name: "Table", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await expect(
+      page.getByRole("button", { name: "Release work", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Other work", exact: true }),
+    ).toHaveCount(0);
+    await page.getByRole("button", { name: "Filter", exact: true }).click();
+    await expect(page.getByLabel("Search tasks", { exact: true })).toHaveValue(
+      "Release",
+    );
+    await page.getByLabel("Search tasks", { exact: true }).fill("No match");
+    await expect(
+      page.getByText("Unsaved changes", { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Reset filters", exact: true })
+      .click();
+    await expect(page.getByLabel("Search tasks", { exact: true })).toHaveValue(
+      "Release",
+    );
+    await page
+      .getByRole("button", { name: "Manage view", exact: true })
+      .click();
+    await page.getByLabel("View name", { exact: true }).fill("Release focus");
+    await page
+      .getByRole("button", { name: "Update view", exact: true })
+      .click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect((await team.state()).savedViews[0]).toMatchObject({
+      name: "Release focus",
+      revision: 2,
+    });
+    await page.screenshot({
+      path: "../../artifacts/phase-3/saved-view-desktop.png",
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    expect(
+      (await page.getByLabel("Saved board view").boundingBox())!.width,
+    ).toBeGreaterThan(150);
+    await page.screenshot({
+      path: "../../artifacts/phase-3/saved-view-mobile.png",
+      fullPage: true,
+    });
+    await page
+      .getByRole("button", { name: "Manage view", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Remove view", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Remove saved view?", exact: true }),
+    ).toBeVisible();
+    expect((await team.state()).savedViews).toHaveLength(1);
+    await page
+      .getByRole("button", { name: "Confirm remove view", exact: true })
+      .click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.getByLabel("Saved board view")).toHaveValue("");
+    expect((await team.state()).tasks).toHaveLength(2);
+    await page.reload();
+    await expect(page.getByLabel("Saved board view")).toHaveValue("");
+  } finally {
+    await team.close();
+  }
+});
+
+test("saved views enforce privacy, shared management, live updates and current reference validation", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(90_000);
+  const team = await approvalTeam(page, browser);
+  const member = team.author.page;
+  try {
+    const base = {
+      boardId: team.boardId,
+      id: createRecordId(),
+      revision: 0,
+      name: "Private focus",
+      visibility: "PERSONAL",
+      config: { ...defaultViewConfig, assignee: "me" },
+    };
+    expect((await postBoard(member, "save-view", base)).status()).toBe(200);
+    expect((await postBoard(member, "save-view", base)).status()).toBe(200);
+    expect((await team.state()).savedViews).toHaveLength(0);
+    expect(
+      (
+        await postBoard(page, "select-view", {
+          boardId: team.boardId,
+          viewId: base.id,
+        })
+      ).status(),
+    ).toBe(404);
+    expect(
+      (await postBoard(page, "save-view", { ...base, revision: 1 })).status(),
+    ).toBe(403);
+    expect(
+      (
+        await postBoard(page, "remove-view", {
+          boardId: team.boardId,
+          id: base.id,
+          revision: 1,
+        })
+      ).status(),
+    ).toBe(403);
+    expect(
+      (
+        await postBoard(member, "save-view", {
+          ...base,
+          id: createRecordId(),
+          visibility: "SHARED",
+        })
+      ).status(),
+    ).toBe(403);
+    await member.goto(`/boards/${team.boardId}`);
+    const sameUserTab = await team.author.context.newPage();
+    await sameUserTab.goto(`/boards/${team.boardId}`);
+    await expect(sameUserTab.locator(".board-surface")).toHaveAttribute(
+      "data-connection",
+      "live",
+    );
+    const secondPrivate = {
+      ...base,
+      id: createRecordId(),
+      name: "Second private view",
+    };
+    expect((await postBoard(member, "save-view", secondPrivate)).status()).toBe(
+      200,
+    );
+    await expect(
+      sameUserTab
+        .getByLabel("Saved board view")
+        .locator("option")
+        .filter({ hasText: "Second private view" }),
+    ).toHaveCount(1, { timeout: 10_000 });
+    expect((await team.state()).savedViews).toHaveLength(0);
+    const shared = {
+      ...base,
+      id: createRecordId(),
+      visibility: "SHARED",
+      name: "Team focus",
+      config: { ...defaultViewConfig, layout: "table" },
+    };
+    expect((await postBoard(page, "save-view", shared)).status()).toBe(200);
+    await expect(
+      member
+        .getByLabel("Saved board view")
+        .locator("option")
+        .filter({ hasText: "Team focus" }),
+    ).toHaveCount(1, { timeout: 10_000 });
+    await expect(member.getByLabel("Saved board view")).toHaveValue(base.id);
+    await member.getByLabel("Saved board view").selectOption(shared.id);
+    await expect(
+      member.getByRole("button", { name: "Table", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await expect(
+      member.getByRole("button", { name: "Manage view", exact: true }),
+    ).toHaveCount(0);
+    expect(
+      (
+        await postBoard(member, "save-view", { ...shared, revision: 1 })
+      ).status(),
+    ).toBe(403);
+    expect(
+      (
+        await postBoard(member, "remove-view", {
+          boardId: team.boardId,
+          id: shared.id,
+          revision: 1,
+        })
+      ).status(),
+    ).toBe(403);
+    const results = await Promise.all([
+      postBoard(page, "save-view", {
+        ...shared,
+        revision: 1,
+        name: "First rename",
+      }),
+      postBoard(page, "save-view", {
+        ...shared,
+        revision: 1,
+        name: "Second rename",
+      }),
+    ]);
+    expect(results.map((result) => result.status()).sort()).toEqual([200, 409]);
+    await expect(
+      member.getByRole("button", { name: "Reload saved view", exact: true }),
+    ).toBeVisible({ timeout: 10_000 });
+    await member
+      .getByRole("button", { name: "Reload saved view", exact: true })
+      .click();
+    await expect(
+      member.getByRole("button", { name: "Reload saved view", exact: true }),
+    ).toHaveCount(0);
+    expect(
+      (
+        await postBoard(page, "remove-view", {
+          boardId: team.boardId,
+          id: shared.id,
+          revision: 1,
+        })
+      ).status(),
+    ).toBe(409);
+    expect(
+      (
+        await postBoard(page, "save-view", {
+          ...shared,
+          id: createRecordId(),
+          config: { ...defaultViewConfig, statusId: "not-a-status" },
+        })
+      ).status(),
+    ).toBe(422);
+    expect(
+      (
+        await postBoard(page, "save-view", {
+          ...shared,
+          id: createRecordId(),
+          config: { ...defaultViewConfig, groupId: createRecordId() },
+        })
+      ).status(),
+    ).toBe(422);
+    const foreignBoard = await getDatabase().board.findFirstOrThrow({
+      where: { name: "Restricted project" },
+    });
+    expect(
+      (
+        await postBoard(member, "select-view", {
+          boardId: foreignBoard.id,
+          viewId: shared.id,
+        })
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await postBoard(page, "select-view", {
+          boardId: foreignBoard.id,
+          viewId: shared.id,
+        })
+      ).status(),
+    ).toBe(404);
+    // Removing a shared view clears everyone else's persisted selection too.
+    expect(
+      (
+        await postBoard(page, "remove-view", {
+          boardId: team.boardId,
+          id: shared.id,
+          revision: 2,
+        })
+      ).status(),
+    ).toBe(200);
+    await member.reload();
+    await expect(member.getByLabel("Saved board view")).toHaveValue("");
+    expect(
+      await getDatabase().boardViewSelection.findUnique({
+        where: {
+          boardId_userId: { boardId: team.boardId, userId: team.author.id },
+        },
+      }),
+    ).toMatchObject({ viewId: null });
+    await getDatabase().workspaceMember.delete({
+      where: {
+        workspaceId_userId: {
+          workspaceId: team.workspaceId,
+          userId: team.author.id,
+        },
+      },
+    });
+    expect(
+      (
+        await postBoard(member, "select-view", {
+          boardId: team.boardId,
+          viewId: base.id,
+        })
+      ).status(),
+    ).toBe(404);
+  } finally {
+    await team.close();
+  }
+});
+
+test("saved status IDs survive renames and removed references stay explicit", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const state = await team.state();
+    const field = state.fields.find(
+      (field: { key: string }) => field.key === "status",
+    );
+    const option = field.options[0];
+    const view = {
+      boardId: team.boardId,
+      id: createRecordId(),
+      revision: 0,
+      name: "Stable status",
+      visibility: "PERSONAL",
+      config: { ...defaultViewConfig, statusId: option.id },
+    };
+    expect((await postBoard(page, "save-view", view)).status()).toBe(200);
+    expect(
+      (
+        await postBoard(page, "configure-field", {
+          boardId: team.boardId,
+          fieldId: field.id,
+          version: field.version,
+          name: field.name,
+          options: field.options.map((item: { id: string; label: string }) => ({
+            ...item,
+            label: item.id === option.id ? "Renamed status" : item.label,
+          })),
+        })
+      ).status(),
+    ).toBe(200);
+    await page.goto(`/boards/${team.boardId}`);
+    await page.getByRole("button", { name: "Filter", exact: true }).click();
+    await expect(page.getByLabel("Filter board status")).toHaveValue(option.id);
+    await expect(page.locator(".board-lane")).toHaveCount(1);
+    await expect(page.locator(".board-lane")).toContainText("Renamed status");
+    const renamed = (await team.state()).fields.find(
+      (item: { id: string }) => item.id === field.id,
+    );
+    expect(
+      (
+        await postBoard(page, "configure-field", {
+          boardId: team.boardId,
+          fieldId: field.id,
+          version: renamed.version,
+          name: field.name,
+          options: renamed.options.filter(
+            (item: { id: string }) => item.id !== option.id,
+          ),
+        })
+      ).status(),
+    ).toBe(200);
+    await expect(
+      page.getByText("This view uses a removed group or status.", {
+        exact: false,
+      }),
+    ).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator(".board-lane")).toHaveCount(0);
+    expect(
+      (await postBoard(page, "save-view", { ...view, revision: 1 })).status(),
+    ).toBe(422);
+    await getDatabase().installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: true },
+    });
+    expect(
+      (
+        await postBoard(page, "save-view", {
+          ...view,
+          id: createRecordId(),
+          config: defaultViewConfig,
+        })
+      ).status(),
+    ).toBe(503);
   } finally {
     await team.close();
   }

@@ -1,3 +1,4 @@
+import { savedViewSchema, type SavedView } from "./saved-view-contract";
 import { z } from "zod";
 import { recordId, personId } from "./id-contract";
 export { recordId, personId } from "./id-contract";
@@ -184,6 +185,9 @@ export type BoardTask = {
   activity: { id: string; action: string; actor: string; createdAt: string }[];
 };
 export type BoardState = {
+  calendarDate?: string;
+  savedViews?: SavedView[];
+  selectedViewId?: string | null;
   boardId: string;
   canManage: boolean;
   canManageManagers: boolean;
@@ -198,6 +202,9 @@ export type BoardState = {
 };
 
 export const boardStateSchema = z.object({
+  calendarDate: dateOnly.optional(),
+  savedViews: z.array(savedViewSchema).default([]),
+  selectedViewId: recordId.nullable().default(null),
   boardId: recordId,
   approvalPolicy: approvalPolicySchema,
   pendingApprovals: z.array(pendingApprovalSchema),

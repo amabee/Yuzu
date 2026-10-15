@@ -1,4 +1,11 @@
 "use client";
+import { SavedViewControls } from "./saved-view-controls";
+import {
+  defaultViewConfig,
+  dueMatches,
+  type ViewConfig,
+  type SavedView,
+} from "@/lib/saved-view-contract";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, apiRequest } from "@/lib/api-client";
 import {
@@ -131,19 +138,45 @@ export function BoardSurface({
   const fields = state.fields;
   const savedStatuses =
     state.fields.find((field) => field.key === "status")?.options ?? [];
-  const [archived, setArchived] = useState(
-    Boolean(
-      initialState.tasks.find((task) => task.id === initialTaskId)?.archivedAt,
-    ),
+  const initialView =
+    initialState.savedViews?.find(
+      (view) => view.id === initialState.selectedViewId,
+    ) ?? null;
+  const [activeView, setActiveView] = useState<SavedView | null>(initialView);
+  const [viewConfig, setViewConfig] = useState<ViewConfig>({
+    ...(initialView?.config ?? defaultViewConfig),
+    ...(initialTaskId
+      ? {
+          archived: Boolean(
+            initialState.tasks.find((task) => task.id === initialTaskId)
+              ?.archivedAt,
+          ),
+        }
+      : {}),
+  });
+  const configureView = <K extends keyof ViewConfig>(
+    key: K,
+    value: ViewConfig[K],
+  ) => setViewConfig((current) => ({ ...current, [key]: value }));
+  const archived = viewConfig.archived;
+  const setArchived = (value: boolean) => configureView("archived", value);
+  const search = viewConfig.search;
+  const setSearch = (value: string) => configureView("search", value);
+  const activeGroupFilter = viewConfig.groupId ?? "";
+  const setGroupFilter = (value: string) =>
+    configureView("groupId", value || null);
+  const sort = viewConfig.sort;
+  const setSort = (value: ViewConfig["sort"]) => configureView("sort", value);
+  const statusFilter = viewConfig.statusId ?? "";
+  const setStatusFilter = (value: string) =>
+    configureView("statusId", value || null);
+  const missingReferences = Boolean(
+    (activeGroupFilter &&
+      !state.groups.some((group) => group.id === activeGroupFilter)) ||
+    (statusFilter &&
+      statusFilter !== "__none__" &&
+      !savedStatuses.some((status) => status.id === statusFilter)),
   );
-  const [search, setSearch] = useState("");
-  const [groupFilter, setGroupFilter] = useState("");
-  const activeGroupFilter = state.groups.some(
-    (group) => group.id === groupFilter,
-  )
-    ? groupFilter
-    : "";
-  const [sort, setSort] = useState("created");
   const [selectedTab, setSelectedTab] = useState<"details" | "comments">(
     initialCommentsTab ? "comments" : "details",
   );
@@ -157,6 +190,23 @@ export function BoardSurface({
     .filter(
       (task) =>
         Boolean(task.archivedAt) === archived &&
+        (!statusFilter ||
+          (statusFilter === "__none__"
+            ? !task.statusId
+            : task.statusId === statusFilter)) &&
+        (viewConfig.assignee === "all" ||
+          (viewConfig.assignee === "me"
+            ? task.assigneeIds.includes(state.currentUserId)
+            : !task.assigneeIds.length)) &&
+        (viewConfig.priority === "all" ||
+          task.priority === viewConfig.priority) &&
+        dueMatches(
+          task.dueDate,
+          viewConfig.due,
+          state.calendarDate
+            ? new Date(`${state.calendarDate}T12:00:00`)
+            : new Date(),
+        ) &&
         (!activeGroupFilter || task.groupId === activeGroupFilter) &&
         `${task.name} ${task.description}`
           .toLowerCase()
@@ -178,7 +228,9 @@ export function BoardSurface({
   const statuses = savedStatuses.length
     ? [
         ...savedStatuses.map((option) => option.label),
-        ...(tasks.some((task) => !task.statusId) ? [emptyStatusLabel] : []),
+        ...(statusFilter === "__none__" || tasks.some((task) => !task.statusId)
+          ? [emptyStatusLabel]
+          : []),
       ]
     : initialStatuses;
   const mutation = useMutation({
@@ -373,15 +425,18 @@ export function BoardSurface({
           : "No"
         : String(value);
   };
-  const [view, setView] = useState<"board" | "table">("board");
+  const view = viewConfig.layout;
+  const setView = (value: ViewConfig["layout"]) =>
+    configureView("layout", value);
   const [filterOpen, setFilterOpen] = useState(false);
-  const [requestedStatusFilter, setStatusFilter] = useState("");
-  const statusFilter = statuses.includes(requestedStatusFilter)
-    ? requestedStatusFilter
-    : "";
   const [detailsOpen, setDetailsOpen] = useState(false);
   const visibleStatuses = (statuses.length ? statuses : [group]).filter(
-    (status) => !statusFilter || status === statusFilter,
+    (status) =>
+      !statusFilter ||
+      (statusFilter === "__none__"
+        ? status === emptyStatusLabel
+        : savedStatuses.find((option) => option.id === statusFilter)?.label ===
+          status),
   );
   return (
     <section className="board-surface" data-connection={live.status}>
@@ -389,6 +444,26 @@ export function BoardSurface({
         notice={notice}
         pinnedNotices={Object.values(pendingUploads)}
       />
+      <SavedViewControls
+        views={state.savedViews ?? []}
+        active={activeView}
+        config={viewConfig}
+        userId={state.currentUserId}
+        canManage={state.canManage}
+        boardId={state.boardId}
+        onApply={(view, config) => {
+          setActiveView(view);
+          setViewConfig(config);
+        }}
+        onRefresh={() => query.refetch()}
+        notify={notify}
+      />
+      {missingReferences && (
+        <p role="status" className="mb-3 text-sm text-muted-foreground">
+          This view uses a removed group or status. Choose a current filter and
+          save the view again.
+        </p>
+      )}
       <div className="board-view-tabs" aria-label="Board view">
         <Button
           variant="ghost"
@@ -433,6 +508,10 @@ export function BoardSurface({
             onChange={(event) => setGroupFilter(event.target.value)}
           >
             <option value="">All groups</option>
+            {activeGroupFilter &&
+              !state.groups.some((group) => group.id === activeGroupFilter) && (
+                <option value={activeGroupFilter}>Removed group</option>
+              )}
             {state.groups.map((group) => (
               <option key={group.id} value={group.id}>
                 {group.name}
@@ -447,7 +526,11 @@ export function BoardSurface({
           >
             <SlidersHorizontal size={14} />
             Filter
-            {statusFilter && (
+            {(statusFilter ||
+              search ||
+              viewConfig.assignee !== "all" ||
+              viewConfig.priority !== "all" ||
+              viewConfig.due !== "all") && (
               <span className="size-1.5 rounded-full bg-primary" />
             )}
           </Button>
@@ -513,9 +596,17 @@ export function BoardSurface({
               onChange={(event) => setStatusFilter(event.target.value)}
             >
               <option value="">All statuses</option>
-              {(statuses.length ? statuses : [group]).map((status) => (
-                <option key={status}>{status}</option>
+              {statusFilter &&
+                statusFilter !== "__none__" &&
+                !savedStatuses.some((status) => status.id === statusFilter) && (
+                  <option value={statusFilter}>Removed status</option>
+                )}
+              {savedStatuses.map((status) => (
+                <option key={status.id} value={status.id}>
+                  {status.label}
+                </option>
               ))}
+              <option value="__none__">No status</option>
             </select>
           </label>
           <Input
@@ -523,25 +614,98 @@ export function BoardSurface({
             placeholder="Search tasks…"
             className="max-w-48"
             value={search}
+            maxLength={200}
             onChange={(event) => setSearch(event.target.value)}
           />
           <select
             aria-label="Sort tasks"
             className="task-select w-auto"
             value={sort}
-            onChange={(event) => setSort(event.target.value)}
+            onChange={(event) =>
+              setSort(event.target.value as ViewConfig["sort"])
+            }
           >
             <option value="created">Created order</option>
             <option value="name">Name</option>
             <option value="due">Due date</option>
           </select>
-          {statusFilter && (
+          <label className="grid gap-1 text-xs">
+            Assignee
+            <select
+              aria-label="Filter task assignee"
+              className="task-select"
+              value={viewConfig.assignee}
+              onChange={(event) =>
+                configureView(
+                  "assignee",
+                  event.target.value as ViewConfig["assignee"],
+                )
+              }
+            >
+              <option value="all">Anyone</option>
+              <option value="me">Assigned to me</option>
+              <option value="unassigned">Unassigned</option>
+            </select>
+          </label>
+          <label className="grid gap-1 text-xs">
+            Priority
+            <select
+              aria-label="Filter task priority"
+              className="task-select"
+              value={viewConfig.priority}
+              onChange={(event) =>
+                configureView(
+                  "priority",
+                  event.target.value as ViewConfig["priority"],
+                )
+              }
+            >
+              <option value="all">Any priority</option>
+              {priorityOptions(state).map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1 text-xs">
+            Due date
+            <select
+              aria-label="Filter task due date"
+              className="task-select"
+              value={viewConfig.due}
+              onChange={(event) =>
+                configureView("due", event.target.value as ViewConfig["due"])
+              }
+            >
+              <option value="all">Any date</option>
+              <option value="overdue">Overdue</option>
+              <option value="next-week">Next 7 days</option>
+              <option value="none">No due date</option>
+            </select>
+          </label>
+          {(statusFilter ||
+            activeGroupFilter ||
+            search ||
+            viewConfig.assignee !== "all" ||
+            viewConfig.priority !== "all" ||
+            viewConfig.due !== "all") && (
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setStatusFilter("")}
+              onClick={() =>
+                setViewConfig((current) => ({
+                  ...current,
+                  search: "",
+                  groupId: null,
+                  statusId: null,
+                  assignee: "all",
+                  priority: "all",
+                  due: "all",
+                }))
+              }
             >
-              Clear filter
+              Clear filters
             </Button>
           )}
         </div>
@@ -925,7 +1089,11 @@ export function BoardSurface({
             <tbody>
               {tasks
                 .filter(
-                  (task) => !statusFilter || statusLabel(task) === statusFilter,
+                  (task) =>
+                    !statusFilter ||
+                    (statusFilter === "__none__"
+                      ? !task.statusId
+                      : task.statusId === statusFilter),
                 )
                 .map((task) => (
                   <tr key={task.id} data-task-id={task.id}>

@@ -62,6 +62,7 @@ export default async function BoardPage({
         </div>
       </div>
       <BoardSurface
+        key={board.id}
         initialCommentsTab={(await searchParams).tab === "comments"}
         initialTaskId={
           z
