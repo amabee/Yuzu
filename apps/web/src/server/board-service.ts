@@ -1034,11 +1034,16 @@ export async function manageBoard(
           "INVALID_PRIORITY",
           "Keep all four saved priority options.",
         );
+      if (field.key === "status" && !body.options.length)
+        throw new SetupError(
+          422,
+          "INVALID_OPTIONS",
+          "Keep at least one status option.",
+        );
       if (
         selected &&
-        (!body.options.length ||
-          new Set(body.options.map((option) => option.id)).size !==
-            body.options.length ||
+        (new Set(body.options.map((option) => option.id)).size !==
+          body.options.length ||
           new Set(body.options.map((option) => option.label)).size !==
             body.options.length)
       )

@@ -3,18 +3,18 @@
   <style>
     .leaf-big, .leaf-small {
       transform-box: fill-box;
-      animation: yuzu-toast-leaf-sway 2.8s ease-in-out infinite alternate;
+      animation: yuzu-toast-leaf-sway 4.2s ease-in-out infinite alternate;
       will-change: transform;
     }
     .leaf-big { transform-origin: 100% 100%; }
     .leaf-small {
       transform-origin: 0% 100%;
-      animation-duration: 2.1s;
-      animation-delay: -0.8s;
+      animation-duration: 3.4s;
+      animation-delay: -1.1s;
     }
     @keyframes yuzu-toast-leaf-sway {
-      from { transform: rotate(-10deg); }
-      to { transform: rotate(11deg); }
+      from { transform: rotate(-5deg); }
+      to { transform: rotate(5.5deg); }
     }
     @media (prefers-reduced-motion: reduce) {
       .leaf-big, .leaf-small { animation: none; }

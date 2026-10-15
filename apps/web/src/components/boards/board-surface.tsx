@@ -16,7 +16,7 @@ import { OperationToast, type BoardNotice } from "./operation-toast";
 import { TaskEditor } from "./task-editor";
 import { BoardManagement } from "./board-management";
 import { Input } from "@/components/ui/input";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import Link from "next/link";
 import { needsApproval } from "@/lib/approval-rules";
 import { taskMutationResultSchema } from "@/lib/approval-contract";
@@ -75,6 +75,7 @@ export function BoardSurface({
   info?: BoardInfo;
 }) {
   const [notice, setNotice] = useState<BoardNotice | null>(null);
+  const taskSheetRef = useRef<HTMLDivElement>(null);
   const notify = (message: string, kind: BoardNotice["kind"]) =>
     setNotice({ id: crypto.randomUUID(), message, kind });
   const queryClient = useQueryClient();
@@ -880,6 +881,11 @@ export function BoardSurface({
             <caption className="sr-only">{name} fields</caption>
             <thead>
               <tr>
+                {!fields.length && (
+                  <th scope="col" className="border-b px-5 py-4 font-medium">
+                    Task
+                  </th>
+                )}
                 {fields.map((field) => (
                   <th
                     scope="col"
@@ -889,6 +895,9 @@ export function BoardSurface({
                     {field.name}
                   </th>
                 ))}
+                <th scope="col" className="border-b px-5 py-4 font-medium">
+                  Task checklist
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -1008,12 +1017,37 @@ export function BoardSurface({
                         )}
                       </td>
                     ))}
+                    <td className="border-b px-4 py-3">
+                      {task.checklist.length ? (
+                        <button
+                          type="button"
+                          className="flex items-center gap-2 text-left text-primary"
+                          aria-label={`Open checklist for ${task.name}`}
+                          onClick={() => {
+                            mutation.reset();
+                            setSelectedTab("details");
+                            setSelectedId(task.id);
+                          }}
+                        >
+                          <ListChecks size={15} />
+                          <span>
+                            {task.checklist.filter((item) => item.done).length}/
+                            {task.checklist.length}
+                          </span>
+                          <span className="max-w-48 truncate text-xs text-muted-foreground">
+                            {task.checklist.map((item) => item.text).join(", ")}
+                          </span>
+                        </button>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               {!tasks.length && (
                 <tr>
                   <td
-                    colSpan={Math.max(1, fields.length)}
+                    colSpan={Math.max(1, fields.length) + 1}
                     className="p-12 text-center"
                   >
                     <Columns3 size={26} className="mx-auto mb-4 text-primary" />
@@ -1158,7 +1192,15 @@ export function BoardSurface({
           }
         }}
       >
-        <SheetContent className="board-details-panel task-sheet-panel">
+        <SheetContent
+          ref={taskSheetRef}
+          tabIndex={-1}
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            taskSheetRef.current?.focus();
+          }}
+          className="board-details-panel task-sheet-panel outline-none"
+        >
           <TaskEditor
             key={selected?.id ?? "create"}
             state={state}

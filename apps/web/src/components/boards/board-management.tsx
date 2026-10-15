@@ -232,6 +232,12 @@ function FieldConfiguration({
                   )}
                 </div>
               ))}
+              {!options.length && !coreKeys.includes(field.key) && (
+                <p className="text-xs text-muted-foreground">
+                  No options. Saving clears unused options. To hide this field
+                  and retain its saved values, use Remove field.
+                </p>
+              )}
               <Button
                 type="button"
                 size="sm"

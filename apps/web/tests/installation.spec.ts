@@ -3896,6 +3896,182 @@ async function approvalTeam(
   };
 }
 
+test("board checklist options can be cleared when unused and fields removed without losing task checklists", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const field = await postBoard(page, "field", {
+      boardId: team.boardId,
+      name: "Old checklist",
+      type: "MULTI_SELECT",
+      options: ["Old step"],
+    });
+    const fieldId = (await field.json()).data.id;
+    await page.goto(`/boards/${team.boardId}`);
+    await page
+      .getByRole("button", { name: "Board details", exact: true })
+      .click();
+    const section = page.locator("details").filter({
+      has: page.locator("summary", {
+        hasText: "Old checklist · multi select",
+      }),
+    });
+    await section.locator("summary").click();
+    await section
+      .getByRole("button", { name: "Remove Old step option", exact: true })
+      .click();
+    await section
+      .getByRole("button", { name: "Save field", exact: true })
+      .click();
+    await expect(
+      page.locator('[data-slot="board-notification"]'),
+    ).toContainText("Field saved");
+    let current = await team.state();
+    let saved = current.fields.find(
+      (item: { id: string }) => item.id === fieldId,
+    );
+    expect(saved.options).toEqual([]);
+    const configured = await postBoard(page, "configure-field", {
+      boardId: team.boardId,
+      fieldId,
+      version: saved.version,
+      name: saved.name,
+      options: [{ id: "old", label: "Old step" }],
+    });
+    expect(configured.status()).toBe(200);
+    const made = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Preserve checklist",
+      fieldValues: { [fieldId]: ["old"] },
+      checklist: [
+        { id: createRecordId(), text: "Independent step", done: false },
+      ],
+    });
+    expect(made.status()).toBe(200);
+    current = await team.state();
+    saved = current.fields.find((item: { id: string }) => item.id === fieldId);
+    const clearUsed = await postBoard(page, "configure-field", {
+      boardId: team.boardId,
+      fieldId,
+      version: saved.version,
+      name: saved.name,
+      options: [],
+    });
+    expect(clearUsed.status()).toBe(409);
+    expect((await clearUsed.json()).error.code).toBe("OPTION_IN_USE");
+    expect(
+      (
+        await postBoard(page, "remove-field", {
+          boardId: team.boardId,
+          fieldId,
+          version: saved.version,
+        })
+      ).status(),
+    ).toBe(200);
+    current = await team.state();
+    expect(
+      current.fields.some((item: { id: string }) => item.id === fieldId),
+    ).toBe(false);
+    expect(current.tasks[0].checklist[0].text).toBe("Independent step");
+    expect(
+      await getDatabase().taskFieldValue.count({ where: { fieldId } }),
+    ).toBe(1);
+    const status = current.fields.find(
+      (item: { key: string }) => item.key === "status",
+    );
+    const emptyStatus = await postBoard(page, "configure-field", {
+      boardId: team.boardId,
+      fieldId: status.id,
+      version: status.version,
+      name: status.name,
+      options: [],
+    });
+    expect(emptyStatus.status()).toBe(422);
+    expect((await emptyStatus.json()).error.message).toBe(
+      "Keep at least one status option.",
+    );
+  } finally {
+    await team.close();
+  }
+});
+
+test("task sheet avoids automatic avatar tooltips and table shows live task checklist progress", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const made = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Checklist table task",
+      assigneeIds: [team.author.id],
+      checklist: [{ id: createRecordId(), text: "Review draft", done: false }],
+    });
+    const taskId = (await made.json()).data.taskId;
+    await page.goto(`/boards/${team.boardId}`);
+    await page
+      .getByRole("button", { name: "Checklist table task", exact: true })
+      .click();
+    await expect(page.getByRole("dialog")).toBeFocused();
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("tooltip")).toContainText("Request Author");
+    await page.keyboard.press("Escape");
+    // Hover tooltips still work after deliberately moving onto the avatar.
+    await page
+      .getByRole("dialog")
+      .locator('.task-sheet-metadata [role="img"][aria-label="Request Author"]')
+      .hover();
+    await expect(page.getByRole("tooltip")).toContainText("Request Author");
+    await page.mouse.move(0, 0);
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Close", exact: true })
+      .click();
+    await page.getByRole("button", { name: "Table", exact: true }).click();
+    await expect(
+      page.getByRole("columnheader", { name: "Task checklist", exact: true }),
+    ).toBeVisible();
+    const row = page.locator(`tr[data-task-id="${taskId}"]`);
+    await expect(
+      row.getByRole("button", {
+        name: "Open checklist for Checklist table task",
+        exact: true,
+      }),
+    ).toContainText("0/1");
+    await expect(row).toContainText("Review draft");
+    await row
+      .getByRole("button", {
+        name: "Open checklist for Checklist table task",
+        exact: true,
+      })
+      .click();
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
+    await page
+      .getByRole("checkbox", { name: "Complete checklist item 1", exact: true })
+      .check();
+    await page
+      .getByRole("button", { name: "Save changes", exact: true })
+      .click();
+    await expect(
+      row.getByRole("button", {
+        name: "Open checklist for Checklist table task",
+        exact: true,
+      }),
+    ).toContainText("1/1");
+    await page.screenshot({
+      path: "../../artifacts/checklists/table-progress.png",
+      fullPage: true,
+    });
+  } finally {
+    await team.close();
+  }
+});
+
 test("task checklists belong to each task, save live and disappear from cards when empty", async ({
   page,
   browser,
