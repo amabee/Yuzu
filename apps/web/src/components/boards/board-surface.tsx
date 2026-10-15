@@ -1208,6 +1208,11 @@ export function BoardSurface({
             initialTab={selectedTab}
             syncInterval={live.syncInterval}
             onNotice={notify}
+            onTransferNotice={(update, start) =>
+              setNotice((current) =>
+                start || current?.id === update.id ? update : current,
+              )
+            }
             pending={busy}
             error={mutation.error?.message}
             onSubmit={(input) =>

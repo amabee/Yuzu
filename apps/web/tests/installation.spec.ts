@@ -4121,6 +4121,164 @@ const removeFile = (page: Page, id: string) =>
     data: {},
   });
 
+test("file transfer toasts show pending work and settle on success, cancellation and failure", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(60_000);
+  const team = await approvalTeam(page, browser);
+  let releaseUpload = () => {};
+  let releaseDownload = () => {};
+  try {
+    expect(
+      (
+        await postBoard(page, "create-task", {
+          boardId: team.boardId,
+          createKey: createRecordId(),
+          name: "Transfer feedback",
+        })
+      ).status(),
+    ).toBe(200);
+    await page.goto(`/boards/${team.boardId}`);
+    await page
+      .getByRole("button", { name: "Transfer feedback", exact: true })
+      .click();
+    await page.getByRole("tab", { name: /Files/ }).click();
+    await expect(
+      page.getByText("No files attached yet", { exact: true }),
+    ).toBeVisible();
+    const toast = page.locator('[data-slot="board-notification"]');
+    const uploadPattern = "**/api/v1/attachments?**";
+    const held = new Promise<void>((resolve) => {
+      releaseUpload = resolve;
+    });
+    await page.route(uploadPattern, async (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      await held;
+      await route.continue().catch(() => {});
+    });
+    await page
+      .getByLabel("Choose a file", { exact: true })
+      .setInputFiles({
+        name: "Reference.txt",
+        mimeType: "text/plain",
+        buffer: Buffer.from("Task reference"),
+      });
+    await page
+      .getByRole("button", { name: "Upload file", exact: true })
+      .click();
+    await expect(toast).toHaveAttribute("data-variant", "loading");
+    await expect(toast).toContainText("Reference.txt");
+    await expect(toast.locator("progress")).toBeVisible();
+    await expect(toast).toHaveCount(1);
+    await page.screenshot({
+      path: "../../artifacts/phase-3/file-upload-toast.png",
+      fullPage: true,
+    });
+    releaseUpload();
+    await expect(toast).toHaveAttribute("data-variant", "success");
+    await expect(toast).toContainText("File uploaded");
+    await expect(toast.locator("progress")).toHaveAttribute("value", "100");
+    await page.unroute(uploadPattern);
+    const taskId = (await team.state()).tasks[0].id;
+    const file = await getDatabase().taskAttachment.findFirstOrThrow({
+      where: { taskId, removedAt: null },
+    });
+    const downloadPattern = `**/api/v1/attachments/${file.id}`;
+    const downloadGate = new Promise<void>((resolve) => {
+      releaseDownload = resolve;
+    });
+    await page.route(
+      downloadPattern,
+      async (route) => {
+        await downloadGate;
+        await route.continue();
+      },
+      { times: 1 },
+    );
+    const downloaded = page.waitForEvent("download");
+    await page
+      .getByRole("button", { name: "Download Reference.txt", exact: true })
+      .click();
+    await expect(toast).toHaveAttribute("data-variant", "loading");
+    await expect(toast).toContainText("Downloading");
+    releaseDownload();
+    expect((await downloaded).suggestedFilename()).toBe("Reference.txt");
+    await expect(toast).toHaveAttribute("data-variant", "success");
+    await expect(toast).toContainText("Download ready");
+    // A completed update of the same loading toast must start its dismissal timer.
+    await expect(toast).toBeHidden({ timeout: 8000 });
+    await page.route(
+      downloadPattern,
+      (route) =>
+        route.fulfill({
+          status: 403,
+          json: {
+            error: {
+              code: "FORBIDDEN",
+              message: "This file is no longer available.",
+            },
+          },
+        }),
+      { times: 1 },
+    );
+    await page
+      .getByRole("button", { name: "Download Reference.txt", exact: true })
+      .click();
+    await expect(toast).toHaveAttribute("data-variant", "error");
+    await expect(toast).toContainText("Download failed");
+    await expect(toast.locator("progress")).toHaveCount(0);
+    await page.route(uploadPattern, async (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      return route.fulfill({
+        status: 415,
+        json: {
+          error: {
+            code: "FILE_TYPE_NOT_ALLOWED",
+            message: "File type disabled.",
+          },
+        },
+      });
+    });
+    await page
+      .getByLabel("Choose a file", { exact: true })
+      .setInputFiles({
+        name: "Other.txt",
+        mimeType: "text/plain",
+        buffer: Buffer.from("Another reference"),
+      });
+    await page
+      .getByRole("button", { name: "Upload file", exact: true })
+      .click();
+    await expect(toast).toHaveAttribute("data-variant", "error");
+    await expect(toast).toContainText("Upload failed");
+    await page.unroute(uploadPattern);
+    const cancelled = new Promise<void>((resolve) => {
+      releaseUpload = resolve;
+    });
+    await page.route(uploadPattern, async (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      await cancelled;
+      await route.continue().catch(() => {});
+    });
+    await page
+      .getByRole("button", { name: "Retry upload", exact: true })
+      .click();
+    await expect(toast).toHaveAttribute("data-variant", "loading");
+    await page
+      .getByRole("button", { name: "Cancel upload", exact: true })
+      .click();
+    await expect(toast).toHaveAttribute("data-variant", "neutral");
+    await expect(toast).toContainText("Upload cancelled");
+    await expect(toast.locator("progress")).toHaveCount(0);
+  } finally {
+    releaseUpload();
+    releaseDownload();
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await team.close();
+  }
+});
+
 test("JPG and PDF uploads validate in Next and keep the open task stable", async ({
   page,
   browser,

@@ -9,6 +9,7 @@ import {
   Bell,
   LoaderCircle,
   Download,
+  Upload,
   Copy,
   Moon,
   X,
@@ -27,9 +28,13 @@ export type YuzuToastNotice = {
   title?: string;
   duration?: number | null;
   progress?: number;
-  icon?: "download" | "copy" | "moon";
+  icon?: "download" | "upload" | "copy" | "moon";
   action?: { label: string; onClick: () => void; altText?: string };
 };
+export type TransferNoticeHandler = (
+  notice: YuzuToastNotice,
+  start?: boolean,
+) => void;
 const variants = {
   info: { title: "Information", icon: Info },
   success: { title: "Success", icon: CheckCircle2 },
@@ -64,7 +69,12 @@ export function ToastVisual({
   close?: ReactNode;
   action?: ReactNode;
 }) {
-  const iconOverrides = { download: Download, copy: Copy, moon: Moon };
+  const iconOverrides = {
+    download: Download,
+    upload: Upload,
+    copy: Copy,
+    moon: Moon,
+  };
   const Icon = notice.icon
     ? iconOverrides[notice.icon]
     : variants[notice.kind].icon;

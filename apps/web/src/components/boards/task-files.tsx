@@ -24,6 +24,7 @@ import { apiRequest } from "@/lib/api-client";
 import { uploadTaskFile, downloadTaskFile } from "@/lib/upload-attachment";
 import type { BoardState, BoardTask } from "@/lib/board-contract";
 import { Button } from "@/components/ui/button";
+import type { TransferNoticeHandler } from "@/components/ui/yuzu-toast";
 
 function FileIcon({ mimeType }: { mimeType: string }) {
   const Icon = mimeType.startsWith("image/")
@@ -42,12 +43,14 @@ export function TaskFiles({
   active,
   syncInterval,
   onNotice,
+  onTransferNotice,
 }: {
   state: BoardState;
   task: BoardTask;
   active: boolean;
   syncInterval: number;
   onNotice: (message: string, kind: "success" | "error") => void;
+  onTransferNotice: TransferNoticeHandler;
 }) {
   const client = useQueryClient();
   const queryKey = ["principal", state.currentUserId, "task-files", task.id];
@@ -58,6 +61,8 @@ export function TaskFiles({
   const [progress, setProgress] = useState(0);
   const [removing, setRemoving] = useState<string | null>(null);
   const controller = useRef<AbortController | null>(null);
+  const uploadToast = useRef("");
+  const downloadToast = useRef("");
   const input = useRef<HTMLInputElement | null>(null);
   useEffect(() => () => controller.current?.abort(), []);
   const query = useQuery({
@@ -90,22 +95,60 @@ export function TaskFiles({
     mutationFn: async (selected: NonNullable<typeof selection>) => {
       controller.current = new AbortController();
       setProgress(0);
+      const id = crypto.randomUUID();
+      uploadToast.current = id;
+      onTransferNotice(
+        {
+          id,
+          kind: "loading",
+          title: "Uploading",
+          icon: "upload",
+          message: `${selected.file.name} · ${formatFileSize(selected.file.size)}`,
+          progress: 0,
+        },
+        true,
+      );
       return uploadTaskFile(
         task.id,
         selected.file,
         selected.key,
-        setProgress,
+        (percent) => {
+          setProgress(percent);
+          onTransferNotice({
+            id,
+            kind: "loading",
+            title: percent >= 99 ? "Saving file…" : "Uploading",
+            icon: "upload",
+            message: `${selected.file.name} · ${formatFileSize(selected.file.size)}${percent >= 99 ? " · Validating and saving" : ""}`,
+            progress: Math.min(percent, 99),
+          });
+        },
         controller.current.signal,
       );
     },
-    onSuccess: async () => {
+    onSuccess: async (_result, selected) => {
       setSelection(null);
       if (input.current) input.current.value = "";
-      onNotice("File uploaded.", "success");
+      onTransferNotice({
+        id: uploadToast.current,
+        kind: "success",
+        title: "File uploaded",
+        message: selected.file.name,
+        progress: 100,
+      });
       await refresh();
     },
     onError: (error) => {
-      if (error.name !== "AbortError") onNotice(error.message, "error");
+      onTransferNotice({
+        id: uploadToast.current,
+        kind: error.name === "AbortError" ? "neutral" : "error",
+        title:
+          error.name === "AbortError" ? "Upload cancelled" : "Upload failed",
+        message:
+          error.name === "AbortError"
+            ? "You can retry when you’re ready."
+            : error.message,
+      });
       void refresh();
     },
   });
@@ -124,10 +167,47 @@ export function TaskFiles({
     },
   });
   const download = useMutation({
-    mutationFn: (file: { id: string; fileName: string }) =>
-      downloadTaskFile(file.id, file.fileName),
-    onSuccess: () => onNotice("Download started.", "success"),
-    onError: (error) => onNotice(error.message, "error"),
+    mutationFn: (file: { id: string; fileName: string }) => {
+      const id = crypto.randomUUID();
+      downloadToast.current = id;
+      onTransferNotice(
+        {
+          id,
+          kind: "loading",
+          title: "Downloading",
+          icon: "download",
+          message: file.fileName,
+        },
+        true,
+      );
+      return downloadTaskFile(file.id, file.fileName, (loaded, total) => {
+        onTransferNotice({
+          id,
+          kind: "loading",
+          title: "Downloading",
+          icon: "download",
+          message: `${file.fileName} · ${formatFileSize(loaded)}${total ? ` / ${formatFileSize(total)}` : ""}`,
+          ...(total
+            ? { progress: Math.min(99, Math.round((loaded / total) * 100)) }
+            : {}),
+        });
+      });
+    },
+    onSuccess: (_result, file) =>
+      onTransferNotice({
+        id: downloadToast.current,
+        kind: "success",
+        title: "Download ready",
+        message: `${file.fileName} · Handed to your browser.`,
+        progress: 100,
+      }),
+    onError: (error) =>
+      onTransferNotice({
+        id: downloadToast.current,
+        kind: "error",
+        title: "Download failed",
+        message: error.message,
+      }),
   });
   const data = query.data;
   const accept = data?.allowedMimeTypes
