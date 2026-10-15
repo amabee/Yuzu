@@ -3826,6 +3826,134 @@ const changeInbox = (
     headers: { origin },
     data: input,
   });
+test("service recovery preserves form drafts through rate limits and offline reconnects", async ({
+  page,
+  context,
+}) => {
+  await readyTeam(page);
+  await context.clearCookies();
+  await page.goto("/sign-in");
+  await page.getByLabel("Email address").fill("draft@example.test");
+  await page.getByLabel("Password", { exact: true }).fill("draft-password-123");
+  await page.route("**/api/v1/session/sign-in", (route) =>
+    route.fulfill({
+      status: 429,
+      headers: { "Retry-After": "2" },
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: { code: "RATE_LIMITED", message: "Wait briefly." },
+        requestId: "limited-test",
+      }),
+    }),
+  );
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  const limit = page.getByRole("dialog", { name: "Request limit reached" });
+  await expect(
+    limit.getByRole("heading", { name: "Whoa, slow down a little" }),
+  ).toBeVisible();
+  await expect(
+    limit.getByRole("button", { name: /Try again in/ }),
+  ).toBeDisabled();
+  await expect(
+    limit.getByRole("button", { name: "Try again", exact: true }),
+  ).toBeEnabled({ timeout: 5000 });
+  await limit.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(page.getByLabel("Email address")).toHaveValue(
+    "draft@example.test",
+  );
+  await expect(page.getByLabel("Password", { exact: true })).toHaveValue(
+    "draft-password-123",
+  );
+
+  await context.setOffline(true);
+  const offline = page.getByRole("dialog", { name: "Connection unavailable" });
+  await expect(
+    offline.getByRole("heading", { name: "No connection" }),
+  ).toBeVisible();
+  await context.setOffline(false);
+  await expect(offline).toHaveCount(0);
+  await expect(page.getByLabel("Email address")).toHaveValue(
+    "draft@example.test",
+  );
+  await expect(page.getByLabel("Password", { exact: true })).toHaveValue(
+    "draft-password-123",
+  );
+  await page.unroute("**/api/v1/session/sign-in");
+  let maintenanceSubmissions = 0;
+  await page.route("**/api/v1/session/sign-in", (route) => {
+    maintenanceSubmissions++;
+    return route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: { code: "MAINTENANCE", message: "Paused." },
+        requestId: "maintenance-test",
+      }),
+    });
+  });
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  const maintenance = page.getByRole("dialog", {
+    name: "Maintenance in progress",
+  });
+  await expect(
+    maintenance.getByRole("heading", { name: "We'll be right back" }),
+  ).toBeVisible();
+  await maintenance.getByRole("button", { name: "Check again" }).click();
+  await expect(maintenance).toHaveCount(0);
+  await expect(page.getByLabel("Email address")).toHaveValue(
+    "draft@example.test",
+  );
+  expect(maintenanceSubmissions).toBe(1);
+});
+
+test("maintenance routes members to recovery, blocks API access, and keeps administrator access available", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  const db = getDatabase();
+  try {
+    await db.installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: true },
+    });
+    await team.author.page.goto(`/boards/${team.boardId}`);
+    await expect(team.author.page).toHaveURL(/\/maintenance$/);
+    await expect(
+      team.author.page.getByRole("heading", { name: "We'll be right back" }),
+    ).toBeVisible();
+    const blocked = await team.author.page.request.get(
+      "/api/v1/notifications/inbox",
+    );
+    expect(blocked.status()).toBe(503);
+    expect((await blocked.json()).error.code).toBe("MAINTENANCE");
+    expect(
+      (await (await team.author.page.request.get("/api/v1/status")).json())
+        .data,
+    ).toEqual({ maintenance: true });
+    await page.goto("/settings");
+    await expect(
+      page.getByRole("heading", { name: "Workspace settings" }),
+    ).toBeVisible();
+    expect((await page.request.get("/api/health/ready")).status()).toBe(200);
+    await db.installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: false },
+    });
+    await team.author.page.getByRole("link", { name: "Check again" }).click();
+    await expect(team.author.page).toHaveURL("http://127.0.0.1:3100/");
+    await expect(
+      team.author.page.getByRole("heading", { name: "Good work starts here." }),
+    ).toBeVisible();
+  } finally {
+    await db.installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: false },
+    });
+    await team.close();
+  }
+});
+
 test("page access shows forbidden and expired-session screens while preserving API errors and private boards", async ({
   page,
   browser,

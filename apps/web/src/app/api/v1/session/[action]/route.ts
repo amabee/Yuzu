@@ -79,7 +79,12 @@ export async function POST(
       },
       {
         status: error instanceof SetupError ? error.status : 422,
-        headers: { "Cache-Control": "no-store" },
+        headers: {
+          "Cache-Control": "no-store",
+          ...(error instanceof SetupError && error.status === 429
+            ? { "Retry-After": "600" }
+            : {}),
+        },
       },
     );
   }

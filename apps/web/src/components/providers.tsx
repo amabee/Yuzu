@@ -7,6 +7,7 @@ import { createQueryClient } from "@/lib/query-client";
 import { createUiStore, type UiState } from "@/stores/ui-store";
 import { ThemeRuntime } from "@/components/appearance/theme-runtime";
 import type { Mode, PublishedTheme } from "@/lib/appearance";
+import { ServiceStatusRuntime } from "@/components/yuzu/service-status-runtime";
 
 const UiStoreContext = createContext<ReturnType<typeof createUiStore> | null>(
   null,
@@ -28,6 +29,7 @@ export function Providers({
       <UiStoreContext.Provider value={uiStore}>
         <ThemeRuntime initial={appearance} initialMode={mode}>
           {children}
+          <ServiceStatusRuntime />
         </ThemeRuntime>
       </UiStoreContext.Provider>
     </QueryClientProvider>

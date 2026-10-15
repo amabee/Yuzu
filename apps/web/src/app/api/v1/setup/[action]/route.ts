@@ -48,7 +48,18 @@ async function handle(request: Request, action: string) {
     if (error instanceof SetupError)
       return Response.json(
         { error: { code: error.code, message: error.message }, requestId },
-        { status: error.status, headers: { "Cache-Control": "no-store" } },
+        {
+          status: error.status,
+          headers: {
+            "Cache-Control": "no-store",
+            ...(error.status === 429
+              ? {
+                  "Retry-After":
+                    error.code === "WAIT_BEFORE_RESENDING" ? "60" : "600",
+                }
+              : {}),
+          },
+        },
       );
     console.error(JSON.stringify({ event: "setup_request_failed", requestId }));
     return Response.json(
