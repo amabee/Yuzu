@@ -9,6 +9,7 @@ import { ThemeRuntime } from "@/components/appearance/theme-runtime";
 import type { Mode, PublishedTheme } from "@/lib/appearance";
 import { ServiceStatusRuntime } from "@/components/yuzu/service-status-runtime";
 import { OfflineProvider } from "@/hooks/use-offline";
+import NextTopLoader from "nextjs-toploader";
 
 const UiStoreContext = createContext<ReturnType<typeof createUiStore> | null>(
   null,
@@ -29,6 +30,14 @@ export function Providers({
     <QueryClientProvider client={queryClient}>
       <UiStoreContext.Provider value={uiStore}>
         <ThemeRuntime initial={appearance} initialMode={mode}>
+          <NextTopLoader
+            color="var(--primary)"
+            height={3}
+            showSpinner={false}
+            showForHashAnchor={false}
+            shadow={false}
+            zIndex={200}
+          />
           <OfflineProvider>
             {children}
             <ServiceStatusRuntime />

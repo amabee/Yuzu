@@ -1,5 +1,5 @@
 "use client";
-import { useRouter } from "next/navigation";
+import { useRouter } from "nextjs-toploader/app";
 import { RateLimitedScreen } from "@/components/yuzu/service-screens";
 export default function RateLimited() {
   const router = useRouter();

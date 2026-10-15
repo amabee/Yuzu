@@ -1481,10 +1481,45 @@ test("global themes persist, drafts stay scoped, modes remain personal, and prev
     page.getByRole("status").filter({ hasText: "revision 2" }),
   ).toBeVisible();
   expect(await rootPrimary()).toBe(presets[0].dark.primary);
-  await page.goto(`/boards/${board.id}`);
+  // Keep a real navigation pending so the visible loader can be checked.
+  let releaseNavigation!: () => void;
+  const navigationGate = new Promise<void>((resolve) => {
+    releaseNavigation = resolve;
+  });
+  await page.route(`**/boards/${board.id}?*`, async (route) => {
+    await navigationGate;
+    await route.continue();
+  });
+  await page.reload();
+  try {
+    await page.getByRole("link", { name: "Team project", exact: true }).click();
+    const bar = page.locator("#nprogress .bar");
+    await expect(bar).toBeVisible();
+    const rgb = (hex: string) =>
+      `rgb(${[1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16)).join(", ")})`;
+    await expect(bar).toHaveCSS(
+      "background-color",
+      rgb(presets[0].dark.primary),
+    );
+    await expect(page.locator("#nprogress .spinner")).toHaveCount(0);
+    await page.getByRole("switch", { name: "Dark mode" }).click();
+    await expect(bar).toHaveCSS(
+      "background-color",
+      rgb(presets[0].light.primary),
+    );
+    await expect(page.getByRole("switch", { name: "Dark mode" })).toBeEnabled();
+    await page.getByRole("switch", { name: "Dark mode" }).click();
+    await expect(bar).toHaveCSS(
+      "background-color",
+      rgb(presets[0].dark.primary),
+    );
+  } finally {
+    releaseNavigation();
+  }
   await expect(
     page.getByRole("heading", { name: "Team project", exact: true }),
   ).toBeVisible();
+  await expect(page.locator("#nprogress")).toHaveCount(0);
   await page.getByRole("button", { name: "Table", exact: true }).click();
   await expect(
     page.getByText("No sample records were created during installation."),

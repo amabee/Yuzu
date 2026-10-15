@@ -3,7 +3,7 @@ import { ModeSwitcher } from "@/components/appearance/theme-runtime";
 import Image from "next/image";
 import Link from "next/link";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
+import { useRouter } from "nextjs-toploader/app";
 import { useForm } from "react-hook-form";
 import { Button } from "@/components/ui/button";
 import { apiRequest } from "@/lib/api-client";
