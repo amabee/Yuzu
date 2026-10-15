@@ -1855,9 +1855,8 @@ test("reference workspace search, board lanes and details use saved structure", 
   ).toBeVisible();
   await expect(page.locator(".board-lane")).toHaveCount(3);
   await page.getByRole("button", { name: "Filter", exact: true }).click();
-  await page
-    .getByLabel("Filter board status")
-    .selectOption({ label: "In progress" });
+  await page.getByLabel("Filter board status").click();
+  await page.getByRole("option", { name: "In progress", exact: true }).click();
   await expect(page.locator(".board-lane")).toHaveCount(1);
   await page.getByRole("button", { name: "Clear filter" }).click();
   await expect(page.locator(".board-lane")).toHaveCount(3);
@@ -2776,9 +2775,8 @@ test("board moves immediately, rolls back failed saves, and exposes option order
     .selectOption({ label: "Sprint 1" });
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await page
-    .getByLabel("Filter task group", { exact: true })
-    .selectOption({ label: "Sprint 1" });
+  await page.getByLabel("Filter task group", { exact: true }).click();
+  await page.getByRole("option", { name: "Sprint 1", exact: true }).click();
   await expect(page.locator(".task-card-tags").first()).toContainText(
     "Sprint 1",
   );
@@ -6958,12 +6956,21 @@ test("personal saved views persist filters and layout, update with revision chec
     }
     await page.goto(`/boards/${team.boardId}`);
     await page.getByRole("button", { name: "Filter", exact: true }).click();
-    await page.getByLabel("Filter board status").selectOption(status.id);
+    await page.getByLabel("Filter board status").click();
+    await page.getByRole("option", { name: status.label, exact: true }).click();
     await page.getByLabel("Search tasks", { exact: true }).fill("Release");
-    await page.getByLabel("Filter task assignee").selectOption("me");
-    await page.getByLabel("Filter task priority").selectOption("HIGH");
-    await page.getByLabel("Filter task due date").selectOption("none");
-    await page.getByLabel("Sort tasks", { exact: true }).selectOption("name");
+    await page.getByLabel("Filter task assignee").click();
+    await page
+      .getByRole("option", { name: "Assigned to me", exact: true })
+      .click();
+    await page.getByLabel("Filter task priority").click();
+    await page.getByRole("option", { name: "High", exact: true }).click();
+    await page.getByLabel("Filter task due date").click();
+    await page
+      .getByRole("option", { name: "No due date", exact: true })
+      .click();
+    await page.getByLabel("Sort tasks", { exact: true }).click();
+    await page.getByRole("option", { name: "Name", exact: true }).click();
     await page.getByRole("button", { name: "Table", exact: true }).click();
     await page.getByRole("button", { name: "Save view", exact: true }).click();
     await page.getByLabel("View name", { exact: true }).fill("My release work");
@@ -7311,7 +7318,10 @@ test("saved status IDs survive renames and removed references stay explicit", as
     ).toBe(200);
     await page.goto(`/boards/${team.boardId}`);
     await page.getByRole("button", { name: "Filter", exact: true }).click();
-    await expect(page.getByLabel("Filter board status")).toHaveValue(option.id);
+    await expect(page.getByLabel("Filter board status")).toHaveAttribute(
+      "data-value",
+      option.id,
+    );
     await expect(page.locator(".board-lane")).toHaveCount(1);
     await expect(page.locator(".board-lane")).toContainText("Renamed status");
     const renamed = (await team.state()).fields.find(
@@ -7355,4 +7365,90 @@ test("saved status IDs survive renames and removed references stay explicit", as
   } finally {
     await team.close();
   }
+});
+
+test("board filters provide roomy dropdowns, keyboard selection and responsive themed layouts", async ({
+  page,
+}) => {
+  const { workspace } = await readyTeam(page);
+  const made = await postBoard(page, "create-board", {
+    workspaceId: workspace.id,
+    name: "Filter layout",
+  });
+  const boardId = (await made.json()).data.id;
+  await page.goto(`/boards/${boardId}`);
+  await page.getByRole("button", { name: "Filter", exact: true }).click();
+  const panel = page.getByRole("region", { name: "Task filters" });
+  await expect(
+    panel.getByRole("heading", { name: "Filter tasks", exact: true }),
+  ).toBeVisible();
+  for (const label of [
+    "Filter board status",
+    "Filter task assignee",
+    "Filter task priority",
+    "Filter task due date",
+    "Sort tasks",
+  ]) {
+    const box = await page.getByLabel(label, { exact: true }).boundingBox();
+    expect(box!.height).toBeGreaterThanOrEqual(40);
+    expect(box!.width).toBeGreaterThan(160);
+  }
+  const status = page.getByLabel("Filter board status");
+  await status.click();
+  const option = page.getByRole("option", { name: "In progress", exact: true });
+  await expect(option).toBeVisible();
+  expect((await option.boundingBox())!.height).toBeGreaterThanOrEqual(40);
+  const popup = page.locator('[data-slot="select-content"]');
+  expect((await popup.boundingBox())!.width).toBeGreaterThanOrEqual(
+    (await status.boundingBox())!.width - 1,
+  );
+  await page.screenshot({
+    path: "../../artifacts/phase-3/filters-light.png",
+    fullPage: false,
+  });
+  await page.keyboard.press("Escape");
+  await expect(status).toBeFocused();
+  await status.press("ArrowDown");
+  await expect(
+    page.getByRole("option", { name: "All statuses", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(
+    page.getByRole("option", { name: "No status", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(status).toHaveAttribute("data-value", "__none__");
+  await expect(page.locator(".board-lane")).toHaveCount(1);
+  await page.getByRole("button", { name: /Clear filters/ }).click();
+  await expect(status).toHaveAttribute("data-value", "");
+  await page.getByRole("switch", { name: "Dark mode", exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
+  await expect(page.locator("html")).not.toHaveClass(/theme-ripple/);
+  await page.getByLabel("Filter task priority").click();
+  await page.screenshot({
+    path: "../../artifacts/phase-3/filters-dark.png",
+    fullPage: false,
+  });
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 390, height: 844 });
+  const assignee = page.getByLabel("Filter task assignee");
+  await assignee.click();
+  expect((await assignee.boundingBox())!.width).toBeGreaterThan(250);
+  await expect(
+    page.getByRole("option", { name: "Assigned to me", exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "../../artifacts/phase-3/filters-mobile.png",
+    fullPage: false,
+  });
+  await page.keyboard.press("Escape");
+  await page.screenshot({
+    path: "../../artifacts/phase-3/filters-mobile-panel.png",
+    fullPage: true,
+  });
 });

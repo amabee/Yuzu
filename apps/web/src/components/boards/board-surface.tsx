@@ -1,4 +1,5 @@
 "use client";
+import { BoardFilters, BoardFilterSelect } from "./board-filters";
 import { SavedViewControls } from "./saved-view-controls";
 import {
   defaultViewConfig,
@@ -23,7 +24,6 @@ import { OperationToast, type BoardNotice } from "./operation-toast";
 import { TaskEditor } from "./task-editor";
 import { useTaskUploads } from "./use-task-uploads";
 import { BoardManagement } from "./board-management";
-import { Input } from "@/components/ui/input";
 import { useState, useRef } from "react";
 import Link from "next/link";
 import { needsApproval } from "@/lib/approval-rules";
@@ -161,15 +161,11 @@ export function BoardSurface({
   const archived = viewConfig.archived;
   const setArchived = (value: boolean) => configureView("archived", value);
   const search = viewConfig.search;
-  const setSearch = (value: string) => configureView("search", value);
   const activeGroupFilter = viewConfig.groupId ?? "";
   const setGroupFilter = (value: string) =>
     configureView("groupId", value || null);
   const sort = viewConfig.sort;
-  const setSort = (value: ViewConfig["sort"]) => configureView("sort", value);
   const statusFilter = viewConfig.statusId ?? "";
-  const setStatusFilter = (value: string) =>
-    configureView("statusId", value || null);
   const missingReferences = Boolean(
     (activeGroupFilter &&
       !state.groups.some((group) => group.id === activeGroupFilter)) ||
@@ -501,26 +497,27 @@ export function BoardSurface({
       )}
       <div className="board-toolbar">
         <div className="flex flex-wrap items-center gap-2">
-          <select
-            aria-label="Filter task group"
-            className="task-select w-auto"
+          <BoardFilterSelect
+            label="Filter task group"
             value={activeGroupFilter}
-            onChange={(event) => setGroupFilter(event.target.value)}
-          >
-            <option value="">All groups</option>
-            {activeGroupFilter &&
-              !state.groups.some((group) => group.id === activeGroupFilter) && (
-                <option value={activeGroupFilter}>Removed group</option>
-              )}
-            {state.groups.map((group) => (
-              <option key={group.id} value={group.id}>
-                {group.name}
-              </option>
-            ))}
-          </select>
+            onChange={setGroupFilter}
+            className="w-44 max-w-full"
+            options={[
+              { value: "", label: "All groups" },
+              ...(activeGroupFilter &&
+              !state.groups.some((group) => group.id === activeGroupFilter)
+                ? [{ value: activeGroupFilter, label: "Removed group" }]
+                : []),
+              ...state.groups.map((group) => ({
+                value: group.id,
+                label: group.name,
+              })),
+            ]}
+          />
           <Button
             variant="outline"
             size="sm"
+            className="h-[40px]"
             aria-expanded={filterOpen}
             onClick={() => setFilterOpen(!filterOpen)}
           >
@@ -586,129 +583,14 @@ export function BoardSurface({
         </p>
       )}
       {filterOpen && (
-        <div className="board-filter-bar">
-          <label className="flex items-center gap-3 text-xs">
-            Status
-            <select
-              aria-label="Filter board status"
-              className="h-8 rounded-md border bg-card px-3 text-foreground"
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value)}
-            >
-              <option value="">All statuses</option>
-              {statusFilter &&
-                statusFilter !== "__none__" &&
-                !savedStatuses.some((status) => status.id === statusFilter) && (
-                  <option value={statusFilter}>Removed status</option>
-                )}
-              {savedStatuses.map((status) => (
-                <option key={status.id} value={status.id}>
-                  {status.label}
-                </option>
-              ))}
-              <option value="__none__">No status</option>
-            </select>
-          </label>
-          <Input
-            aria-label="Search tasks"
-            placeholder="Search tasks…"
-            className="max-w-48"
-            value={search}
-            maxLength={200}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-          <select
-            aria-label="Sort tasks"
-            className="task-select w-auto"
-            value={sort}
-            onChange={(event) =>
-              setSort(event.target.value as ViewConfig["sort"])
-            }
-          >
-            <option value="created">Created order</option>
-            <option value="name">Name</option>
-            <option value="due">Due date</option>
-          </select>
-          <label className="grid gap-1 text-xs">
-            Assignee
-            <select
-              aria-label="Filter task assignee"
-              className="task-select"
-              value={viewConfig.assignee}
-              onChange={(event) =>
-                configureView(
-                  "assignee",
-                  event.target.value as ViewConfig["assignee"],
-                )
-              }
-            >
-              <option value="all">Anyone</option>
-              <option value="me">Assigned to me</option>
-              <option value="unassigned">Unassigned</option>
-            </select>
-          </label>
-          <label className="grid gap-1 text-xs">
-            Priority
-            <select
-              aria-label="Filter task priority"
-              className="task-select"
-              value={viewConfig.priority}
-              onChange={(event) =>
-                configureView(
-                  "priority",
-                  event.target.value as ViewConfig["priority"],
-                )
-              }
-            >
-              <option value="all">Any priority</option>
-              {priorityOptions(state).map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="grid gap-1 text-xs">
-            Due date
-            <select
-              aria-label="Filter task due date"
-              className="task-select"
-              value={viewConfig.due}
-              onChange={(event) =>
-                configureView("due", event.target.value as ViewConfig["due"])
-              }
-            >
-              <option value="all">Any date</option>
-              <option value="overdue">Overdue</option>
-              <option value="next-week">Next 7 days</option>
-              <option value="none">No due date</option>
-            </select>
-          </label>
-          {(statusFilter ||
-            activeGroupFilter ||
-            search ||
-            viewConfig.assignee !== "all" ||
-            viewConfig.priority !== "all" ||
-            viewConfig.due !== "all") && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() =>
-                setViewConfig((current) => ({
-                  ...current,
-                  search: "",
-                  groupId: null,
-                  statusId: null,
-                  assignee: "all",
-                  priority: "all",
-                  due: "all",
-                }))
-              }
-            >
-              Clear filters
-            </Button>
-          )}
-        </div>
+        <BoardFilters
+          config={viewConfig}
+          statuses={savedStatuses}
+          priorities={priorityOptions(state)}
+          groupActive={!!activeGroupFilter}
+          count={tasks.length}
+          onChange={setViewConfig}
+        />
       )}
       {view === "board" ? (
         <div className="board-lanes-scroll">
