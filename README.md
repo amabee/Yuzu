@@ -103,6 +103,11 @@ In a task's **Comments** tab, type `@` and a name, then choose the teammate from
 the inline suggestions to notify them. Authors can edit their comments and inspect previous versions;
 authors and board managers can remove comments. Removal hides the content and
 keeps an audit record. Archived tasks remain read-only.
+Each task also has its own checklist: add, rename, complete or remove steps in
+the task details, then save. Empty checklists stay off task cards. Multi-select
+custom fields continue to use the board's shared options. In **Board details**,
+managers can remove a group only when no active/archived task or pending approval
+request references it.
 See [Board engine](docs/board-engine.md) for permissions and API contracts.
 
 ## Technology

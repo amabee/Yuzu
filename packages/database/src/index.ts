@@ -7,7 +7,7 @@ const databaseGlobal = globalThis as unknown as {
   yuzuDatabase?: PrismaClient;
   yuzuDatabaseSchemaVersion?: string;
 };
-const schemaVersion = "comment-history-v1";
+const schemaVersion = "task-checklists-v1";
 
 export function getDatabase(): PrismaClient {
   if (
@@ -43,5 +43,6 @@ export async function checkDatabase(): Promise<void> {
     db.boardProposal.findFirst({ select: { id: true } }),
     db.notification.findFirst({ select: { id: true } }),
     db.commentRevision.findFirst({ select: { id: true } }),
+    db.task.findFirst({ select: { checklist: true } }),
   ]);
 }

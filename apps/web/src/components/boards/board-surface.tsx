@@ -118,6 +118,11 @@ export function BoardSurface({
   );
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState("");
+  const activeGroupFilter = state.groups.some(
+    (group) => group.id === groupFilter,
+  )
+    ? groupFilter
+    : "";
   const [sort, setSort] = useState("created");
   const [selectedTab, setSelectedTab] = useState<"details" | "comments">(
     initialCommentsTab ? "comments" : "details",
@@ -132,7 +137,7 @@ export function BoardSurface({
     .filter(
       (task) =>
         Boolean(task.archivedAt) === archived &&
-        (!groupFilter || task.groupId === groupFilter) &&
+        (!activeGroupFilter || task.groupId === activeGroupFilter) &&
         `${task.name} ${task.description}`
           .toLowerCase()
           .includes(search.toLowerCase()),
@@ -208,6 +213,7 @@ export function BoardSurface({
         "configure-field": "Field saved",
         "remove-field": "Field removed",
         "rename-group": "Group renamed",
+        "remove-group": "Group removed",
         manager: "Board managers updated",
       };
       notify(
@@ -400,7 +406,7 @@ export function BoardSurface({
           <select
             aria-label="Filter task group"
             className="task-select w-auto"
-            value={groupFilter}
+            value={activeGroupFilter}
             onChange={(event) => setGroupFilter(event.target.value)}
           >
             <option value="">All groups</option>
@@ -766,7 +772,11 @@ export function BoardSurface({
                           })}
                       </div>
                       {state.fields
-                        .filter((field) => field.type === "MULTI_SELECT")
+                        .filter(
+                          (field) =>
+                            field.type === "MULTI_SELECT" &&
+                            selectedChoices(task, field.id).length > 0,
+                        )
                         .map((field) => (
                           <div
                             className="task-checklist-summary"
@@ -781,6 +791,19 @@ export function BoardSurface({
                             </span>
                           </div>
                         ))}
+                      {task.checklist.length > 0 && (
+                        <div
+                          className="task-checklist-summary"
+                          aria-label={`Checklist progress for ${task.name}`}
+                        >
+                          <ListChecks size={13} />
+                          <span>Checklist</span>
+                          <span>
+                            {task.checklist.filter((item) => item.done).length}/
+                            {task.checklist.length}
+                          </span>
+                        </div>
+                      )}
                       {task.description && (
                         <p className="task-card-description">
                           {task.description}

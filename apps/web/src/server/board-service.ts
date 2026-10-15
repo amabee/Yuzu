@@ -18,6 +18,7 @@ import type { TaskMutationResult } from "@/lib/approval-contract";
 import { createNotifications } from "./notification-events";
 import { mentionPresent } from "@/lib/comment-mentions";
 import { commentChangeSchema } from "@/lib/board-contract";
+import { checklistSchema, removeGroupSchema } from "@/lib/board-contract";
 import {
   boardCreateSchema,
   boardManagerSchema,
@@ -347,6 +348,7 @@ export function snapshot(task: LoadedTask) {
     JSON.stringify({
       name: task.name,
       description: task.description,
+      checklist: checklistSchema.parse(task.checklist),
       statusId: task.statusId,
       priority: task.priority,
       dueDate: task.dueDate?.toISOString().slice(0, 10) ?? null,
@@ -500,6 +502,7 @@ export async function createTaskRecord(
       boardId: context.board.id,
       name: body.name,
       description: body.description ?? "",
+      checklist: body.checklist ?? [],
       statusId: body.statusId,
       priority: body.priority ?? "NORMAL",
       dueDate: body.dueDate ? new Date(`${body.dueDate}T00:00:00Z`) : null,
@@ -687,6 +690,7 @@ export async function createTask(
     const initial = {
       ...body,
       description: body.description ?? "",
+      checklist: body.checklist ?? [],
       priority: body.priority ?? "NORMAL",
       dueDate: body.dueDate ?? null,
       assigneeIds: body.assigneeIds ?? [],
@@ -1083,6 +1087,68 @@ export async function manageBoard(
       });
     });
   }
+  if (action === "remove-group") {
+    const body = removeGroupSchema.parse(input);
+    try {
+      return await serial(async (tx) => {
+        const context = await access(tx, user.id, body.boardId, true);
+        if (!context.canManage)
+          throw new SetupError(
+            403,
+            "FORBIDDEN",
+            "Only a board manager or administrator can remove groups.",
+          );
+        const group = context.board.groups.find(
+          (group) => group.id === body.groupId,
+        );
+        if (!group) throw notFound();
+        if (group.name !== body.expectedName)
+          throw new SetupError(
+            409,
+            "GROUP_CHANGED",
+            "This group changed. Reopen board details before removing it.",
+          );
+        const tasks = await tx.task.count({ where: { groupId: group.id } });
+        const requests = await tx.boardProposal.count({
+          where: {
+            boardId: body.boardId,
+            status: "PENDING",
+            changes: { path: ["groupId"], equals: group.id },
+          },
+        });
+        if (tasks || requests)
+          throw new SetupError(
+            409,
+            "GROUP_IN_USE",
+            "This group is used by tasks (including archived tasks) or pending approval requests. Move them to another group before removing it.",
+          );
+        await tx.boardGroup.delete({ where: { id: group.id } });
+        await tx.boardEvent.create({
+          data: {
+            boardId: body.boardId,
+            actorId: user.id,
+            subjectId: group.id,
+            action: "Removed task group",
+            before: { name: group.name },
+          },
+        });
+        return { boardId: body.boardId };
+      });
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "P2003"
+      )
+        throw new SetupError(
+          409,
+          "GROUP_IN_USE",
+          "This group is now in use. Move its tasks before removing it.",
+        );
+      throw error;
+    }
+  }
   if (action === "rename-group") {
     const body = renameGroupSchema.parse(input);
     return serial(async (tx) => {
@@ -1125,7 +1191,11 @@ export async function manageBoard(
         data: {
           boardId: body.boardId,
           name: body.name,
-          position: context.board.groups.length,
+          position:
+            context.board.groups.reduce(
+              (highest, group) => Math.max(highest, group.position),
+              -1,
+            ) + 1,
         },
         select: { id: true },
       });

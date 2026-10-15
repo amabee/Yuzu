@@ -40,6 +40,22 @@ export const coreKeys = [
   "due_date",
 ];
 const names = z.string().trim().min(1).max(200);
+export const checklistSchema = z
+  .array(
+    z
+      .object({
+        id: recordId,
+        text: z.string().trim().min(1).max(300),
+        done: z.boolean(),
+      })
+      .strict(),
+  )
+  .max(100)
+  .refine(
+    (items) => new Set(items.map((item) => item.id)).size === items.length,
+    "Give each checklist item a unique ID.",
+  );
+export type TaskChecklist = z.infer<typeof checklistSchema>;
 const ids = z
   .array(personId)
   .max(50)
@@ -51,6 +67,7 @@ const changes = z
   .object({
     name: names,
     description: z.string().max(10000),
+    checklist: checklistSchema,
     statusId: z.string().max(100).nullable(),
     priority: z.enum(priorities),
     dueDate: dateOnly.nullable(),
@@ -149,6 +166,7 @@ export type BoardTask = {
   id: string;
   name: string;
   description: string;
+  checklist: TaskChecklist;
   statusId: string | null;
   priority: string;
   dueDate: string | null;
@@ -211,6 +229,7 @@ export const boardStateSchema = z.object({
       id: recordId,
       name: z.string(),
       description: z.string(),
+      checklist: checklistSchema.default([]),
       statusId: z.string().nullable(),
       priority: z.string(),
       dueDate: z.string().nullable(),
@@ -264,6 +283,9 @@ export const renameGroupSchema = z
     expectedName: z.string(),
     name: z.string().trim().min(1).max(80),
   })
+  .strict();
+export const removeGroupSchema = renameGroupSchema
+  .pick({ boardId: true, groupId: true, expectedName: true })
   .strict();
 
 export const boardManagerSchema = z

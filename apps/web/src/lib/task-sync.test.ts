@@ -13,6 +13,7 @@ const task: BoardTask = {
   id: "019aa1c0-3333-7333-8333-333333333333",
   name: "Build",
   description: "Original",
+  checklist: [],
   statusId: "todo",
   priority: "NORMAL",
   dueDate: null,
@@ -31,6 +32,24 @@ const task: BoardTask = {
 const original = taskDraft(task);
 afterEach(() => vi.unstubAllGlobals());
 describe("collaborative task drafts", () => {
+  it("merges independent edits but rejects overlapping checklist changes", () => {
+    const checklist = [{ id: fieldId, text: "Review", done: false }];
+    const base = { ...original, checklist };
+    const local = { ...base, checklist: [{ ...checklist[0]!, done: true }] };
+    const independent = reconcileTaskDraft(base, local, {
+      ...base,
+      description: "Remote notes",
+    });
+    expect(independent.conflicts).toEqual([]);
+    expect(independent.draft.description).toBe("Remote notes");
+    expect(independent.changes.checklist?.[0]?.done).toBe(true);
+    expect(
+      reconcileTaskDraft(base, local, {
+        ...base,
+        checklist: [{ ...checklist[0]!, text: "New label" }],
+      }).conflicts,
+    ).toEqual(["checklist"]);
+  });
   it("starts a new edit from the visible remote version while retaining existing dirty baselines", () => {
     const latest = {
       ...original,

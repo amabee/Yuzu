@@ -38,6 +38,10 @@ const coreKeys: Record<string, string> = {
   dueDate: "due_date",
 };
 function displayValue(value: unknown, key: string, proposal: Proposal): string {
+  if (key === "checklist" && Array.isArray(value))
+    return value.length
+      ? value.map((item) => `${item.done ? "✓" : "☐"} ${item.text}`).join("\n")
+      : "No checklist items";
   if (value == null || value === "") return "None";
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (key === "dueDate" && typeof value === "string")
@@ -80,11 +84,13 @@ function changeRows(proposal: Proposal) {
     .map(([key, value]) => ({
       key,
       label:
-        key === "groupId"
-          ? "Group"
-          : (proposal.fields.find(
-              (field) => field.key === (coreKeys[key] ?? key),
-            )?.name ?? key),
+        key === "checklist"
+          ? "Checklist"
+          : key === "groupId"
+            ? "Group"
+            : (proposal.fields.find(
+                (field) => field.key === (coreKeys[key] ?? key),
+              )?.name ?? key),
       before: displayValue(proposal.baseline[key], key, proposal),
       after: displayValue(value, key, proposal),
     }));

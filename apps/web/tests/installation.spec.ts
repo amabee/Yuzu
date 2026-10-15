@@ -3896,6 +3896,293 @@ async function approvalTeam(
   };
 }
 
+test("task checklists belong to each task, save live and disappear from cards when empty", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const made = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Task with its own steps",
+      assigneeIds: [team.author.id],
+    });
+    const taskId = (await made.json()).data.taskId;
+    await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Task without steps",
+    });
+    await page.goto(`/boards/${team.boardId}`);
+    const card = page.locator(".task-card").filter({
+      has: page.getByRole("button", {
+        name: "Task with its own steps",
+        exact: true,
+      }),
+    });
+    const empty = page.locator(".task-card").filter({
+      has: page.getByRole("button", {
+        name: "Task without steps",
+        exact: true,
+      }),
+    });
+    await expect(card.locator(".task-checklist-summary")).toHaveCount(0);
+    await team.author.page.goto(`/boards/${team.boardId}?task=${taskId}`);
+    const section = team.author.page.getByRole("region", {
+      name: "Task checklist",
+      exact: true,
+    });
+    await section
+      .getByRole("textbox", { name: "New checklist item", exact: true })
+      .fill("Write the draft");
+    await section
+      .getByRole("textbox", { name: "New checklist item", exact: true })
+      .press("Enter");
+    await section
+      .getByRole("textbox", { name: "New checklist item", exact: true })
+      .fill("Review the draft");
+    await section
+      .getByRole("button", { name: "Add step", exact: true })
+      .click();
+    await section
+      .getByRole("checkbox", { name: "Complete checklist item 1", exact: true })
+      .check();
+    await team.author.page
+      .getByRole("button", { name: "Save changes", exact: true })
+      .click();
+    await expect(card.locator(".task-checklist-summary")).toContainText(
+      "Checklist1/2",
+    );
+    await expect(empty.locator(".task-checklist-summary")).toHaveCount(0);
+    await page
+      .getByRole("button", { name: "Task with its own steps", exact: true })
+      .click();
+    await expect(
+      page.getByRole("textbox", { name: "Checklist item 2", exact: true }),
+    ).toHaveValue("Review the draft");
+    await page
+      .getByRole("textbox", { name: "Checklist item 2", exact: true })
+      .fill("Review final copy");
+    await page
+      .getByRole("button", { name: "Remove checklist item 1", exact: true })
+      .click();
+    await page.screenshot({
+      path: "../../artifacts/checklists/task-checklist-desktop.png",
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({
+      path: "../../artifacts/checklists/task-checklist-mobile.png",
+      fullPage: true,
+    });
+    await page
+      .getByRole("button", { name: "Save changes", exact: true })
+      .click();
+    await expect(card.locator(".task-checklist-summary")).toContainText(
+      "Checklist0/1",
+    );
+    await expect
+      .poll(
+        async () =>
+          (await team.state()).tasks.find(
+            (task: { id: string }) => task.id === taskId,
+          ).checklist[0].text,
+      )
+      .toBe("Review final copy");
+    await page
+      .getByRole("button", { name: "Task with its own steps", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Remove checklist item 1", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Save changes", exact: true })
+      .click();
+    await expect(card.locator(".task-checklist-summary")).toHaveCount(0);
+    expect(
+      (await team.state()).tasks.find(
+        (task: { name: string }) => task.name === "Task without steps",
+      ).checklist,
+    ).toEqual([]);
+  } finally {
+    await team.close();
+  }
+});
+
+test("checklists validate input and follow task permissions, approvals and revision conflicts", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const items = [{ id: createRecordId(), text: "First step", done: false }];
+    const made = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Checklist rules",
+      assigneeIds: [team.author.id],
+      checklist: items,
+    });
+    expect(made.status()).toBe(200);
+    const taskId = (await made.json()).data.taskId;
+    const update = (
+      actor: Page,
+      revision: number,
+      checklist: unknown,
+      changes = {},
+    ) =>
+      postBoard(actor, "update", {
+        taskId,
+        revision,
+        requestKey: createRecordId(),
+        changes: { checklist, ...changes },
+      });
+    expect((await update(team.backup.page, 1, [])).status()).toBe(403);
+    expect((await update(page, 1, [items[0], items[0]])).status()).toBe(422);
+    expect((await update(page, 1, [{ ...items[0], text: " " }])).status()).toBe(
+      422,
+    );
+    expect(
+      (await update(page, 1, [{ ...items[0], done: "yes" }])).status(),
+    ).toBe(422);
+    const statusField = (await team.state()).fields.find(
+      (field: { key: string }) => field.key === "status",
+    ).id;
+    await team.configure({ protectedFieldIds: [statusField] });
+    const completed = [{ ...items[0], done: true }];
+    const request = await update(team.author.page, 1, completed, {
+      statusId: "in_progress",
+    });
+    expect((await request.json()).data.outcome).toBe("PENDING_APPROVAL");
+    expect((await team.state()).tasks[0].checklist).toEqual(items);
+    const proposalId = (await request.json()).data.proposalId;
+    expect(
+      (
+        await postApproval(page, "decide", { proposalId, action: "approve" })
+      ).status(),
+    ).toBe(200);
+    expect((await team.state()).tasks[0].checklist).toEqual(completed);
+    const pending = await update(team.author.page, 2, items, {
+      statusId: "done",
+    });
+    expect(
+      (
+        await update(team.author.page, 2, [
+          { ...items[0], text: "Changed step", done: true },
+        ])
+      ).status(),
+    ).toBe(200);
+    const stale = await postApproval(page, "decide", {
+      proposalId: (await pending.json()).data.proposalId,
+      action: "approve",
+    });
+    expect((await stale.json()).data.status).toBe("STALE");
+    expect((await team.state()).tasks[0].statusId).toBe("in_progress");
+    const race = await Promise.all([
+      update(page, 3, []),
+      update(page, 3, items),
+    ]);
+    expect(race.map((result) => result.status()).sort()).toEqual([200, 409]);
+    await postBoard(page, "archive", { taskId, revision: 4 });
+    expect((await update(team.author.page, 5, [])).status()).toBe(409);
+  } finally {
+    await team.close();
+  }
+});
+
+test("groups remove only when unused, including archived tasks, pending requests and concurrent assignment", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const group = async (name: string) =>
+      (
+        await (
+          await postBoard(page, "group", { boardId: team.boardId, name })
+        ).json()
+      ).data.id;
+    const usedId = await group("In use");
+    const emptyId = await group("Empty group");
+    const remove = (id: string, name: string, actor = page) =>
+      postBoard(actor, "remove-group", {
+        boardId: team.boardId,
+        groupId: id,
+        expectedName: name,
+      });
+    const made = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Grouped task",
+      groupId: usedId,
+    });
+    const taskId = (await made.json()).data.taskId;
+    expect((await remove(usedId, "In use")).status()).toBe(409);
+    await postBoard(page, "archive", { taskId, revision: 1 });
+    expect((await remove(usedId, "In use")).status()).toBe(409);
+    expect(
+      (await remove(emptyId, "Empty group", team.author.page)).status(),
+    ).toBe(403);
+    expect((await remove(emptyId, "Wrong name")).status()).toBe(409);
+    await page.goto(`/boards/${team.boardId}`);
+    await page
+      .getByRole("button", { name: "Board details", exact: true })
+      .click();
+    const usedRow = page.locator(`[data-group-id="${usedId}"]`);
+    await expect(
+      usedRow.getByRole("button", { name: "Remove In use group", exact: true }),
+    ).toBeDisabled();
+    const emptyRow = page.locator(`[data-group-id="${emptyId}"]`);
+    await emptyRow
+      .getByRole("button", { name: "Remove Empty group group", exact: true })
+      .click();
+    await emptyRow
+      .getByRole("button", { name: "Confirm group removal", exact: true })
+      .click();
+    await expect(emptyRow).toHaveCount(0);
+    await expect(
+      page.locator('[data-slot="board-notification"]'),
+    ).toContainText("Group removed");
+    const pendingId = await group("Pending group");
+    await team.configure({ requireCreation: true });
+    const proposed = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Proposed task",
+      groupId: pendingId,
+      checklist: [{ id: createRecordId(), text: "Pending step", done: false }],
+    });
+    const proposalId = (await proposed.json()).data.proposalId;
+    expect((await remove(pendingId, "Pending group")).status()).toBe(409);
+    await postApproval(page, "decide", { proposalId, action: "withdraw" });
+    expect((await remove(pendingId, "Pending group")).status()).toBe(200);
+    await team.configure({ enabled: false });
+    const raceId = await group("Race group");
+    const [creation, removal] = await Promise.all([
+      postBoard(page, "create-task", {
+        boardId: team.boardId,
+        createKey: createRecordId(),
+        name: "Race task",
+        groupId: raceId,
+      }),
+      remove(raceId, "Race group"),
+    ]);
+    expect([200, 422]).toContain(creation.status());
+    expect([200, 409]).toContain(removal.status());
+    expect(creation.status() === 200 && removal.status() === 200).toBe(false);
+    const orphan = await getDatabase().task.findMany({
+      where: { groupId: raceId },
+    });
+    if (orphan.length)
+      expect(
+        await getDatabase().boardGroup.findUnique({ where: { id: raceId } }),
+      ).not.toBeNull();
+  } finally {
+    await team.close();
+  }
+});
+
 test("comment mentions notify live, edits retain history and manager removal hides content", async ({
   page,
   browser,

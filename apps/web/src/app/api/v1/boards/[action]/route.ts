@@ -50,6 +50,7 @@ async function handle(request: Request, action: string) {
           "configure-field",
           "remove-field",
           "rename-group",
+          "remove-group",
         ].includes(action)
       )
         data = await manageBoard(action, body, request.headers);

@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { createRecordId } from "@yuzu/database/ids";
 import { needsApproval } from "@/lib/approval-rules";
 import Link from "next/link";
 import { taskDraft, reconcileTaskDraft, editTaskDraft } from "@/lib/task-sync";
@@ -15,6 +16,8 @@ import {
   Users,
   Check,
   History,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import { TaskComments } from "./task-comments";
 import {
@@ -59,6 +62,7 @@ export function TaskEditor({
     createStore(() => ({
       name: task?.name ?? "",
       description: task?.description ?? "",
+      checklist: task?.checklist ?? [],
       statusId: task
         ? (task.statusId ?? "")
         : (state.fields.find((field) => field.key === "status")?.options[0]
@@ -111,6 +115,7 @@ export function TaskEditor({
   const fieldLabels: Record<string, string> = {
     name: "Task name",
     description: "Description",
+    checklist: "Checklist",
     statusId: "Status",
     priority: "Priority",
     dueDate: "Target date",
@@ -134,6 +139,7 @@ export function TaskEditor({
     task ? initialTab : "details",
   );
   const [accessPerson, setAccessPerson] = useState("");
+  const [newChecklistItem, setNewChecklistItem] = useState("");
   const editable = !task || task.canEdit;
   const statusOptions =
     state.fields.find((field) => field.key === "status")?.options ?? [];
@@ -432,6 +438,140 @@ export function TaskEditor({
                 }
               />
             </label>
+            <section
+              className="task-checklist-section"
+              aria-label="Task checklist"
+            >
+              <h3 className="task-section-heading">
+                <ListChecks size={15} />
+                Checklist
+                {draft.checklist.length > 0 && (
+                  <span className="ml-auto">
+                    {draft.checklist.filter((item) => item.done).length}/
+                    {draft.checklist.length}
+                  </span>
+                )}
+              </h3>
+              {draft.checklist.length > 0 && (
+                <progress
+                  aria-label="Task checklist progress"
+                  value={draft.checklist.filter((item) => item.done).length}
+                  max={draft.checklist.length}
+                />
+              )}
+              {!draft.checklist.length && (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Add steps for this task. An empty checklist stays off the task
+                  card.
+                </p>
+              )}
+              <ul className="mt-3 space-y-2">
+                {draft.checklist.map((item, index) => (
+                  <li key={item.id} className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      aria-label={`Complete checklist item ${index + 1}`}
+                      checked={item.done}
+                      onChange={(event) =>
+                        editDraft({
+                          checklist: draft.checklist.map((current) =>
+                            current.id === item.id
+                              ? { ...current, done: event.target.checked }
+                              : current,
+                          ),
+                        })
+                      }
+                    />
+                    <Input
+                      aria-label={`Checklist item ${index + 1}`}
+                      maxLength={300}
+                      required
+                      value={item.text}
+                      className={
+                        item.done ? "text-muted-foreground line-through" : ""
+                      }
+                      onChange={(event) =>
+                        editDraft({
+                          checklist: draft.checklist.map((current) =>
+                            current.id === item.id
+                              ? { ...current, text: event.target.value }
+                              : current,
+                          ),
+                        })
+                      }
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Remove checklist item ${index + 1}`}
+                      onClick={() =>
+                        editDraft({
+                          checklist: draft.checklist.filter(
+                            (current) => current.id !== item.id,
+                          ),
+                        })
+                      }
+                    >
+                      <Trash2 size={14} />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-3 flex gap-2">
+                <Input
+                  aria-label="New checklist item"
+                  placeholder="Add a step…"
+                  maxLength={300}
+                  value={newChecklistItem}
+                  onChange={(event) => setNewChecklistItem(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      if (
+                        newChecklistItem.trim() &&
+                        draft.checklist.length < 100
+                      ) {
+                        editDraft({
+                          checklist: [
+                            ...draft.checklist,
+                            {
+                              id: createRecordId(),
+                              text: newChecklistItem.trim(),
+                              done: false,
+                            },
+                          ],
+                        });
+                        setNewChecklistItem("");
+                      }
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={
+                    !newChecklistItem.trim() || draft.checklist.length >= 100
+                  }
+                  onClick={() => {
+                    editDraft({
+                      checklist: [
+                        ...draft.checklist,
+                        {
+                          id: createRecordId(),
+                          text: newChecklistItem.trim(),
+                          done: false,
+                        },
+                      ],
+                    });
+                    setNewChecklistItem("");
+                  }}
+                >
+                  <Plus size={13} />
+                  Add step
+                </Button>
+              </div>
+            </section>
             {checklistFields.map((field) => {
               const stored = draft.fieldValues[field.id];
               const values = Array.isArray(stored) ? stored : [];

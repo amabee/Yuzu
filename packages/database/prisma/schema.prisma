@@ -246,6 +246,7 @@ model Task {
   board         Board             @relation(fields: [boardId], references: [id], onDelete: Cascade)
   name          String
   description   String            @default("")
+  checklist     Json              @default("[]")
   statusId      String?
   priority      String            @default("NORMAL")
   dueDate       DateTime?         @db.Date
