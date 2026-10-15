@@ -21,17 +21,15 @@ describe("service recovery", () => {
     vi.stubGlobal("window", { dispatchEvent });
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValue(
-          Response.json(
-            {
-              error: { code: "RATE_LIMITED", message: "Wait." },
-              requestId: "r1",
-            },
-            { status: 429, headers: { "Retry-After": "120" } },
-          ),
+      vi.fn().mockResolvedValue(
+        Response.json(
+          {
+            error: { code: "RATE_LIMITED", message: "Wait." },
+            requestId: "r1",
+          },
+          { status: 429, headers: { "Retry-After": "120" } },
         ),
+      ),
     );
     const start = Date.now();
     await expect(apiRequest("/api/v1/session/sign-in")).rejects.toMatchObject({
@@ -50,17 +48,15 @@ describe("service recovery", () => {
     vi.stubGlobal("window", { dispatchEvent });
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValue(
-          Response.json(
-            {
-              error: { code: "MAINTENANCE", message: "Paused." },
-              requestId: "r2",
-            },
-            { status: 503 },
-          ),
+      vi.fn().mockResolvedValue(
+        Response.json(
+          {
+            error: { code: "MAINTENANCE", message: "Paused." },
+            requestId: "r2",
+          },
+          { status: 503 },
         ),
+      ),
     );
     await expect(apiRequest("/api/v1/boards/state")).rejects.toMatchObject({
       code: "MAINTENANCE",
