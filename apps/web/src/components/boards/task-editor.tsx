@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { TaskComments } from "./task-comments";
 import { TaskFiles } from "./task-files";
+import type { TaskUploads } from "./use-task-uploads";
 import type { TransferNoticeHandler } from "@/components/ui/yuzu-toast";
 import {
   AssigneeAvatars,
@@ -49,6 +50,7 @@ export function TaskEditor({
   initialTab = "details",
   onNotice,
   onTransferNotice,
+  uploads,
   syncInterval = 15_000,
 }: {
   state: BoardState;
@@ -61,6 +63,7 @@ export function TaskEditor({
   initialTab?: "details" | "comments";
   onNotice: (message: string, kind: "success" | "error") => void;
   onTransferNotice: TransferNoticeHandler;
+  uploads: TaskUploads;
 }) {
   const [store] = useState(() =>
     createStore(() => ({
@@ -940,6 +943,7 @@ export function TaskEditor({
               hidden={tab !== "files"}
             >
               <TaskFiles
+                uploads={uploads}
                 onTransferNotice={onTransferNotice}
                 state={state}
                 task={task}

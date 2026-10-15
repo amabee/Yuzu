@@ -1684,6 +1684,17 @@ html.theme-ripple::view-transition-group(root) {
 .yuzu-toast[data-state="open"] {
   animation: yuzu-toast-in 220ms ease-out;
 }
+/* Leave the task sheet and its close control clear during background work. */
+body:has(.task-sheet-panel[data-state="open"]) .yuzu-toast-viewport {
+  right: 434px;
+}
+@media (max-width: 860px) {
+  body:has(.task-sheet-panel[data-state="open"]) .yuzu-toast-viewport {
+    top: auto;
+    right: 20px;
+    bottom: 24px;
+  }
+}
 .yuzu-toast[data-state="closed"] {
   animation: yuzu-toast-out 160ms ease-in forwards;
 }

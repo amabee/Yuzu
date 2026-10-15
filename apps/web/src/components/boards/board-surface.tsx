@@ -14,6 +14,7 @@ import {
 } from "@/lib/board-contract";
 import { OperationToast, type BoardNotice } from "./operation-toast";
 import { TaskEditor } from "./task-editor";
+import { useTaskUploads } from "./use-task-uploads";
 import { BoardManagement } from "./board-management";
 import { Input } from "@/components/ui/input";
 import { useState, useRef } from "react";
@@ -75,6 +76,24 @@ export function BoardSurface({
   info?: BoardInfo;
 }) {
   const [notice, setNotice] = useState<BoardNotice | null>(null);
+  const [pendingUploads, setPendingUploads] = useState<
+    Record<string, BoardNotice>
+  >({});
+  const transferNotice = (update: BoardNotice) => {
+    setPendingUploads((current) => {
+      const next = { ...current };
+      if (update.kind === "loading" && update.icon === "upload")
+        next[update.id] = update;
+      else delete next[update.id];
+      return next;
+    });
+    setNotice(update);
+  };
+  const uploads = useTaskUploads(
+    initialState.currentUserId,
+    initialState.boardId,
+    transferNotice,
+  );
   const taskSheetRef = useRef<HTMLDivElement>(null);
   const notify = (message: string, kind: BoardNotice["kind"]) =>
     setNotice({ id: crypto.randomUUID(), message, kind });
@@ -366,7 +385,10 @@ export function BoardSurface({
   );
   return (
     <section className="board-surface" data-connection={live.status}>
-      <OperationToast notice={notice} />
+      <OperationToast
+        notice={notice}
+        pinnedNotices={Object.values(pendingUploads)}
+      />
       <div className="board-view-tabs" aria-label="Board view">
         <Button
           variant="ghost"
@@ -1208,11 +1230,8 @@ export function BoardSurface({
             initialTab={selectedTab}
             syncInterval={live.syncInterval}
             onNotice={notify}
-            onTransferNotice={(update, start) =>
-              setNotice((current) =>
-                start || current?.id === update.id ? update : current,
-              )
-            }
+            onTransferNotice={transferNotice}
+            uploads={uploads}
             pending={busy}
             error={mutation.error?.message}
             onSubmit={(input) =>

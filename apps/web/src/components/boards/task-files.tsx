@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   FileText,
@@ -21,7 +21,8 @@ import {
   formatFileSize,
 } from "@/lib/attachment-contract";
 import { apiRequest } from "@/lib/api-client";
-import { uploadTaskFile, downloadTaskFile } from "@/lib/upload-attachment";
+import { downloadTaskFile } from "@/lib/upload-attachment";
+import type { TaskUploads } from "./use-task-uploads";
 import type { BoardState, BoardTask } from "@/lib/board-contract";
 import { Button } from "@/components/ui/button";
 import type { TransferNoticeHandler } from "@/components/ui/yuzu-toast";
@@ -44,6 +45,7 @@ export function TaskFiles({
   syncInterval,
   onNotice,
   onTransferNotice,
+  uploads,
 }: {
   state: BoardState;
   task: BoardTask;
@@ -51,20 +53,20 @@ export function TaskFiles({
   syncInterval: number;
   onNotice: (message: string, kind: "success" | "error") => void;
   onTransferNotice: TransferNoticeHandler;
+  uploads: TaskUploads;
 }) {
   const client = useQueryClient();
   const queryKey = ["principal", state.currentUserId, "task-files", task.id];
-  const [selection, setSelection] = useState<{
+  const [picked, setSelection] = useState<{
     file: File;
     key: string;
   } | null>(null);
-  const [progress, setProgress] = useState(0);
+  const job = uploads.jobs[task.id];
+  const selection = picked ?? job?.selection ?? null;
+  const progress = job?.progress ?? 0;
   const [removing, setRemoving] = useState<string | null>(null);
-  const controller = useRef<AbortController | null>(null);
-  const uploadToast = useRef("");
   const downloadToast = useRef("");
   const input = useRef<HTMLInputElement | null>(null);
-  useEffect(() => () => controller.current?.abort(), []);
   const query = useQuery({
     queryKey,
     enabled: active,
@@ -90,68 +92,14 @@ export function TaskFiles({
         queryKey: ["principal", state.currentUserId, "boards", state.boardId],
       }),
     ]);
-  const upload = useMutation({
-    mutationKey: queryKey,
-    mutationFn: async (selected: NonNullable<typeof selection>) => {
-      controller.current = new AbortController();
-      setProgress(0);
-      const id = crypto.randomUUID();
-      uploadToast.current = id;
-      onTransferNotice(
-        {
-          id,
-          kind: "loading",
-          title: "Uploading",
-          icon: "upload",
-          message: `${selected.file.name} · ${formatFileSize(selected.file.size)}`,
-          progress: 0,
-        },
-        true,
-      );
-      return uploadTaskFile(
-        task.id,
-        selected.file,
-        selected.key,
-        (percent) => {
-          setProgress(percent);
-          onTransferNotice({
-            id,
-            kind: "loading",
-            title: percent >= 99 ? "Saving file…" : "Uploading",
-            icon: "upload",
-            message: `${selected.file.name} · ${formatFileSize(selected.file.size)}${percent >= 99 ? " · Validating and saving" : ""}`,
-            progress: Math.min(percent, 99),
-          });
-        },
-        controller.current.signal,
-      );
-    },
-    onSuccess: async (_result, selected) => {
-      setSelection(null);
-      if (input.current) input.current.value = "";
-      onTransferNotice({
-        id: uploadToast.current,
-        kind: "success",
-        title: "File uploaded",
-        message: selected.file.name,
-        progress: 100,
-      });
-      await refresh();
-    },
-    onError: (error) => {
-      onTransferNotice({
-        id: uploadToast.current,
-        kind: error.name === "AbortError" ? "neutral" : "error",
-        title:
-          error.name === "AbortError" ? "Upload cancelled" : "Upload failed",
-        message:
-          error.name === "AbortError"
-            ? "You can retry when you’re ready."
-            : error.message,
-      });
-      void refresh();
-    },
-  });
+  const uploadPending = job?.status === "uploading";
+  const uploadFailed = job?.status === "error";
+  const uploadError = job?.error;
+  const startUpload = (selected: NonNullable<typeof selection>) => {
+    uploads.start(task.id, selected);
+    setSelection(null);
+    if (input.current) input.current.value = "";
+  };
   const remove = useMutation({
     mutationKey: queryKey,
     mutationFn: (id: string) =>
@@ -254,7 +202,7 @@ export function TaskFiles({
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={upload.isPending || remove.isPending}
+                  disabled={uploadPending || remove.isPending}
                   onClick={() => input.current?.click()}
                 >
                   <Paperclip size={14} />
@@ -267,11 +215,11 @@ export function TaskFiles({
                 type="file"
                 aria-label="Choose a file"
                 accept={accept}
-                disabled={upload.isPending || remove.isPending}
+                disabled={uploadPending || remove.isPending}
                 hidden
                 onChange={(event) => {
                   const file = event.target.files?.[0];
-                  upload.reset();
+                  uploads.reset(task.id);
                   setSelection(
                     file ? { file, key: crypto.randomUUID() } : null,
                   );
@@ -289,17 +237,17 @@ export function TaskFiles({
                       </p>
                       <p className="mt-1 text-[11px] text-muted-foreground">
                         {formatFileSize(selection.file.size)}
-                        {!upload.isPending && " • Selected"}
+                        {!uploadPending && " • Selected"}
                       </p>
                     </div>
-                    {!upload.isPending && (
+                    {!uploadPending && (
                       <Button
                         size="icon-sm"
                         variant="ghost"
                         aria-label="Clear selected file"
                         onClick={() => {
                           setSelection(null);
-                          upload.reset();
+                          uploads.reset(task.id);
                           if (input.current) input.current.value = "";
                         }}
                       >
@@ -320,21 +268,21 @@ export function TaskFiles({
                     <div className="mt-3 flex items-center gap-2">
                       <Button
                         size="sm"
-                        disabled={upload.isPending || remove.isPending}
-                        onClick={() => upload.mutate(selection)}
+                        disabled={uploadPending || remove.isPending}
+                        onClick={() => startUpload(selection)}
                       >
                         <Upload size={14} />
-                        {upload.isPending
+                        {uploadPending
                           ? "Uploading…"
-                          : upload.isError
+                          : uploadFailed
                             ? "Retry upload"
                             : "Upload file"}
                       </Button>
-                      {upload.isPending && (
+                      {uploadPending && (
                         <Button
                           size="sm"
                           variant="ghost"
-                          onClick={() => controller.current?.abort()}
+                          onClick={() => uploads.cancel(task.id)}
                         >
                           <X size={14} />
                           Cancel upload
@@ -344,7 +292,7 @@ export function TaskFiles({
                   )}
                 </div>
               )}
-              {upload.isPending && (
+              {uploadPending && (
                 <div className="mt-3">
                   <progress
                     className="h-1.5 w-full accent-primary"
@@ -361,9 +309,9 @@ export function TaskFiles({
                   </p>
                 </div>
               )}
-              {upload.error && upload.error.name !== "AbortError" && (
+              {uploadError && uploadError.name !== "AbortError" && (
                 <p role="alert" className="mt-3 text-xs text-destructive">
-                  {upload.error.message}
+                  {uploadError.message}
                 </p>
               )}
               <details className="task-file-policy">
@@ -457,7 +405,7 @@ export function TaskFiles({
                           size="icon-sm"
                           variant="ghost"
                           aria-label={`Remove ${file.fileName}`}
-                          disabled={remove.isPending || upload.isPending}
+                          disabled={remove.isPending || uploadPending}
                           onClick={() => setRemoving(file.id)}
                         >
                           <Trash2 size={15} className="text-muted-foreground" />

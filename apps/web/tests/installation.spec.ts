@@ -4157,13 +4157,11 @@ test("file transfer toasts show pending work and settle on success, cancellation
       await held;
       await route.continue().catch(() => {});
     });
-    await page
-      .getByLabel("Choose a file", { exact: true })
-      .setInputFiles({
-        name: "Reference.txt",
-        mimeType: "text/plain",
-        buffer: Buffer.from("Task reference"),
-      });
+    await page.getByLabel("Choose a file", { exact: true }).setInputFiles({
+      name: "Reference.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("Task reference"),
+    });
     await page
       .getByRole("button", { name: "Upload file", exact: true })
       .click();
@@ -4171,15 +4169,52 @@ test("file transfer toasts show pending work and settle on success, cancellation
     await expect(toast).toContainText("Reference.txt");
     await expect(toast.locator("progress")).toBeVisible();
     await expect(toast).toHaveCount(1);
+    await expect(
+      toast.getByRole("button", {
+        name: "Dismiss notification",
+        includeHidden: true,
+      }),
+    ).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(toast).toBeVisible();
+    await page.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(page.locator(".task-sheet-panel")).toHaveCount(0);
+    await expect(toast).toHaveAttribute("data-variant", "loading");
+    await expect(toast).toContainText("Uploading");
+    await page
+      .getByRole("button", { name: "Transfer feedback", exact: true })
+      .click();
+    await page.getByRole("tab", { name: /Files/ }).click();
+    await expect(
+      page.getByRole("button", { name: "Uploading…", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "Cancel upload", exact: true }),
+    ).toBeVisible();
     await page.screenshot({
       path: "../../artifacts/phase-3/file-upload-toast.png",
       fullPage: true,
     });
+    await page.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(page.locator(".task-sheet-panel")).toHaveCount(0);
     releaseUpload();
     await expect(toast).toHaveAttribute("data-variant", "success");
     await expect(toast).toContainText("File uploaded");
     await expect(toast.locator("progress")).toHaveAttribute("value", "100");
+    await expect(
+      toast.getByRole("button", {
+        name: "Dismiss notification",
+        includeHidden: true,
+      }),
+    ).toBeVisible();
     await page.unroute(uploadPattern);
+    await page
+      .getByRole("button", { name: "Transfer feedback", exact: true })
+      .click();
+    await page.getByRole("tab", { name: /Files/ }).click();
+    await expect(
+      page.getByRole("button", { name: "Download Reference.txt", exact: true }),
+    ).toBeVisible();
     const taskId = (await team.state()).tasks[0].id;
     const file = await getDatabase().taskAttachment.findFirstOrThrow({
       where: { taskId, removedAt: null },
@@ -4240,13 +4275,11 @@ test("file transfer toasts show pending work and settle on success, cancellation
         },
       });
     });
-    await page
-      .getByLabel("Choose a file", { exact: true })
-      .setInputFiles({
-        name: "Other.txt",
-        mimeType: "text/plain",
-        buffer: Buffer.from("Another reference"),
-      });
+    await page.getByLabel("Choose a file", { exact: true }).setInputFiles({
+      name: "Other.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("Another reference"),
+    });
     await page
       .getByRole("button", { name: "Upload file", exact: true })
       .click();

@@ -1,6 +1,6 @@
 "use client";
 import type { ReactNode } from "react";
-import { Toast } from "radix-ui";
+import { Toast, Portal } from "radix-ui";
 import {
   Info,
   CheckCircle2,
@@ -28,6 +28,7 @@ export type YuzuToastNotice = {
   title?: string;
   duration?: number | null;
   progress?: number;
+  dismissible?: boolean;
   icon?: "download" | "upload" | "copy" | "moon";
   action?: { label: string; onClick: () => void; altText?: string };
 };
@@ -121,14 +122,32 @@ export function ToastVisual({
     </>
   );
 }
-export function YuzuToast({ notice }: { notice: YuzuToastNotice | null }) {
+export function YuzuToast({
+  notice,
+  pinnedNotices = [],
+}: {
+  notice: YuzuToastNotice | null;
+  pinnedNotices?: YuzuToastNotice[];
+}) {
+  const notices = [
+    ...pinnedNotices,
+    ...(notice && !pinnedNotices.some((pending) => pending.id === notice.id)
+      ? [notice]
+      : []),
+  ];
   return (
     <Toast.Provider duration={5000} swipeDirection="right" label="Notification">
-      {notice && (
+      {notices.map((notice) => (
         <Toast.Root
           key={notice.id}
           defaultOpen
           duration={toastDuration(notice)}
+          onEscapeKeyDown={(event) => {
+            if (notice.dismissible === false) event.preventDefault();
+          }}
+          onSwipeStart={(event) => {
+            if (notice.dismissible === false) event.preventDefault();
+          }}
           data-slot="board-notification"
           data-variant={notice.kind}
           className="yuzu-toast"
@@ -166,17 +185,21 @@ export function YuzuToast({ notice }: { notice: YuzuToastNotice | null }) {
               )
             }
             close={
-              <Toast.Close
-                aria-label="Dismiss notification"
-                className="yuzu-toast-close"
-              >
-                <X size={13} />
-              </Toast.Close>
+              notice.dismissible !== false ? (
+                <Toast.Close
+                  aria-label="Dismiss notification"
+                  className="yuzu-toast-close"
+                >
+                  <X size={13} />
+                </Toast.Close>
+              ) : undefined
             }
           />
         </Toast.Root>
-      )}
-      <Toast.Viewport className="yuzu-toast-viewport" />
+      ))}
+      <Portal.Root>
+        <Toast.Viewport className="yuzu-toast-viewport" />
+      </Portal.Root>
     </Toast.Provider>
   );
 }
