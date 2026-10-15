@@ -279,6 +279,7 @@ export const commentCreateSchema = z
     taskId: recordId,
     createKey: recordId,
     body: z.string().trim().min(1).max(5000),
+    mentionIds: ids.default([]),
   })
   .strict();
 export const commentsSchema = z.array(
@@ -287,6 +288,38 @@ export const commentsSchema = z.array(
     authorId: personId,
     authorName: z.string(),
     body: z.string(),
+    createdAt: z.string(),
+    revision: z.number().int().positive(),
+    mentions: z.array(z.object({ id: personId, name: z.string() })),
+    deletedAt: z.string().nullable(),
+    canEdit: z.boolean(),
+    canRemove: z.boolean(),
+  }),
+);
+export const commentChangeSchema = z.discriminatedUnion("action", [
+  z
+    .object({
+      action: z.literal("edit"),
+      commentId: recordId,
+      revision: z.number().int().positive(),
+      body: z.string().trim().min(1).max(5000),
+      mentionIds: ids.default([]),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("remove"),
+      commentId: recordId,
+      revision: z.number().int().positive(),
+    })
+    .strict(),
+]);
+export const commentHistorySchema = z.array(
+  z.object({
+    revision: z.number().int().positive(),
+    action: z.string(),
+    body: z.string(),
+    actorName: z.string(),
     createdAt: z.string(),
   }),
 );

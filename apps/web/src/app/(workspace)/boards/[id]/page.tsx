@@ -14,7 +14,7 @@ export default async function BoardPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ task?: string }>;
+  searchParams: Promise<{ task?: string; tab?: string }>;
 }) {
   const { user } = await workspaceContext();
   const board = await getDatabase().board.findFirst({
@@ -62,6 +62,7 @@ export default async function BoardPage({
         </div>
       </div>
       <BoardSurface
+        initialCommentsTab={(await searchParams).tab === "comments"}
         initialTaskId={
           z
             .string()

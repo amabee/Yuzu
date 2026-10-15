@@ -70,6 +70,7 @@ model User {
   taskActivity            TaskActivity[]
   fieldPeople             TaskFieldPerson[]
   comments                TaskComment[]
+  commentRevisions        CommentRevision[]
   accessEvents            AccessEvent[]
   primaryApprovalPolicies BoardApprovalPolicy[] @relation("PrimaryApprover")
   backupApprovalPolicies  BoardApprovalPolicy[] @relation("BackupApprover")
@@ -364,17 +365,37 @@ model BoardEvent {
 }
 
 model TaskComment {
-  id        String   @id @default(uuid(7))
-  taskId    String
-  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  authorId  String
-  author    User     @relation(fields: [authorId], references: [id], onDelete: Restrict)
-  createKey String
-  body      String
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  id           String            @id @default(uuid(7))
+  taskId       String
+  task         Task              @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorId     String
+  author       User              @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  createKey    String
+  body         String
+  revision     Int               @default(1)
+  createDigest String?
+  mentions     Json              @default("[]")
+  deletedAt    DateTime?         @db.Timestamptz(3)
+  revisions    CommentRevision[]
+  createdAt    DateTime          @default(now()) @db.Timestamptz(3)
 
   @@unique([taskId, authorId, createKey])
   @@index([taskId, createdAt])
+}
+
+model CommentRevision {
+  id        String      @id @default(uuid(7))
+  commentId String
+  comment   TaskComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  actorId   String
+  actor     User        @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  revision  Int
+  action    String
+  body      String
+  mentions  Json
+  createdAt DateTime    @default(now()) @db.Timestamptz(3)
+
+  @@unique([commentId, revision])
 }
 
 enum ApprovalOperation {
@@ -438,6 +459,7 @@ model BoardProposal {
 }
 
 enum NotificationKind {
+  MENTION
   ASSIGNMENT
   APPROVAL_REQUEST
   APPROVAL_DECISION

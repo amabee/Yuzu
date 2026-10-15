@@ -86,7 +86,8 @@ workspaces, boards, flexible fields, and core collaboration.
 - [ ] Remaining profile/account and workspace lifecycle administration
 - [x] Approval policies, primary/backup decisions, and a private review queue
 - [x] Realtime board synchronization and persistent assignment/approval notifications
-- [ ] Mentions, comment edit history, files, and saved views
+- [x] Teammate mentions, comment editing with history, and authorized removal
+- [ ] Files and saved views
 - [ ] Dashboards, CSV exchange, and complete OpenAPI documentation
 - [ ] Workflow automation and Blueprint/App Builder exploration
 - [ ] Release deployment, recovery, and pilot verification
@@ -98,6 +99,10 @@ assignments, approval requests and decisions, including updates received offline
 Opening a notification rechecks current access before linking to its task or
 review sheet. Mark individual notifications read/unread or clear the current
 unread backlog; newer arrivals remain unread.
+In a task's **Comments** tab, choose a teammate under **Mention a teammate** to
+notify them. Authors can edit their comments and inspect previous versions;
+authors and board managers can remove comments. Removal hides the content and
+keeps an audit record. Archived tasks remain read-only.
 See [Board engine](docs/board-engine.md) for permissions and API contracts.
 
 ## Technology

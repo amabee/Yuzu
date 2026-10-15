@@ -2,7 +2,12 @@ import { z } from "zod";
 import { recordId } from "./id-contract";
 export const notificationSchema = z.object({
   id: recordId,
-  kind: z.enum(["ASSIGNMENT", "APPROVAL_REQUEST", "APPROVAL_DECISION"]),
+  kind: z.enum([
+    "ASSIGNMENT",
+    "APPROVAL_REQUEST",
+    "APPROVAL_DECISION",
+    "MENTION",
+  ]),
   message: z.string(),
   actorName: z.string(),
   name: z.string(),

@@ -16,6 +16,8 @@ import {
 } from "@/lib/approval-rules";
 import type { TaskMutationResult } from "@/lib/approval-contract";
 import { createNotifications } from "./notification-events";
+import { mentionPresent } from "@/lib/comment-mentions";
+import { commentChangeSchema } from "@/lib/board-contract";
 import {
   boardCreateSchema,
   boardManagerSchema,
@@ -309,7 +311,7 @@ export async function saveValues(
   }
 }
 const taskInclude = {
-  _count: { select: { comments: true } },
+  _count: { select: { comments: { where: { deletedAt: null } } } },
   createdBy: { select: { name: true } },
   assignees: true,
   editors: true,
@@ -387,6 +389,21 @@ export async function boardState(
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     const policy = await readApprovalPolicy(tx, context.board);
+    const commentEvents = await tx.boardEvent.findMany({
+      where: {
+        boardId,
+        action: {
+          in: [
+            "Added task comment",
+            "Edited task comment",
+            "Removed task comment",
+          ],
+        },
+      },
+      include: { actor: { select: { name: true } } },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
     const visiblePending = await tx.boardProposal.findMany({
       where: {
         boardId,
@@ -447,12 +464,21 @@ export async function boardState(
         revision: task.revision,
         canEdit: !task.archivedAt && canEdit(task, context),
         commentCount: task._count.comments,
-        activity: task.activity.map((event) => ({
-          id: event.id,
-          action: event.action,
-          actor: event.actor.name,
-          createdAt: event.createdAt.toISOString(),
-        })),
+        activity: [
+          ...task.activity,
+          ...commentEvents.filter(
+            (event) =>
+              (event.after as { taskId?: string } | null)?.taskId === task.id,
+          ),
+        ]
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+          .slice(0, 20)
+          .map((event) => ({
+            id: event.id,
+            action: event.action,
+            actor: event.actor.name,
+            createdAt: event.createdAt.toISOString(),
+          })),
       })),
     };
   });
@@ -1145,10 +1171,10 @@ export async function taskComments(taskId: string, headers: Headers) {
   return db().$transaction(async (tx) => {
     const task = await tx.task.findUnique({
       where: { id: taskId },
-      select: { boardId: true },
+      select: { boardId: true, archivedAt: true },
     });
     if (!task) throw notFound();
-    await access(tx, user.id, task.boardId);
+    const context = await access(tx, user.id, task.boardId);
     const comments = await tx.taskComment.findMany({
       where: { taskId },
       include: { author: { select: { name: true } } },
@@ -1161,6 +1187,15 @@ export async function taskComments(taskId: string, headers: Headers) {
       authorName: comment.author.name,
       body: comment.body,
       createdAt: comment.createdAt.toISOString(),
+      revision: comment.revision,
+      mentions: comment.deletedAt ? [] : comment.mentions,
+      deletedAt: comment.deletedAt?.toISOString() ?? null,
+      canEdit:
+        !task.archivedAt && !comment.deletedAt && comment.authorId === user.id,
+      canRemove:
+        !task.archivedAt &&
+        !comment.deletedAt &&
+        (comment.authorId === user.id || context.canManage),
     }));
   });
 }
@@ -1173,7 +1208,7 @@ export async function createComment(input: unknown, headers: Headers) {
       select: { boardId: true, archivedAt: true },
     });
     if (!task) throw notFound();
-    await access(tx, user.id, task.boardId, true);
+    const context = await access(tx, user.id, task.boardId, true);
     if (task.archivedAt)
       throw new SetupError(
         409,
@@ -1190,7 +1225,16 @@ export async function createComment(input: unknown, headers: Headers) {
       },
     });
     if (existing) {
-      if (existing.body !== body.body)
+      if (
+        (existing.createDigest ??
+          digest(stableJson({ body: existing.body, mentionIds: [] }))) !==
+        digest(
+          stableJson({
+            body: body.body,
+            mentionIds: [...body.mentionIds].sort(),
+          }),
+        )
+      )
         throw new SetupError(
           409,
           "COMMENT_CHANGED",
@@ -1198,9 +1242,231 @@ export async function createComment(input: unknown, headers: Headers) {
         );
       return { id: existing.id };
     }
-    return tx.taskComment.create({
-      data: { ...body, authorId: user.id },
-      select: { id: true },
+    const mentions = await validateCommentMentions(
+      tx,
+      context.board.workspaceId,
+      body.body,
+      body.mentionIds,
+    );
+    const { mentionIds, ...data } = body;
+    const comment = await tx.taskComment.create({
+      data: {
+        ...data,
+        authorId: user.id,
+        mentions,
+        createDigest: digest(
+          stableJson({ body: body.body, mentionIds: [...mentionIds].sort() }),
+        ),
+        revisions: {
+          create: {
+            actorId: user.id,
+            revision: 1,
+            action: "Created comment",
+            body: body.body,
+            mentions,
+          },
+        },
+      },
     });
+    await createNotifications(tx, {
+      recipientIds: mentionIds,
+      actorId: user.id,
+      boardId: task.boardId,
+      taskId: body.taskId,
+      kind: "MENTION",
+      message: "mentioned you in a comment",
+      eventKey: `comment:${comment.id}:mentions:1`,
+    });
+    await tx.boardEvent.create({
+      data: {
+        boardId: task.boardId,
+        actorId: user.id,
+        subjectId: comment.id,
+        action: "Added task comment",
+        after: { taskId: body.taskId, revision: 1 },
+      },
+    });
+    return { id: comment.id };
+  });
+}
+
+async function validateCommentMentions(
+  tx: DatabaseTransaction,
+  workspaceId: string,
+  body: string,
+  mentionIds: string[],
+) {
+  const people = await eligiblePeople(tx, workspaceId);
+  return mentionIds.map((id) => {
+    const person = people.find((person) => person.id === id);
+    if (!person || !mentionPresent(body, person.name))
+      throw new SetupError(
+        422,
+        "INVALID_MENTION",
+        "Choose a teammate with current board access and keep their @name in the comment.",
+      );
+    return { id, name: person.name };
+  });
+}
+export async function changeComment(input: unknown, headers: Headers) {
+  const body = commentChangeSchema.parse(input);
+  const { user } = await requireIdentity(headers);
+  return serial(async (tx) => {
+    const comment = await tx.taskComment.findUnique({
+      where: { id: body.commentId },
+      include: { task: { select: { boardId: true, archivedAt: true } } },
+    });
+    if (!comment) throw notFound();
+    const context = await access(tx, user.id, comment.task.boardId, true);
+    if (
+      body.action === "edit"
+        ? comment.authorId !== user.id
+        : comment.authorId !== user.id && !context.canManage
+    )
+      throw new SetupError(
+        403,
+        "FORBIDDEN",
+        "Only the author may edit a comment. The author or a board manager may remove it.",
+      );
+    if (comment.task.archivedAt)
+      throw new SetupError(
+        409,
+        "TASK_ARCHIVED",
+        "Archived tasks are read-only.",
+      );
+    if (comment.deletedAt || comment.revision !== body.revision)
+      throw new SetupError(
+        409,
+        "COMMENT_CHANGED",
+        "This comment changed. Load the latest comment before saving again.",
+      );
+    const mentions =
+      body.action === "edit"
+        ? await validateCommentMentions(
+            tx,
+            context.board.workspaceId,
+            body.body,
+            body.mentionIds,
+          )
+        : [];
+    if (
+      body.action === "edit" &&
+      body.body === comment.body &&
+      stableJson(mentions) === stableJson(comment.mentions)
+    )
+      return { taskId: comment.taskId, id: comment.id };
+    // Older comments gain their original snapshot lazily without rewriting history.
+    await tx.commentRevision.upsert({
+      where: { commentId_revision: { commentId: comment.id, revision: 1 } },
+      create: {
+        commentId: comment.id,
+        revision: 1,
+        actorId: comment.authorId,
+        action: "Created comment",
+        body: comment.body,
+        mentions: comment.mentions!,
+        createdAt: comment.createdAt,
+      },
+      update: {},
+    });
+    const revision = comment.revision + 1;
+    const nextBody = body.action === "edit" ? body.body : "";
+    await tx.taskComment.update({
+      where: { id: comment.id },
+      data: {
+        body: nextBody,
+        mentions,
+        revision,
+        deletedAt: body.action === "remove" ? new Date() : null,
+        createDigest:
+          comment.createDigest ??
+          digest(stableJson({ body: comment.body, mentionIds: [] })),
+      },
+    });
+    await tx.commentRevision.create({
+      data: {
+        commentId: comment.id,
+        revision,
+        actorId: user.id,
+        action: body.action === "edit" ? "Edited comment" : "Removed comment",
+        body: nextBody,
+        mentions,
+      },
+    });
+    if (body.action === "edit") {
+      const previous = z
+        .array(z.object({ id: z.string() }))
+        .parse(comment.mentions);
+      await tx.notification.deleteMany({
+        where: {
+          kind: "MENTION",
+          eventKey: { startsWith: `comment:${comment.id}:mentions:` },
+          recipientId: { notIn: body.mentionIds },
+        },
+      });
+      await createNotifications(tx, {
+        recipientIds: body.mentionIds.filter(
+          (id) => !previous.some((person) => person.id === id),
+        ),
+        actorId: user.id,
+        boardId: comment.task.boardId,
+        taskId: comment.taskId,
+        kind: "MENTION",
+        message: "mentioned you in a comment",
+        eventKey: `comment:${comment.id}:mentions:${revision}`,
+      });
+    } else {
+      await tx.notification.deleteMany({
+        where: {
+          kind: "MENTION",
+          eventKey: { startsWith: `comment:${comment.id}:mentions:` },
+        },
+      });
+    }
+    await tx.boardEvent.create({
+      data: {
+        boardId: comment.task.boardId,
+        actorId: user.id,
+        subjectId: comment.id,
+        action:
+          body.action === "edit"
+            ? "Edited task comment"
+            : "Removed task comment",
+        after: { taskId: comment.taskId, revision },
+      },
+    });
+    return {
+      taskId: comment.taskId,
+      id: comment.id,
+      affectedUserIds: z
+        .array(z.object({ id: z.string() }))
+        .parse(comment.mentions)
+        .map((person) => person.id),
+    };
+  });
+}
+export async function commentHistory(commentId: string, headers: Headers) {
+  const { user } = await requireIdentity(headers);
+  return db().$transaction(async (tx) => {
+    const comment = await tx.taskComment.findUnique({
+      where: { id: commentId },
+      include: { task: { select: { boardId: true } } },
+    });
+    if (!comment) throw notFound();
+    await access(tx, user.id, comment.task.boardId);
+    if (comment.deletedAt) return []; // Removal hides the content, including old versions.
+    const rows = await tx.commentRevision.findMany({
+      where: { commentId },
+      include: { actor: { select: { name: true } } },
+      orderBy: { revision: "desc" },
+      take: 50,
+    });
+    return rows.map((row) => ({
+      revision: row.revision,
+      action: row.action,
+      body: row.body,
+      actorName: row.actor.name,
+      createdAt: row.createdAt.toISOString(),
+    }));
   });
 }

@@ -3896,6 +3896,316 @@ async function approvalTeam(
   };
 }
 
+test("comment mentions notify live, edits retain history and manager removal hides content", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const made = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Mention conversation",
+    });
+    const taskId = (await made.json()).data.taskId;
+    await team.backup.page.goto("/notifications");
+    await team.author.page.goto(
+      `/boards/${team.boardId}?task=${taskId}&tab=comments`,
+    );
+    await team.author.page
+      .getByRole("textbox", { name: "New comment", exact: true })
+      .fill("Please review this");
+    await team.author.page
+      .getByLabel("Mention teammate: New comment", { exact: true })
+      .selectOption(team.backup.id);
+    await team.author.page
+      .getByRole("button", { name: "Post comment", exact: true })
+      .click();
+    await expect(
+      team.backup.page.getByRole("link", {
+        name: "Notifications (1 unread)",
+        exact: true,
+      }),
+    ).toBeVisible();
+    const comment = await getDatabase().taskComment.findFirstOrThrow({
+      where: { taskId },
+    });
+    const row = team.author.page.locator(`[data-comment-id="${comment.id}"]`);
+    await expect(row).toContainText("Please review this @Backup Reviewer");
+    const notification = (await readInbox(team.backup.page)).items[0];
+    expect(notification.kind).toBe("MENTION");
+    const link = await changeInbox(team.backup.page, {
+      action: "open",
+      id: notification.id,
+    });
+    await team.backup.page.goto((await link.json()).data.href);
+    await expect(team.backup.page.getByRole("dialog")).toBeVisible();
+    await expect(
+      team.backup.page.locator(".task-comments-panel"),
+    ).toBeVisible();
+    await expect(
+      team.backup.page.getByRole("button", { name: "Edit", exact: true }),
+    ).toHaveCount(0);
+    await row.getByRole("button", { name: "Edit", exact: true }).click();
+    await team.author.page
+      .getByRole("textbox", { name: "Edit comment", exact: true })
+      .fill("Updated review notes @Backup Reviewer");
+    await team.author.page
+      .getByRole("button", { name: "Save comment", exact: true })
+      .click();
+    await expect(row).toContainText("Updated review notes @Backup Reviewer");
+    // Existing mentions do not generate duplicate notifications on every edit.
+    expect(
+      await getDatabase().notification.count({
+        where: { kind: "MENTION", taskId },
+      }),
+    ).toBe(1);
+    await row.getByRole("button", { name: "History", exact: true }).click();
+    await expect(
+      team.author.page.getByLabel("Comment edit history"),
+    ).toContainText("Please review this @Backup Reviewer");
+    await team.author.page.screenshot({
+      path: "../../artifacts/comments/history-desktop.png",
+      fullPage: true,
+    });
+    await team.author.page.setViewportSize({ width: 390, height: 844 });
+    await team.author.page.screenshot({
+      path: "../../artifacts/comments/history-mobile.png",
+      fullPage: true,
+    });
+    await page.goto(`/boards/${team.boardId}?task=${taskId}&tab=comments`);
+    const managed = page.locator(`[data-comment-id="${comment.id}"]`);
+    await expect(
+      managed.getByRole("button", { name: "Edit", exact: true }),
+    ).toHaveCount(0);
+    await managed.getByRole("button", { name: "Remove", exact: true }).click();
+    await managed
+      .getByRole("button", { name: "Remove comment", exact: true })
+      .click();
+    await expect(row).toContainText("Comment removed");
+    await expect(row).not.toContainText("Updated review notes");
+    expect(
+      (
+        await (
+          await team.author.page.request.get(
+            `/api/v1/boards/comment-history?commentId=${comment.id}`,
+          )
+        ).json()
+      ).data,
+    ).toEqual([]);
+    expect(
+      await getDatabase().commentRevision.count({
+        where: { commentId: comment.id },
+      }),
+    ).toBe(3);
+    expect((await readInbox(team.backup.page)).items).toHaveLength(0);
+    expect((await team.state()).tasks[0].revision).toBe(1);
+    expect((await team.state()).tasks[0].commentCount).toBe(0);
+    expect(
+      (await team.state()).tasks[0].activity.some(
+        (event: { action: string }) => event.action === "Removed task comment",
+      ),
+    ).toBe(true);
+  } finally {
+    await team.close();
+  }
+});
+
+test("comment changes enforce author rights, revision races, mention eligibility and legacy retries", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const db = getDatabase();
+    const made = await postBoard(page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Protected comments",
+    });
+    const taskId = (await made.json()).data.taskId;
+    const input = {
+      taskId,
+      createKey: createRecordId(),
+      body: "Hello @Backup Reviewer",
+      mentionIds: [team.backup.id],
+    };
+    const [one, two] = await Promise.all([
+      postBoard(team.author.page, "comment", input),
+      postBoard(team.author.page, "comment", input),
+    ]);
+    expect([one.status(), two.status()]).toEqual([200, 200]);
+    const commentId = (await one.json()).data.id;
+    expect(
+      await db.notification.count({ where: { kind: "MENTION", taskId } }),
+    ).toBe(1);
+    expect(
+      (
+        await postBoard(team.author.page, "comment", {
+          ...input,
+          mentionIds: [team.ownerId],
+        })
+      ).status(),
+    ).toBe(409);
+    expect(
+      (
+        await postBoard(team.author.page, "comment", {
+          ...input,
+          createKey: createRecordId(),
+          body: "No mention text",
+        })
+      ).status(),
+    ).toBe(422);
+    const outsider = await db.user.create({
+      data: { name: "Outsider", email: "outsider@mention.test" },
+    });
+    expect(
+      (
+        await postBoard(team.author.page, "comment", {
+          ...input,
+          createKey: createRecordId(),
+          body: "Hello @Outsider",
+          mentionIds: [outsider.id],
+        })
+      ).status(),
+    ).toBe(422);
+    const edit = {
+      action: "edit",
+      commentId,
+      revision: 1,
+      body: "First change @Backup Reviewer",
+      mentionIds: [team.backup.id],
+    };
+    expect((await postBoard(page, "change-comment", edit)).status()).toBe(403);
+    expect(
+      (
+        await postBoard(team.backup.page, "change-comment", {
+          action: "remove",
+          commentId,
+          revision: 1,
+        })
+      ).status(),
+    ).toBe(403);
+    const concurrent = await Promise.all([
+      postBoard(team.author.page, "change-comment", edit),
+      postBoard(team.author.page, "change-comment", {
+        ...edit,
+        body: "Second change @Backup Reviewer",
+      }),
+    ]);
+    expect(concurrent.map((response) => response.status()).sort()).toEqual([
+      200, 409,
+    ]);
+    expect(await db.commentRevision.count({ where: { commentId } })).toBe(2);
+    expect(
+      await db.notification.count({ where: { kind: "MENTION", taskId } }),
+    ).toBe(1);
+    expect((await postBoard(team.author.page, "comment", input)).status()).toBe(
+      200,
+    ); // Original creation retry survives edits.
+    expect(
+      (await postBoard(team.author.page, "change-comment", edit)).status(),
+    ).toBe(409);
+    const legacyKey = createRecordId();
+    const legacy = await db.taskComment.create({
+      data: {
+        taskId,
+        authorId: team.author.id,
+        createKey: legacyKey,
+        body: "Legacy text",
+      },
+    });
+    expect(
+      (
+        await postBoard(team.author.page, "change-comment", {
+          action: "edit",
+          commentId: legacy.id,
+          revision: 1,
+          body: "Modern text",
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postBoard(team.author.page, "comment", {
+          taskId,
+          createKey: legacyKey,
+          body: "Legacy text",
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await (
+          await team.author.page.request.get(
+            `/api/v1/boards/comment-history?commentId=${legacy.id}`,
+          )
+        ).json()
+      ).data.map((row: { body: string }) => row.body),
+    ).toEqual(["Modern text", "Legacy text"]);
+    await postBoard(page, "archive", { taskId, revision: 1 });
+    expect(
+      (
+        await postBoard(team.author.page, "change-comment", {
+          ...edit,
+          revision: 2,
+        })
+      ).status(),
+    ).toBe(409);
+    expect(
+      (
+        await postBoard(page, "change-comment", {
+          action: "remove",
+          commentId,
+          revision: 2,
+        })
+      ).status(),
+    ).toBe(409);
+    await postBoard(page, "restore", { taskId, revision: 2 });
+    await db.installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: true },
+    });
+    expect(
+      (
+        await postBoard(team.author.page, "change-comment", {
+          ...edit,
+          revision: 2,
+        })
+      ).status(),
+    ).toBe(503);
+    await db.installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: false },
+    });
+    await db.workspaceMember.delete({
+      where: {
+        workspaceId_userId: {
+          workspaceId: team.workspaceId,
+          userId: team.author.id,
+        },
+      },
+    });
+    expect(
+      (
+        await postBoard(team.author.page, "change-comment", {
+          ...edit,
+          revision: 2,
+        })
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await team.author.page.request.get(
+          `/api/v1/boards/comment-history?commentId=${commentId}`,
+        )
+      ).status(),
+    ).toBe(404);
+  } finally {
+    await team.close();
+  }
+});
+
 test("approval UI keeps pending moves off the board and routes owner requests to the backup", async ({
   page,
   browser,

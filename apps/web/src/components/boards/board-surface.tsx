@@ -61,11 +61,13 @@ export function BoardSurface({
   statuses: initialStatuses,
   initialState,
   initialTaskId,
+  initialCommentsTab,
   group,
   info,
 }: {
   initialState: BoardState;
   initialTaskId?: string;
+  initialCommentsTab?: boolean;
   name: string;
   fields: { id: string; name: string; type?: string }[];
   statuses: string[];
@@ -118,7 +120,7 @@ export function BoardSurface({
   const [groupFilter, setGroupFilter] = useState("");
   const [sort, setSort] = useState("created");
   const [selectedTab, setSelectedTab] = useState<"details" | "comments">(
-    "details",
+    initialCommentsTab ? "comments" : "details",
   );
   const [selectedId, setSelectedId] = useState<string | null>(
     initialState.tasks.some((task) => task.id === initialTaskId)

@@ -10,7 +10,7 @@ export async function createNotifications(
     boardId: string;
     taskId?: string | null;
     proposalId?: string;
-    kind: "ASSIGNMENT" | "APPROVAL_REQUEST" | "APPROVAL_DECISION";
+    kind: "ASSIGNMENT" | "APPROVAL_REQUEST" | "APPROVAL_DECISION" | "MENTION";
     message: string;
     eventKey: string;
   },

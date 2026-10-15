@@ -11,6 +11,7 @@ import {
   ArrowUpRight,
   Inbox,
   Circle,
+  AtSign,
 } from "lucide-react";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
@@ -254,7 +255,11 @@ export function NotificationInboxView({
         <ul className="notification-surface divide-y divide-border overflow-hidden">
           {items.map((item) => {
             const Icon =
-              item.kind === "ASSIGNMENT" ? UserRoundPlus : CheckCheck;
+              item.kind === "MENTION"
+                ? AtSign
+                : item.kind === "ASSIGNMENT"
+                  ? UserRoundPlus
+                  : CheckCheck;
             return (
               <li
                 key={item.id}

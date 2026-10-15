@@ -22,6 +22,7 @@ function visibility(user: { id: string; role: string }) {
       : {
           OR: [
             { kind: "ASSIGNMENT" as const },
+            { kind: "MENTION" as const },
             { proposal: { is: { authorId: user.id } } },
             { board: { managers: { some: { userId: user.id } } } },
             {
@@ -130,7 +131,7 @@ export async function changeNotification(headers: Headers, input: unknown) {
         ? {
             href: row.proposalId
               ? `/approvals?request=${row.proposalId}`
-              : `/boards/${row.boardId}${row.taskId ? `?task=${row.taskId}` : ""}`,
+              : `/boards/${row.boardId}${row.taskId ? `?task=${row.taskId}${row.kind === "MENTION" ? "&tab=comments" : ""}` : ""}`,
           }
         : {}),
     };

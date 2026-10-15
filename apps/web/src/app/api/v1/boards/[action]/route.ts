@@ -5,6 +5,8 @@ import {
   boardState,
   taskComments,
   createComment,
+  changeComment,
+  commentHistory,
   createTask,
   manageBoard,
   mutateTask,
@@ -24,10 +26,17 @@ async function handle(request: Request, action: string) {
         recordId.parse(new URL(request.url).searchParams.get("taskId")),
         request.headers,
       );
+    else if (request.method === "GET" && action === "comment-history")
+      data = await commentHistory(
+        recordId.parse(new URL(request.url).searchParams.get("commentId")),
+        request.headers,
+      );
     else if (request.method === "POST") {
       const body = await readSetupBody(request, 262_144);
       if (action === "comment")
         data = await createComment(body, request.headers);
+      else if (action === "change-comment")
+        data = await changeComment(body, request.headers);
       else if (action === "create-task")
         data = await createTask(body, request.headers);
       else if (["update", "archive", "restore", "editor"].includes(action))
@@ -45,7 +54,10 @@ async function handle(request: Request, action: string) {
       )
         data = await manageBoard(action, body, request.headers);
       else throw new SetupError(404, "NOT_FOUND", "Board action not found.");
-      await notifyBoardMutation(body, data);
+      await notifyBoardMutation(
+        { ...(body as object), ...(data as object) },
+        data,
+      );
     } else throw new SetupError(404, "NOT_FOUND", "Board action not found.");
     return Response.json(
       { data, requestId },
