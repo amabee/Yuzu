@@ -8,8 +8,10 @@ import {
 } from "./board-contract";
 import { recordId } from "./id-contract";
 
-export const MAX_IMPORT_BYTES = 1_000_000;
-export const MAX_IMPORT_ROWS = 500;
+export const MAX_IMPORT_BYTES = 25_000_000;
+export const MAX_IMPORT_ROWS = 25_000;
+export const MAX_PREVIEW_BYTES = 1_000_000;
+export const MAX_PREVIEW_ROWS = 500;
 export const importMappingSchema = z
   .array(
     z
@@ -30,7 +32,7 @@ export const importMappingSchema = z
 export const importPreviewSchema = z
   .object({
     boardId: recordId,
-    csv: z.string().min(1).max(MAX_IMPORT_BYTES),
+    csv: z.string().min(1).max(MAX_PREVIEW_BYTES),
     mapping: importMappingSchema,
   })
   .strict();
@@ -84,9 +86,14 @@ export const importResultSchema: z.ZodType<ImportResult> = z.object({
 });
 
 /** Strict comma-separated CSV, including escaped quotes and multiline cells. */
-export function parseImportCsv(source: string) {
-  if (new TextEncoder().encode(source).length > MAX_IMPORT_BYTES)
-    throw new Error("Choose a CSV file up to 1 MB.");
+export function parseImportCsv(
+  source: string,
+  limits = { maxBytes: MAX_IMPORT_BYTES, maxRows: MAX_IMPORT_ROWS },
+) {
+  if (new TextEncoder().encode(source).length > limits.maxBytes)
+    throw new Error(
+      `Choose a CSV file up to ${limits.maxBytes / 1_000_000} MB.`,
+    );
   const text = source.replace(/^\uFEFF/u, "");
   if (text.includes("\0"))
     throw new Error("Use a UTF-8 CSV file without binary content.");
@@ -94,24 +101,29 @@ export function parseImportCsv(source: string) {
   let cells: string[] = [],
     cell = "",
     quoted = false,
-    closed = false;
-  const finishCell = () => {
+    closed = false,
+    segmentStart = 0;
+  const finishCell = (end: number) => {
+    if (!closed) cell += text.slice(segmentStart, end);
     cells.push(cell);
     cell = "";
     closed = false;
     if (cells.length > 100) throw new Error("Use at most 100 columns.");
   };
-  const finishRow = () => {
-    finishCell();
+  const finishRow = (end: number) => {
+    finishCell(end);
     if (cells.some((value) => value.trim())) records.push(cells);
     cells = [];
-    if (records.length > MAX_IMPORT_ROWS + 1)
-      throw new Error("Import at most 500 tasks at a time.");
+    if (records.length > limits.maxRows + 1)
+      throw new Error(
+        `Import at most ${limits.maxRows.toLocaleString("en-US")} tasks at a time.`,
+      );
   };
   for (let i = 0; i < text.length; i++) {
     const char = text[i];
     if (quoted) {
       if (char === '"') {
+        cell += text.slice(segmentStart, i);
         if (text[i + 1] === '"') {
           cell += '"';
           i++;
@@ -119,23 +131,29 @@ export function parseImportCsv(source: string) {
           quoted = false;
           closed = true;
         }
-      } else cell += char;
-    } else if (char === ",") finishCell();
-    else if (char === "\n" || char === "\r") {
-      finishRow();
+        segmentStart = i + 1;
+      }
+    } else if (char === ",") {
+      finishCell(i);
+      segmentStart = i + 1;
+    } else if (char === "\n" || char === "\r") {
+      finishRow(i);
       if (char === "\r" && text[i + 1] === "\n") i++;
-    } else if (char === '"' && cell === "" && !closed) quoted = true;
-    else {
+      segmentStart = i + 1;
+    } else if (char === '"' && cell === "" && i === segmentStart && !closed) {
+      quoted = true;
+      segmentStart = i + 1;
+    } else {
       if (closed || char === '"')
         throw new Error(
           "Check the CSV quotes. Wrap cells containing commas or line breaks in double quotes.",
         );
-      cell += char;
     }
   }
   if (quoted)
     throw new Error("A quoted CSV cell is missing its closing quote.");
-  if (cell !== "" || cells.length || closed) finishRow();
+  if (segmentStart < text.length || cell !== "" || cells.length || closed)
+    finishRow(text.length);
   if (records.length < 2)
     throw new Error("Include a header row and at least one task.");
   const [headers, ...rows] = records;
@@ -146,6 +164,39 @@ export function parseImportCsv(source: string) {
       "Every row must have the same number of columns as the header.",
     );
   return { headers, rows };
+}
+
+/** Bound server work independently of the size of the selected file. */
+export function* importPreviewChunks(csv: ReturnType<typeof parseImportCsv>) {
+  const encode = (row: string[]) =>
+    row.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(",") + "\r\n";
+  const header = encode(csv.headers),
+    encoder = new TextEncoder();
+  const headerBytes = encoder.encode(header).length;
+  let lines: string[] = [],
+    bytes = headerBytes,
+    start = 0;
+  for (let index = 0; index < csv.rows.length; index++) {
+    const line = encode(csv.rows[index]),
+      size = encoder.encode(line).length;
+    if (headerBytes + size > MAX_PREVIEW_BYTES)
+      throw new Error(
+        `Row ${index + 2} is too large to preview. Reduce its text or number of mapped fields.`,
+      );
+    if (
+      lines.length &&
+      (lines.length >= MAX_PREVIEW_ROWS || bytes + size > MAX_PREVIEW_BYTES)
+    ) {
+      yield { csv: header + lines.join(""), start, count: lines.length };
+      start = index;
+      lines = [];
+      bytes = headerBytes;
+    }
+    lines.push(line);
+    bytes += size;
+  }
+  if (lines.length)
+    yield { csv: header + lines.join(""), start, count: lines.length };
 }
 
 export function importTargets(context: ImportContext) {

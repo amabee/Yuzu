@@ -7915,6 +7915,134 @@ const importFixture = (records: string[][]) =>
     )
     .join("\r\n");
 
+test("large CSV import accepts 25 MB and 25000 tasks with bounded previews, cross-batch duplicates and pagination", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  const { board } = await readyTeam(page);
+  const header =
+    importFixture([
+      ["Task", "Description", "Priority", "Due date", "Checklist"],
+    ]) + "\r\n";
+  const csv =
+    header +
+    Array.from({ length: 25_000 }, (_, index) => {
+      const row = [
+        `Bulk task ${String(index === 500 ? 1 : index + 1).padStart(5, "0")}`,
+        "",
+        "NORMAL",
+        "2026-10-20",
+        "Check input|Record result",
+      ];
+      const target = 1000 - (index === 24_999 ? Buffer.byteLength(header) : 0);
+      row[1] = "x".repeat(
+        target - Buffer.byteLength(importFixture([row]) + "\r\n"),
+      );
+      return importFixture([row]) + "\r\n";
+    }).join("");
+  expect(Buffer.byteLength(csv)).toBe(25_000_000);
+  await page.goto(`/boards/${board.id}`);
+  await page.getByRole("button", { name: "Import CSV", exact: true }).click();
+  const panel = page.getByRole("dialog");
+  const choose = page.waitForEvent("filechooser");
+  await panel.getByLabel("CSV file").click();
+  await (
+    await choose
+  ).setFiles({
+    name: "large-25000.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(csv),
+  });
+  await expect(
+    panel.getByText(
+      "large-25000.csv · 25000 rows. Unmapped columns are ignored.",
+    ),
+  ).toBeVisible({ timeout: 30_000 });
+  const batches: { bytes: number; lines: number }[] = [];
+  page.on("request", (request) => {
+    if (request.url().endsWith("/api/v1/boards/import/preview")) {
+      const body = request.postDataJSON();
+      batches.push({
+        bytes: Buffer.byteLength(body.csv),
+        lines: body.csv.split("\r\n").length - 2,
+      });
+    }
+  });
+  await panel
+    .getByRole("button", { name: "Preview tasks", exact: true })
+    .click();
+  await expect(
+    panel.getByText("25000 rows · 0 invalid · 1 possible duplicates"),
+  ).toBeVisible({ timeout: 120_000 });
+  expect(batches.length).toBe(50);
+  expect(
+    batches.every((batch) => batch.bytes <= 1_000_000 && batch.lines <= 500),
+  ).toBe(true);
+  await expect(
+    panel.getByRole("checkbox", { name: /^Import row / }),
+  ).toHaveCount(100);
+  expect(await getDatabase().task.count({ where: { boardId: board.id } })).toBe(
+    0,
+  );
+  await panel
+    .getByRole("button", { name: "Clear selection", exact: true })
+    .click();
+  await panel.getByLabel("Import row 2", { exact: true }).check();
+  await panel.getByLabel("Preview page").fill("6");
+  await expect(
+    panel.getByLabel("Import row 502", { exact: true }),
+  ).not.toBeChecked();
+  await expect(
+    panel.getByText("Matches an earlier CSV row.", { exact: true }),
+  ).toBeVisible();
+  await panel.getByLabel("Preview page").fill("250");
+  await panel.getByLabel("Import row 25001", { exact: true }).check();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await panel.evaluate(
+      (element) => element.scrollWidth <= element.clientWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "../../artifacts/phase-3/large-csv-preview-mobile.png",
+    fullPage: false,
+  });
+  await panel
+    .getByRole("button", { name: "Import 2 tasks", exact: true })
+    .click();
+  await expect(panel.getByRole("status")).toContainText("2Created", {
+    timeout: 30_000,
+  });
+  expect(await getDatabase().task.count({ where: { boardId: board.id } })).toBe(
+    2,
+  );
+  const titles = await getDatabase().task.findMany({
+    where: { boardId: board.id },
+    select: { name: true },
+  });
+  expect(titles.map((task) => task.name).sort()).toEqual([
+    "Bulk task 00001",
+    "Bulk task 25000",
+  ]);
+  // Hover intentionally pauses toast dismissal; move off the mobile action area.
+  await page.mouse.move(0, 0);
+  await expect(page.locator('[data-slot="board-notification"]')).toHaveCount(
+    0,
+    { timeout: 8000 },
+  );
+  await panel
+    .getByRole("button", { name: "Import another CSV", exact: true })
+    .click();
+  await panel.getByLabel("CSV file").setInputFiles({
+    name: "too-large.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.alloc(25_000_001),
+  });
+  await expect(panel.getByRole("alert")).toHaveText(
+    "Choose a CSV file up to 25 MB.",
+  );
+});
+
 test("CSV import detects archived and original-ID matches, checks custom values and serializes duplicate races", async ({
   page,
 }) => {

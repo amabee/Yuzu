@@ -1,4 +1,5 @@
 import { savedViewSchema } from "@/lib/saved-view-contract";
+import { isTransactionConflict } from "@/lib/transaction-conflict";
 import {
   createRecordId,
   getDatabase,
@@ -70,14 +71,14 @@ export async function serial<T>(
         isolationLevel: "Serializable",
       });
     } catch (error) {
-      if (
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        ["P2034", "P2002"].includes(String(error.code)) &&
-        attempt < 2
-      )
-        continue;
+      if (isTransactionConflict(error)) {
+        if (attempt < 2) continue;
+        throw new SetupError(
+          409,
+          "CONCURRENT_CHANGE",
+          "Another change is still being saved. Retry this operation.",
+        );
+      }
       throw error;
     }
 }

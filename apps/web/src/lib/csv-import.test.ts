@@ -5,6 +5,10 @@ import {
   parseImportCsv,
   suggestImportMapping,
   MAX_IMPORT_BYTES,
+  MAX_IMPORT_ROWS,
+  MAX_PREVIEW_BYTES,
+  MAX_PREVIEW_ROWS,
+  importPreviewChunks,
   type ImportContext,
 } from "./csv-import";
 const id = "0199a500-0000-7000-8000-000000000001";
@@ -99,15 +103,46 @@ describe("CSV import parsing and mapping", () => {
   it("bounds UTF-8 bytes, rows and columns before importing", () => {
     expect(() =>
       parseImportCsv(`Task\n${"🍋".repeat(MAX_IMPORT_BYTES / 4)}`),
-    ).toThrow(/1 MB/);
-    expect(() => parseImportCsv(`Task\n${"task\n".repeat(501)}`)).toThrow(
-      /500/,
-    );
+    ).toThrow(/25 MB/);
+    expect(() =>
+      parseImportCsv(`Task\n${"task\n".repeat(MAX_IMPORT_ROWS + 1)}`),
+    ).toThrow(/25,000/);
     expect(() =>
       parseImportCsv(
         `${Array(101).fill("Header").join(",")}\n${Array(101).fill("value").join(",")}`,
       ),
     ).toThrow(/100/);
+  });
+  it("splits previews by rows and UTF-8 bytes without corrupting quoted multiline values", () => {
+    const rows = Array.from({ length: 1100 }, (_, index) => [
+      `Task ${index}`,
+      'Multiline\n"quoted" 🍋 ' + "x".repeat(2100),
+    ]);
+    const chunks = [
+      ...importPreviewChunks({ headers: ["Task", "Description"], rows }),
+    ];
+    expect(chunks.length).toBeGreaterThanOrEqual(3);
+    expect(chunks[0].count).toBeLessThan(MAX_PREVIEW_ROWS);
+    let next = 0;
+    const restored = chunks.flatMap((chunk) => {
+      expect(new TextEncoder().encode(chunk.csv).length).toBeLessThanOrEqual(
+        MAX_PREVIEW_BYTES,
+      );
+      expect(chunk.count).toBeLessThanOrEqual(MAX_PREVIEW_ROWS);
+      expect(chunk.start).toBe(next);
+      next += chunk.count;
+      return parseImportCsv(chunk.csv, {
+        maxBytes: MAX_PREVIEW_BYTES,
+        maxRows: MAX_PREVIEW_ROWS,
+      }).rows;
+    });
+    expect(restored).toEqual(rows);
+    expect(() =>
+      parseImportCsv("Task\n" + "Row\n".repeat(501), {
+        maxBytes: MAX_PREVIEW_BYTES,
+        maxRows: MAX_PREVIEW_ROWS,
+      }),
+    ).toThrow(/500/);
   });
   it("suggests unique destinations and ignores export-only metadata", () => {
     expect(

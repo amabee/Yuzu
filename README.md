@@ -319,8 +319,10 @@ JSON API error envelope. Use database and object-storage backups for full recove
 ## CSV import
 
 Open **Import CSV** on a board, choose a UTF-8 comma-separated file, and map its
-columns to task properties or existing custom fields. Imports accept up to 1 MB,
-500 task rows, and 100 columns per file. Preview does not write tasks. Unmapped
+columns to task properties or existing custom fields. Imports accept up to 25 MB,
+25,000 task rows, and 100 columns per file. Preview validates at most 500 rows / 1 MB
+per request and displays 100 rows per page. Duplicates are checked across the entire
+file as well as against existing tasks. Preview does not write tasks. Unmapped
 columns are ignored; unmapped or empty values use normal task-creation defaults.
 
 Dates use `YYYY-MM-DD`. Statuses, priorities, groups, tags, selections and people must match
@@ -342,7 +344,7 @@ skipped rows and failures. Closing the sheet keeps an active import running;
 keep the board page open until it finishes. Reopen **Import CSV** to see results
 and retry failed rows. Retries reuse creation keys, including when the server
 committed a task but its response was lost. Preview tickets are signed, tied to
-the importer and expire after one hour. Preview again after expiry. Permissions,
+the importer and expire after 24 hours. Preview again after expiry. Permissions,
 maintenance, fields and approval policy are rechecked for every imported row.
 
 The JSON endpoints are `POST /api/v1/boards/import/preview` with

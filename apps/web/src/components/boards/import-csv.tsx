@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { AlertCircle, Check, FileUp, Table2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ import {
   importTargets,
   importPreviewResultSchema,
   importResultSchema,
+  importPreviewChunks,
   parseImportCsv,
   suggestImportMapping,
   MAX_IMPORT_BYTES,
@@ -49,7 +50,6 @@ export function ImportCsv({
 }) {
   const [open, setOpen] = useState(false);
   const [fileName, setFileName] = useState("");
-  const [csv, setCsv] = useState("");
   const [parsed, setParsed] = useState<ReturnType<
     typeof parseImportCsv
   > | null>(null);
@@ -58,23 +58,49 @@ export function ImportCsv({
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [results, setResults] = useState<RowResult[]>([]);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
+  const [previewProgress, setPreviewProgress] = useState({ done: 0, total: 0 });
+  const [page, setPage] = useState(0);
   const [error, setError] = useState("");
   const [reading, setReading] = useState(false);
   const fileRead = useRef(0);
   const targets = importTargets(state);
   const previewMutation = useMutation({
     retry: false,
-    mutationFn: async () =>
-      importPreviewResultSchema.parse(
-        (
-          await apiRequest<ImportPreview>("/api/v1/boards/import/preview", {
-            method: "POST",
-            json: { boardId: state.boardId, csv, mapping },
-          })
-        ).data,
-      ),
+    mutationFn: async () => {
+      if (!parsed) throw new Error("Choose a CSV first.");
+      const rows: ImportRow[] = [],
+        seen = new Set<string>();
+      let requiresApproval = false;
+      setPreviewProgress({ done: 0, total: parsed.rows.length });
+      for (const chunk of importPreviewChunks(parsed)) {
+        const data = importPreviewResultSchema.parse(
+          (
+            await apiRequest<ImportPreview>("/api/v1/boards/import/preview", {
+              method: "POST",
+              json: { boardId: state.boardId, csv: chunk.csv, mapping },
+            })
+          ).data,
+        );
+        requiresApproval ||= data.requiresApproval;
+        for (const source of data.rows) {
+          const row = { ...source, row: source.row + chunk.start };
+          if (seen.has(row.name.toLowerCase())) {
+            row.duplicate = true;
+            row.duplicateReason = "Matches an earlier CSV row.";
+          }
+          if (row.token) seen.add(row.name.toLowerCase());
+          rows.push(row);
+        }
+        setPreviewProgress({
+          done: chunk.start + chunk.count,
+          total: parsed.rows.length,
+        });
+      }
+      return { rows, requiresApproval };
+    },
     onSuccess: (data) => {
       setPreview(data);
+      setPage(0);
       setSelected(
         new Set(
           data.rows
@@ -99,6 +125,16 @@ export function ImportCsv({
     mutationFn: async ({ rows, id }: { rows: ImportRow[]; id: string }) => {
       const completed: RowResult[] = [];
       setProgress({ done: 0, total: rows.length });
+      let lastUpdate = Date.now();
+      const flush = () => {
+        const updates = new Map(completed.map((item) => [item.row, item]));
+        setResults((previous) => [
+          ...previous.filter((item) => !updates.has(item.row)),
+          ...updates.values(),
+        ]);
+        setProgress({ done: completed.length, total: rows.length });
+        onChanged();
+      };
       const announce = () =>
         onNotice({
           id,
@@ -121,7 +157,6 @@ export function ImportCsv({
           );
           const result = importResultSchema.parse(data);
           completed.push({ row: row.row, outcome: result.outcome });
-          if (result.outcome !== "SKIPPED") onChanged();
         } catch (failure) {
           const message =
             failure instanceof Error
@@ -144,24 +179,16 @@ export function ImportCsv({
             break;
           }
         }
-        setResults((previous) => [
-          ...previous.filter(
-            (item) => !completed.some((done) => done.row === item.row),
-          ),
-          ...completed,
-        ]);
-        setProgress({ done: completed.length, total: rows.length });
-        announce();
+        if (completed.length % 25 === 0 || Date.now() - lastUpdate >= 1000) {
+          flush();
+          announce();
+          lastUpdate = Date.now();
+        }
       }
+      flush();
       return completed;
     },
     onSuccess: (completed, { id }) => {
-      setResults((previous) => [
-        ...previous.filter(
-          (item) => !completed.some((done) => done.row === item.row),
-        ),
-        ...completed,
-      ]);
       const failed = completed.filter((row) => row.outcome === "FAILED").length;
       const created = completed.filter(
         (row) => row.outcome === "APPLIED",
@@ -187,6 +214,18 @@ export function ImportCsv({
       }),
   });
   const busy = reading || previewMutation.isPending || mutation.isPending;
+  const resultIndex = useMemo(
+    () => new Map(results.map((item) => [item.row, item])),
+    [results],
+  );
+  const previewStats = useMemo(
+    () => ({
+      invalid: preview?.rows.filter((row) => row.issues.length).length ?? 0,
+      duplicates: preview?.rows.filter((row) => row.duplicate).length ?? 0,
+    }),
+    [preview],
+  );
+  const pageCount = Math.max(1, Math.ceil((preview?.rows.length ?? 0) / 100));
   const finished = !mutation.isPending && results.length > 0;
   const step =
     results.length || mutation.isPending ? 3 : preview ? 2 : parsed ? 1 : 0;
@@ -195,7 +234,6 @@ export function ImportCsv({
     setError("");
     setPreview(null);
     setParsed(null);
-    setCsv("");
     setResults([]);
     setMapping([]);
     setFileName(file?.name ?? "");
@@ -205,13 +243,12 @@ export function ImportCsv({
       if (!/\.csv$/iu.test(file.name))
         throw new Error("Choose a .csv file saved as UTF-8.");
       if (file.size > MAX_IMPORT_BYTES)
-        throw new Error("Choose a CSV file up to 1 MB.");
+        throw new Error("Choose a CSV file up to 25 MB.");
       const content = new TextDecoder("utf-8", { fatal: true }).decode(
         await file.arrayBuffer(),
       );
       const data = parseImportCsv(content);
       if (generation !== fileRead.current) return;
-      setCsv(content);
       setParsed(data);
       setMapping(suggestImportMapping(data.headers, state));
     } catch (failure) {
@@ -289,10 +326,21 @@ export function ImportCsv({
                   onChange={(event) => void readFile(event.target.files?.[0])}
                 />
                 <span className="text-xs leading-relaxed text-muted-foreground">
-                  UTF-8, comma-separated. Up to 1 MB, 500 tasks, and 100
+                  UTF-8, comma-separated. Up to 25 MB, 25,000 tasks, and 100
                   columns. A header row is required.
                 </span>
               </label>
+              {reading && (
+                <p role="status" className="text-sm text-muted-foreground">
+                  Reading {fileName}…
+                </p>
+              )}
+              {previewMutation.isPending && (
+                <p role="status" className="text-sm text-muted-foreground">
+                  Checking {previewProgress.done.toLocaleString()} of{" "}
+                  {previewProgress.total.toLocaleString()} rows…
+                </p>
+              )}
               {parsed && (
                 <>
                   <div>
@@ -396,10 +444,8 @@ export function ImportCsv({
                   {finished ? "Your import results" : "Review before importing"}
                 </h3>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  {preview.rows.length} rows ·{" "}
-                  {preview.rows.filter((row) => row.issues.length).length}{" "}
-                  invalid · {preview.rows.filter((row) => row.duplicate).length}{" "}
-                  possible duplicates
+                  {preview.rows.length} rows · {previewStats.invalid} invalid ·{" "}
+                  {previewStats.duplicates} possible duplicates
                 </p>
                 {preview.requiresApproval && (
                   <p className="rounded-lg bg-primary/10 p-3 text-xs text-foreground">
@@ -452,8 +498,8 @@ export function ImportCsv({
                 </div>
               )}
               <div className="max-h-[45vh] overflow-y-auto rounded-lg border border-border divide-y divide-border">
-                {preview.rows.map((row) => {
-                  const result = results.find((item) => item.row === row.row);
+                {preview.rows.slice(page * 100, (page + 1) * 100).map((row) => {
+                  const result = resultIndex.get(row.row);
                   const status =
                     result?.outcome === "APPLIED"
                       ? "Created"
@@ -533,6 +579,78 @@ export function ImportCsv({
                   );
                 })}
               </div>
+              {pageCount > 1 && (
+                <nav
+                  aria-label="Import preview pagination"
+                  className="flex flex-wrap items-center justify-between gap-2 text-xs"
+                >
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={page === 0}
+                    onClick={() => setPage((value) => value - 1)}
+                  >
+                    Previous
+                  </Button>
+                  <label className="flex items-center gap-2">
+                    Page
+                    <input
+                      aria-label="Preview page"
+                      type="number"
+                      min={1}
+                      max={pageCount}
+                      value={page + 1}
+                      className="w-16 rounded-md border border-input bg-background px-2 py-1.5"
+                      onChange={(event) =>
+                        setPage(
+                          Math.max(
+                            0,
+                            Math.min(
+                              pageCount - 1,
+                              Number(event.target.value) - 1 || 0,
+                            ),
+                          ),
+                        )
+                      }
+                    />
+                    of {pageCount}
+                  </label>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={page >= pageCount - 1}
+                    onClick={() => setPage((value) => value + 1)}
+                  >
+                    Next
+                  </Button>
+                </nav>
+              )}
+              {!busy && !finished && (
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() =>
+                      setSelected(
+                        new Set(
+                          preview.rows
+                            .filter((row) => row.token && !row.duplicate)
+                            .map((row) => row.row),
+                        ),
+                      )
+                    }
+                  >
+                    Select new valid rows
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setSelected(new Set())}
+                  >
+                    Clear selection
+                  </Button>
+                </div>
+              )}
               <div className="grid gap-3 pb-2">
                 {mutation.isPending ? (
                   <p role="status" className="text-sm text-muted-foreground">
@@ -545,12 +663,9 @@ export function ImportCsv({
                       <Button
                         onClick={() =>
                           start(
-                            preview.rows.filter((row) =>
-                              results.some(
-                                (result) =>
-                                  result.row === row.row &&
-                                  result.outcome === "FAILED",
-                              ),
+                            preview.rows.filter(
+                              (row) =>
+                                resultIndex.get(row.row)?.outcome === "FAILED",
                             ),
                           )
                         }
@@ -564,7 +679,6 @@ export function ImportCsv({
                         setPreview(null);
                         setResults([]);
                         setParsed(null);
-                        setCsv("");
                         setMapping([]);
                         setFileName("");
                         setError("");

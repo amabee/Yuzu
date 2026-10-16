@@ -18,6 +18,8 @@ import {
   importTargets,
   mapImportRow,
   parseImportCsv,
+  MAX_PREVIEW_BYTES,
+  MAX_PREVIEW_ROWS,
   type ImportPreview,
   type ImportResult,
 } from "@/lib/csv-import";
@@ -91,7 +93,10 @@ export async function previewCsvImport(
   const { user } = await requireIdentity(headers);
   let csv;
   try {
-    csv = parseImportCsv(body.csv);
+    csv = parseImportCsv(body.csv, {
+      maxBytes: MAX_PREVIEW_BYTES,
+      maxRows: MAX_PREVIEW_ROWS,
+    });
   } catch (error) {
     throw new SetupError(422, "INVALID_CSV", (error as Error).message);
   }
@@ -184,7 +189,7 @@ export async function previewCsvImport(
           token = signTicket({
             version: 1,
             actorId: user.id,
-            expiresAt: Date.now() + 60 * 60_000,
+            expiresAt: Date.now() + 24 * 60 * 60_000,
             input: row.input,
             ...(row.sourceId ? { sourceId: row.sourceId } : {}),
           });
