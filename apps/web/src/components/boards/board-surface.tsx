@@ -2,6 +2,7 @@
 import { ExportCsv } from "./export-csv";
 import { ImportCsv } from "./import-csv";
 import { matchesBoardView } from "@/lib/board-view";
+import { mergeBoardState } from "@/lib/board-cache";
 import { VirtualTaskList, VirtualTableBody } from "./virtual-task-list";
 import { BoardFilters, BoardFilterSelect } from "./board-filters";
 import { SavedViewControls } from "./saved-view-controls";
@@ -29,6 +30,7 @@ import { useTaskUploads } from "./use-task-uploads";
 import { BoardManagement } from "./board-management";
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { needsApproval } from "@/lib/approval-rules";
 import { taskMutationResultSchema } from "@/lib/approval-contract";
 import { useBoardLiveSync } from "./use-board-live-sync";
@@ -85,6 +87,14 @@ export function BoardSurface({
   group: string;
   info?: BoardInfo;
 }) {
+  const router = useRouter();
+  const clearTaskLink = () => {
+    if (!initialTaskId) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("task");
+    url.searchParams.delete("tab");
+    router.replace(url.pathname + url.search, { scroll: false });
+  };
   const [notice, setNotice] = useState<BoardNotice | null>(null);
   const [pendingTransfers, setPendingTransfers] = useState<
     Record<string, BoardNotice>
@@ -213,6 +223,26 @@ export function BoardSurface({
     initialCommentsTab ? "comments" : "details",
   );
   const [creating, setCreating] = useState(false);
+  const linkKey = `${initialTaskId ?? ""}:${Boolean(initialCommentsTab)}`;
+  const [previousLink, setPreviousLink] = useState(linkKey);
+  // Next keeps this board mounted when a search/notification links to another task.
+  // Synchronize the changed route during render so uploads and board filters survive.
+  if (previousLink !== linkKey) {
+    setPreviousLink(linkKey);
+    const task =
+      initialState.focusedTask ??
+      initialState.tasks.find((task) => task.id === initialTaskId);
+    setSelectedId(
+      initialTaskId && task?.id === initialTaskId ? initialTaskId : null,
+    );
+    setSelectedTab(initialCommentsTab ? "comments" : "details");
+    setCreating(false);
+    if (initialTaskId && task)
+      setViewConfig((current) => ({
+        ...current,
+        archived: Boolean(task.archivedAt),
+      }));
+  }
   const tasks = state.tasks.filter((task) =>
     matchesBoardView(
       task,
@@ -270,6 +300,30 @@ export function BoardSurface({
             },
           ),
     onSuccess: async (_result, variables) => {
+      const result = taskMutationResultSchema.safeParse(_result.data);
+      const pendingApproval =
+        result.success && result.data.outcome === "PENDING_APPROVAL";
+      let refreshError: Error | null = null;
+      try {
+        const targetId = result.success
+          ? result.data.taskId
+          : (variables.input as { taskId?: string }).taskId;
+        const fresh = await readBoardState(state.boardId, undefined, {
+          config: requestConfig,
+          page,
+          ...(targetId ? { taskId: targetId } : {}),
+        });
+        queryClient.setQueryData(queryKey, fresh);
+        queryClient.setQueriesData<BoardState>(
+          { queryKey: boardKey },
+          (current) => current && mergeBoardState(current, fresh),
+        );
+      } catch (error) {
+        refreshError =
+          error instanceof Error
+            ? error
+            : new Error("Could not refresh the board.");
+      }
       if (
         ["create-task", "update", "archive", "restore", "editor"].includes(
           variables.action,
@@ -277,11 +331,8 @@ export function BoardSurface({
       ) {
         setCreating(false);
         setSelectedId(null);
+        clearTaskLink();
       }
-      const result = taskMutationResultSchema.safeParse(_result.data);
-      const pendingApproval =
-        result.success && result.data.outcome === "PENDING_APPROVAL";
-      const refreshed = await query.refetch();
       const labels: Record<string, string> = {
         "approval-policy": "Approval settings saved",
         "create-task": "Task created",
@@ -298,7 +349,7 @@ export function BoardSurface({
         manager: "Board managers updated",
       };
       notify(
-        refreshed.error
+        refreshError
           ? "Change saved, but the board could not refresh. Try opening it again."
           : pendingApproval
             ? variables.action === "create-task"
@@ -307,13 +358,14 @@ export function BoardSurface({
                 ? "Archive request sent for approval"
                 : "Changes sent for approval"
             : (labels[variables.action] ?? "Change saved"),
-        refreshed.error ? "error" : pendingApproval ? "info" : "success",
+        refreshError ? "error" : pendingApproval ? "info" : "success",
       );
     },
     onError: async (error) => {
       notify(error.message, "error");
       await query.refetch();
     },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: boardKey }),
   });
   const act = (action: string, input: unknown, base?: BoardTask) => {
     if (!mutation.isPending && !inlineMutation.isPending) {
@@ -365,7 +417,7 @@ export function BoardSurface({
         );
       return { previous };
     },
-    onSuccess: (result, _variables, context) => {
+    onSuccess: (result, variables, context) => {
       if (result.outcome === "PENDING_APPROVAL") {
         if (context?.previous)
           queryClient.setQueryData(queryKey, context.previous);
@@ -373,16 +425,19 @@ export function BoardSurface({
         return;
       }
       notify("Task updated", "success");
-      queryClient.setQueryData<BoardState>(
-        queryKey,
+      const update = (task: BoardTask) =>
+        task.id === result.taskId && task.revision <= result.revision
+          ? { ...task, ...variables.changes, revision: result.revision }
+          : task;
+      queryClient.setQueriesData<BoardState>(
+        { queryKey: boardKey },
         (current) =>
           current && {
             ...current,
-            tasks: current.tasks.map((task) =>
-              task.id === result.taskId
-                ? { ...task, revision: result.revision }
-                : task,
-            ),
+            tasks: current.tasks.map(update),
+            focusedTask: current.focusedTask
+              ? update(current.focusedTask)
+              : current.focusedTask,
           },
       );
     },
@@ -392,7 +447,7 @@ export function BoardSurface({
         queryClient.setQueryData(queryKey, context.previous);
     },
     onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey });
+      await queryClient.invalidateQueries({ queryKey: boardKey });
     },
   });
   const busy = mutation.isPending || inlineMutation.isPending;
@@ -1364,6 +1419,7 @@ export function BoardSurface({
           if (!open) {
             setCreating(false);
             setSelectedId(null);
+            clearTaskLink();
             mutation.reset();
           }
         }}

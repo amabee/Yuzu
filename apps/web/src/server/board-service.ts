@@ -493,6 +493,11 @@ export async function boardState(
         where,
         _count: true,
       });
+      const groupCounts = await tx.task.groupBy({
+        by: ["groupId"],
+        where: { boardId, groupId: { not: null } },
+        _count: true,
+      });
       const pendingApprovalCount = await tx.boardProposal.count({
         where: {
           boardId,
@@ -535,6 +540,9 @@ export async function boardState(
       });
       return {
         calendarDate,
+        groupTaskCounts: Object.fromEntries(
+          groupCounts.map((row) => [row.groupId!, row._count]),
+        ),
         pagination: {
           page,
           pageCount,

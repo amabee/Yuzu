@@ -93,6 +93,7 @@ export async function notifyBoardMutation(input: unknown, result?: unknown) {
       where: { id: boardId },
       select: {
         managers: { select: { userId: true } },
+        workspace: { select: { members: { select: { userId: true } } } },
         approvalPolicy: {
           select: { primaryApproverId: true, backupApproverId: true },
         },
@@ -146,6 +147,8 @@ export async function notifyBoardMutation(input: unknown, result?: unknown) {
           board?.approvalPolicy?.primaryApproverId,
           board?.approvalPolicy?.backupApproverId,
           ...(board?.managers.map((manager) => manager.userId) ?? []),
+          // Overview and cross-board search also need hints while no board room is open.
+          ...(board?.workspace.members.map((member) => member.userId) ?? []),
           ...affectedAuthors.map((item) => item.authorId),
           ...administrators.map((item) => item.id),
           ...inboxRecipients.map((item) => item.recipientId),

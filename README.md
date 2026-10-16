@@ -411,6 +411,8 @@ description), status, assignment, priority, dates, groups, archive filtering,
 and sorting run in PostgreSQL across the entire board before paging. The footer
 shows the filtered total and page controls; status counts include matches on all
 pages. A status with matches elsewhere offers a shortcut to filter that status.
+Group-removal checks count tasks across every page, including archives. Saved
+tasks and shared board metadata stay synchronized across cached page copies.
 Long lanes and tables render only the visible rows. Task links load their task
 independently of the current page or saved filter.
 
@@ -428,6 +430,23 @@ separate search toggle. Workspace membership and the current role are checked
 on every request, including additional result pages. Pending approval drafts
 are excluded. Search updates when board events arrive, when reopened, and on
 window focus/reconnect.
+
+## Overview reporting
+
+The overview summarizes open/completed tasks, overdue work, the next seven days
+of deadlines, unassigned tasks, per-board status counts, and assignee workload.
+Filter it by workspace; board reports page through 12 boards, deadline lists show
+the first 10 tasks, and workload shows the top 12 assignees. Totals always cover
+the whole selected scope, regardless of visible report pages. Shared tasks count
+once in task totals and once for each assignee's workload.
+
+Reports exclude archived tasks and pending approval drafts. Completion follows
+the existing task-sheet rule: the built-in status with stable ID `done`, even if
+renamed, marks completion. Custom statuses remain open. Date boundaries use the
+installation timezone and include today through seven days ahead. Counts use
+permission-scoped PostgreSQL aggregates, update from realtime board events, and
+reconcile every 60 seconds while visible and on focus/reconnect. No task data
+from inaccessible workspaces is included in counts or lists.
 
 ## Contributing
 

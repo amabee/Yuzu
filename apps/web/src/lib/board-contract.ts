@@ -189,6 +189,7 @@ export type BoardState = {
   pagination?: BoardPagination;
   focusedTask?: BoardTask | null;
   pendingApprovalCount?: number;
+  groupTaskCounts?: Record<string, number>;
   calendarDate?: string;
   savedViews?: SavedView[];
   selectedViewId?: string | null;
@@ -275,6 +276,9 @@ const baseBoardStateSchema = z.object({
 
 export const boardStateSchema = baseBoardStateSchema.extend({
   pagination: boardPaginationSchema.optional(),
+  groupTaskCounts: z
+    .record(z.string(), z.number().int().nonnegative())
+    .optional(),
   focusedTask: baseBoardStateSchema.shape.tasks.element.nullable().optional(),
   pendingApprovalCount: z.number().int().nonnegative().optional(),
 });

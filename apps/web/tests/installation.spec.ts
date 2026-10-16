@@ -9170,6 +9170,22 @@ test("large boards page and filter 25000 tasks without mounting every card or lo
   const owner = await db.user.findUniqueOrThrow({
     where: { email: "owner@example.test" },
   });
+  await db.boardColumn.create({
+    data: {
+      boardId: board.id,
+      key: "status",
+      name: "Status",
+      type: "STATUS",
+      position: 0,
+      config: {
+        options: [
+          { id: "todo", label: "To do" },
+          { id: "in_progress", label: "In progress" },
+          { id: "done", label: "Done" },
+        ],
+      },
+    },
+  });
   const ids: string[] = [];
   for (let batch = 0; batch < 5; batch++) {
     const data = Array.from({ length: 5000 }, (_, index) => {
@@ -9182,6 +9198,7 @@ test("large boards page and filter 25000 tasks without mounting every card or lo
         createdById: owner.id,
         createKey: id,
         createDigest: "load-test",
+        statusId: "todo",
         name: `Load task ${String(position).padStart(5, "0")}`,
         description:
           position === 24999
@@ -9232,6 +9249,32 @@ test("large boards page and filter 25000 tasks without mounting every card or lo
   });
   await expect(
     page.locator(`.task-card[data-task-id="${ids[99]}"]`),
+  ).toBeVisible();
+  const progressLane = page.locator(".board-lane").filter({
+    has: page.getByRole("heading", { name: "In progress", exact: true }),
+  });
+  // Move the pointer from the scrolled card to the visible part of the lane.
+  // dragTo scrolls the tall target after measuring the source, changing that point.
+  const lastCard = page.locator(`.task-card[data-task-id="${ids[99]}"]`);
+  await lastCard.hover();
+  const source = (await lastCard.boundingBox())!;
+  const target = (await progressLane.boundingBox())!;
+  const targetY = Math.max(90, Math.min(650, target.y + 60));
+  await page.mouse.move(
+    source.x + source.width / 2,
+    source.y + source.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    source.x + source.width / 2,
+    source.y + source.height / 2 - 10,
+    { steps: 5 },
+  );
+  await page.mouse.move(target.x + target.width / 2, targetY, { steps: 10 });
+  await page.mouse.move(target.x + target.width / 2, targetY + 1);
+  await page.mouse.up();
+  await expect(
+    progressLane.locator(`.task-card[data-task-id="${ids[99]}"]`),
   ).toBeVisible();
   await page.getByRole("button", { name: "Next tasks", exact: true }).click();
   await expect(
@@ -9338,10 +9381,47 @@ test("workspace task search pages across boards, opens task sheets and enforces 
     await expect(matches.getByRole("link")).toHaveCount(20);
     await matches.getByRole("button", { name: "Show more tasks" }).click();
     await expect(matches.getByRole("link")).toHaveCount(25);
-    await team.author.page.screenshot({ path: "../../artifacts/task-search.png", fullPage: true });
+    expect(
+      (
+        await postBoard(page, "update", {
+          taskId: data[24].id,
+          revision: 1,
+          changes: { name: "Searchable task 24 updated" },
+        })
+      ).status(),
+    ).toBe(200);
+    await expect(matches).toContainText("Searchable task 24 updated", {
+      timeout: 15000,
+    });
+    await team.author.page.screenshot({
+      path: "../../artifacts/task-search.png",
+      fullPage: true,
+    });
     await matches.getByRole("link").first().click();
     await expect(team.author.page.getByRole("dialog")).toContainText(
       "Searchable task",
+    );
+    const openedBoardId = new URL(team.author.page.url()).pathname
+      .split("/")
+      .at(-1)!;
+    await team.author.page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Close", exact: true })
+      .click();
+    await expect(team.author.page).toHaveURL(
+      new RegExp(`/boards/${openedBoardId}$`),
+    );
+    await team.author.page
+      .getByRole("button", { name: "Search workspace", exact: true })
+      .click();
+    const sameBoard = team.author.page
+      .getByRole("region", { name: "Matching tasks" })
+      .locator(`a[href^="/boards/${openedBoardId}?task="]`)
+      .nth(1);
+    const targetName = await sameBoard.locator("p").first().innerText();
+    await sameBoard.click();
+    await expect(team.author.page.getByRole("dialog")).toContainText(
+      targetName,
     );
     await db.workspaceMember.delete({
       where: {
@@ -9367,6 +9447,270 @@ test("workspace task search pages across boards, opens task sheets and enforces 
     } finally {
       await anonymous.close();
     }
+  } finally {
+    await team.close();
+  }
+});
+
+test("workspace dashboard counts real work, bounds reports, follows realtime and protects workspace data", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(120_000);
+  const team = await approvalTeam(page, browser);
+  try {
+    const db = getDatabase();
+    const settings = await db.installationSettings.findUniqueOrThrow({
+      where: { id: "installation" },
+    });
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: settings.timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    const day = (offset: number) => {
+      const date = new Date(`${today}T00:00:00Z`);
+      date.setUTCDate(date.getUTCDate() + offset);
+      return date;
+    };
+    const create = (name: string, values: Record<string, unknown> = {}) =>
+      db.task.create({
+        data: {
+          boardId: team.boardId,
+          name,
+          createdById: team.ownerId,
+          createKey: createRecordId(),
+          createDigest: "dashboard-test",
+          ...values,
+        },
+      });
+    const shared = await create("Dashboard overdue shared", {
+      dueDate: day(-1),
+      statusId: "doing",
+      assignees: {
+        create: [{ userId: team.author.id }, { userId: team.backup.id }],
+      },
+    });
+    await create("Dashboard completed overdue", {
+      dueDate: day(-1),
+      statusId: "done",
+      assignees: { create: { userId: team.author.id } },
+    });
+    await create("Dashboard due today", { dueDate: day(0), statusId: "todo" });
+    const returned = await create("Dashboard return next week", {
+      dueDate: day(7),
+      statusId: "return",
+      assignees: { create: { userId: team.backup.id } },
+    });
+    await create("Dashboard beyond next week", { dueDate: day(8) });
+    await create("Dashboard without date");
+    await create("Dashboard archived overdue", {
+      dueDate: day(-2),
+      archivedAt: new Date(),
+    });
+    for (let index = 0; index < 12; index++)
+      await create(`Dashboard upcoming ${index}`, { dueDate: day(2) });
+    const restricted = await db.board.findFirstOrThrow({
+      where: { workspaceId: { not: team.workspaceId } },
+    });
+    await create("Dashboard restricted secret", {
+      boardId: restricted.id,
+      dueDate: day(-1),
+    });
+    await db.board.createMany({
+      data: Array.from({ length: 12 }, (_, i) => ({
+        name: `Report board ${i}`,
+        workspaceId: team.workspaceId,
+        createdById: team.ownerId,
+      })),
+    });
+    const field = await db.boardColumn.findFirstOrThrow({
+      where: { boardId: team.boardId, key: "status" },
+    });
+    await db.boardColumn.update({
+      where: { id: field.id },
+      data: {
+        config: {
+          options: [
+            { id: "todo", label: "To do" },
+            { id: "doing", label: "In progress" },
+            { id: "done", label: "Finished", color: "#3aad52" },
+            {
+              id: "return",
+              label: "Returned",
+              color: "#9a60b5",
+              icon: "rotate-ccw",
+            },
+          ],
+        },
+      },
+    });
+    expect((await team.configure({ requireCreation: true })).status()).toBe(
+      200,
+    );
+    const pending = await postBoard(team.author.page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Dashboard pending draft",
+      dueDate: today,
+    });
+    expect((await pending.json()).data.outcome).toBe("PENDING_APPROVAL");
+    const read = async (params = "") => {
+      const response = await team.author.page.request.get(
+        `/api/v1/dashboard${params}`,
+      );
+      expect(response.status()).toBe(200);
+      expect(response.headers()["cache-control"]).toContain("no-store");
+      return (await response.json()).data;
+    };
+    const report = await read();
+    expect(report).toMatchObject({
+      total: 18,
+      open: 17,
+      completed: 1,
+      overdue: 1,
+      upcomingCount: 14,
+      unassigned: 15,
+      boardCount: 14,
+      page: 1,
+      pageCount: 2,
+    });
+    expect(report.upcoming).toHaveLength(10);
+    expect(report.overdueTasks.map((task: { id: string }) => task.id)).toEqual([
+      shared.id,
+    ]);
+    expect(report.workload).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          userId: team.author.id,
+          count: 1,
+          overdue: 1,
+        }),
+        expect.objectContaining({
+          userId: team.backup.id,
+          count: 2,
+          overdue: 1,
+        }),
+      ]),
+    );
+    const board = report.boards.find(
+      (row: { id: string }) => row.id === team.boardId,
+    );
+    expect(board.statuses).toContainEqual(
+      expect.objectContaining({ id: "done", label: "Finished", count: 1 }),
+    );
+    expect(board.statuses).toContainEqual(
+      expect.objectContaining({
+        id: "return",
+        label: "Returned",
+        color: "#9a60b5",
+        count: 1,
+      }),
+    );
+    const second = await read("?page=2");
+    expect(second.boards).toHaveLength(2);
+    expect(second.total).toBe(18);
+    expect(
+      new Set([...report.boards, ...second.boards].map((board) => board.id))
+        .size,
+    ).toBe(14);
+    expect(await read(`?workspaceId=${restricted.workspaceId}`)).toMatchObject({
+      total: 0,
+      boards: [],
+      workload: [],
+    });
+    expect(
+      (await team.author.page.request.get("/api/v1/dashboard?page=0")).status(),
+    ).toBe(422);
+    await team.author.page.goto("/");
+    await expect(
+      team.author.page.locator('[data-metric="overdue"] dd'),
+    ).toHaveText("1");
+    await team.author.page
+      .getByRole("button", { name: "Overdue", exact: true })
+      .click();
+    await expect(
+      team.author.page.getByRole("region", { name: "Task deadlines" }),
+    ).toContainText(shared.name);
+    expect(
+      (
+        await postBoard(page, "update", {
+          taskId: shared.id,
+          revision: shared.revision,
+          changes: { statusId: "done" },
+        })
+      ).status(),
+    ).toBe(200);
+    await expect(
+      team.author.page.locator('[data-metric="overdue"] dd'),
+    ).toHaveText("0", { timeout: 15000 });
+    await expect(
+      team.author.page.locator('[data-metric="completed"] dd'),
+    ).toHaveText("2");
+    await team.author.page
+      .getByRole("button", { name: "Upcoming", exact: true })
+      .click();
+    await team.author.page.screenshot({
+      path: "../../artifacts/workspace-dashboard.png",
+      fullPage: true,
+    });
+    await team.author.page.emulateMedia({ reducedMotion: "reduce" });
+    await team.author.page
+      .getByRole("switch", { name: "Dark mode", exact: true })
+      .check();
+    await team.author.page.screenshot({
+      path: "../../artifacts/workspace-dashboard-dark.png",
+      fullPage: true,
+    });
+    await team.author.page.setViewportSize({ width: 390, height: 844 });
+    await team.author.page.screenshot({
+      path: "../../artifacts/workspace-dashboard-mobile.png",
+      fullPage: true,
+    });
+    expect(
+      await team.author.page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await team.author.page
+      .getByRole("combobox", { name: "Dashboard workspace" })
+      .click();
+    await team.author.page
+      .getByRole("option", { name: "Our team", exact: true })
+      .click();
+    await expect(
+      team.author.page.locator('[data-metric="open"] dd'),
+    ).toHaveText("16");
+    // A forged filter cannot reveal any aggregate from the revoked workspace.
+    await db.workspaceMember.delete({
+      where: {
+        workspaceId_userId: {
+          workspaceId: team.workspaceId,
+          userId: team.author.id,
+        },
+      },
+    });
+    expect(await read(`?workspaceId=${team.workspaceId}`)).toMatchObject({
+      total: 0,
+      overdue: 0,
+      upcoming: [],
+      workload: [],
+      boards: [],
+    });
+    const anonymous = await browser.newContext();
+    try {
+      expect(
+        (
+          await anonymous.request.get("http://127.0.0.1:3100/api/v1/dashboard")
+        ).status(),
+      ).toBe(401);
+    } finally {
+      await anonymous.close();
+    }
+    expect(returned.dueDate?.toISOString().slice(0, 10)).toBe(
+      day(7).toISOString().slice(0, 10),
+    );
   } finally {
     await team.close();
   }
