@@ -192,7 +192,7 @@ test("owner setup resumes, verifies actual receipt, and completes exactly once",
     await (await page.request.get("/api/v1/setup/status")).json()
   ).data;
   const simultaneous = await Promise.all(
-    [1, 2].map(() =>
+    Array.from({ length: 6 }, () =>
       page.request.post("/api/v1/setup/complete", {
         headers: { origin: "http://127.0.0.1:3100" },
         data: {

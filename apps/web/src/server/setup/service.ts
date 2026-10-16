@@ -35,10 +35,11 @@ async function serial<T>(
         typeof error === "object" &&
         error !== null &&
         "code" in error &&
-        error.code === "P2034" &&
-        attempt < 2
-      )
-        continue;
+        error.code === "P2034"
+      ) {
+        if (attempt < 2) continue;
+        break;
+      }
       throw error;
     }
   }
@@ -536,54 +537,59 @@ export async function completeSetup(input: unknown, headers: Headers) {
   const data = namesSchema.parse(input);
   const { settings } = await ownerContext(headers);
   if (settings.setupState === "READY") return;
-  await serial(async (tx) => {
-    const current = await tx.installationSettings.findUniqueOrThrow({
-      where: { id: settings.id },
-    });
-    if (current.setupState === "READY") return;
-    if (
-      !current.emailConfig ||
-      current.emailVerifiedRevision !== current.emailConfigRevision ||
-      current.setupState !== "EMAIL_VERIFIED"
-    )
-      throw new SetupError(
-        422,
-        "EMAIL_VERIFICATION_REQUIRED",
-        "Verify email receipt before completing installation.",
-      );
-    if (current.revision !== data.revision)
-      throw new SetupError(
-        409,
-        "STALE_SETTINGS",
-        "Settings changed. Refresh before completing setup.",
-      );
-    const workspace = await tx.workspace.create({
-      data: {
-        name: data.workspaceName,
-        createdById: current.ownerId!,
-        members: { create: { userId: current.ownerId! } },
-      },
-    });
-    const board = await tx.board.create({
-      data: {
-        name: data.boardName,
-        workspaceId: workspace.id,
-        createdById: current.ownerId!,
-        managers: {
-          create: { userId: current.ownerId!, grantedById: current.ownerId! },
+  await db().$transaction(
+    async (tx) => {
+      // Serialize bootstrap attempts before they can create competing workspaces.
+      await tx.$queryRaw`SELECT "id" FROM "InstallationSettings" WHERE "id" = ${settings.id} FOR UPDATE`;
+      const current = await tx.installationSettings.findUniqueOrThrow({
+        where: { id: settings.id },
+      });
+      if (current.setupState === "READY") return;
+      if (
+        !current.emailConfig ||
+        current.emailVerifiedRevision !== current.emailConfigRevision ||
+        current.setupState !== "EMAIL_VERIFIED"
+      )
+        throw new SetupError(
+          422,
+          "EMAIL_VERIFICATION_REQUIRED",
+          "Verify email receipt before completing installation.",
+        );
+      if (current.revision !== data.revision)
+        throw new SetupError(
+          409,
+          "STALE_SETTINGS",
+          "Settings changed. Refresh before completing setup.",
+        );
+      const workspace = await tx.workspace.create({
+        data: {
+          name: data.workspaceName,
+          createdById: current.ownerId!,
+          members: { create: { userId: current.ownerId! } },
         },
-        columns: { create: columns },
-        groups: { create: { name: "Tasks", position: 0 } },
-      },
-    });
-    await tx.installationSettings.update({
-      where: { id: current.id },
-      data: {
-        initialWorkspaceId: workspace.id,
-        initialBoardId: board.id,
-        setupState: "READY",
-        revision: { increment: 1 },
-      },
-    });
-  });
+      });
+      const board = await tx.board.create({
+        data: {
+          name: data.boardName,
+          workspaceId: workspace.id,
+          createdById: current.ownerId!,
+          managers: {
+            create: { userId: current.ownerId!, grantedById: current.ownerId! },
+          },
+          columns: { create: columns },
+          groups: { create: { name: "Tasks", position: 0 } },
+        },
+      });
+      await tx.installationSettings.update({
+        where: { id: current.id },
+        data: {
+          initialWorkspaceId: workspace.id,
+          initialBoardId: board.id,
+          setupState: "READY",
+          revision: { increment: 1 },
+        },
+      });
+    },
+    { isolationLevel: "ReadCommitted" },
+  );
 }
