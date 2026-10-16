@@ -1,6 +1,6 @@
 import { getDatabase, createRecordId } from "@yuzu/database";
 import { access, eligiblePeople } from "./board-service";
-import { requireIdentity } from "./team-access";
+import { requireIdentity, isAdministrator } from "./team-access";
 import { SetupError } from "./setup/security";
 import {
   checklistSchema,
@@ -27,8 +27,37 @@ export async function exportBoardCsv(
   headers: Headers,
   signal?: AbortSignal,
 ) {
+  const { user } = await requireIdentity(headers);
+  const result = await exportBoardCsvForActor(input, user.id, signal);
+  const current = await requireIdentity(headers);
+  await getDatabase().$transaction((tx) =>
+    access(tx, current.user.id, exportCsvSchema.parse(input).boardId),
+  );
+  return result;
+}
+export async function exportBoardCsvForActor(
+  input: unknown,
+  actorId: string,
+  signal?: AbortSignal,
+) {
   const request = exportCsvSchema.parse(input);
-  const { user, settings } = await requireIdentity(headers);
+  const db = getDatabase();
+  const user = await db.user.findUnique({ where: { id: actorId } });
+  const settings = await db.installationSettings.findUnique({
+    where: { id: "installation" },
+  });
+  if (!user || settings?.setupState !== "READY")
+    throw new SetupError(
+      403,
+      "FORBIDDEN",
+      "Your account is no longer available.",
+    );
+  if (settings.maintenanceMode && !isAdministrator(user.role))
+    throw new SetupError(
+      503,
+      "MAINTENANCE",
+      "Exports are paused during maintenance.",
+    );
   const config = request.scope === "VIEW" ? request.config : null;
   let result;
   try {
@@ -222,14 +251,14 @@ export async function exportBoardCsv(
     throw error;
   }
   // Recheck current access after the snapshot finishes, before any bytes leave the server.
-  const current = await requireIdentity(headers);
+
   await getDatabase().$transaction(async (tx) => {
-    await access(tx, current.user.id, request.boardId);
+    await access(tx, actorId, request.boardId);
     await tx.boardEvent.create({
       data: {
         id: createRecordId(),
         boardId: request.boardId,
-        actorId: current.user.id,
+        actorId: actorId,
         action: "Exported board CSV",
         after: { scope: request.scope, rowCount: result.rowCount },
       },

@@ -19,26 +19,21 @@ import {
 } from "@/components/ui/select";
 import type { TransferNoticeHandler } from "@/components/ui/yuzu-toast";
 import type { BoardState } from "@/lib/board-contract";
-import { apiRequest, ApiError } from "@/lib/api-client";
+import { apiRequest } from "@/lib/api-client";
 import {
   importTargets,
   importPreviewResultSchema,
-  importResultSchema,
   importPreviewChunks,
   parseImportCsv,
   suggestImportMapping,
   MAX_IMPORT_BYTES,
   type ImportMapping,
   type ImportPreview,
-  type ImportResult,
   type ImportRow,
 } from "@/lib/csv-import";
 
-type RowResult = {
-  row: number;
-  outcome: ImportResult["outcome"] | "FAILED";
-  message?: string;
-};
+import { useCsvTransfers } from "@/components/transfers/csv-transfer-runtime";
+
 export function ImportCsv({
   state,
   onNotice,
@@ -48,6 +43,7 @@ export function ImportCsv({
   onNotice: TransferNoticeHandler;
   onChanged: () => void;
 }) {
+  const { startImport } = useCsvTransfers();
   const [open, setOpen] = useState(false);
   const [fileName, setFileName] = useState("");
   const [parsed, setParsed] = useState<ReturnType<
@@ -56,8 +52,6 @@ export function ImportCsv({
   const [mapping, setMapping] = useState<ImportMapping>([]);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [results, setResults] = useState<RowResult[]>([]);
-  const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [previewProgress, setPreviewProgress] = useState({ done: 0, total: 0 });
   const [page, setPage] = useState(0);
   const [error, setError] = useState("");
@@ -108,7 +102,6 @@ export function ImportCsv({
             .map((row) => row.row),
         ),
       );
-      setResults([]);
     },
     onError: (failure) => {
       setError(failure.message);
@@ -122,102 +115,30 @@ export function ImportCsv({
   });
   const mutation = useMutation({
     retry: false,
-    mutationFn: async ({ rows, id }: { rows: ImportRow[]; id: string }) => {
-      const completed: RowResult[] = [];
-      setProgress({ done: 0, total: rows.length });
-      let lastUpdate = Date.now();
-      const flush = () => {
-        const updates = new Map(completed.map((item) => [item.row, item]));
-        setResults((previous) => [
-          ...previous.filter((item) => !updates.has(item.row)),
-          ...updates.values(),
-        ]);
-        setProgress({ done: completed.length, total: rows.length });
-        onChanged();
-      };
-      const announce = () =>
-        onNotice({
-          id,
-          kind: "loading",
-          title: "Importing tasks",
-          message: `${completed.length} of ${rows.length} rows processed. You can close this panel.`,
-          icon: "upload",
-          dismissible: false,
-          progress: (completed.length / rows.length) * 100,
-        });
-      announce();
-      for (const row of rows) {
-        try {
-          const { data } = await apiRequest<ImportResult>(
-            "/api/v1/boards/import/row",
-            {
-              method: "POST",
-              json: { token: row.token, allowDuplicate: row.duplicate },
-            },
-          );
-          const result = importResultSchema.parse(data);
-          completed.push({ row: row.row, outcome: result.outcome });
-        } catch (failure) {
-          const message =
-            failure instanceof Error
-              ? failure.message
-              : "This row could not finish.";
-          completed.push({ row: row.row, outcome: "FAILED", message });
-          // Stop flooding an unavailable service or a board the importer can no longer access.
-          if (
-            failure instanceof TypeError ||
-            (failure instanceof ApiError &&
-              [401, 403, 404, 429, 503].includes(failure.status))
-          ) {
-            completed.push(
-              ...rows.slice(completed.length).map((item) => ({
-                row: item.row,
-                outcome: "FAILED" as const,
-                message: `Not attempted: ${message}`,
-              })),
-            );
-            break;
-          }
-        }
-        if (completed.length % 25 === 0 || Date.now() - lastUpdate >= 1000) {
-          flush();
-          announce();
-          lastUpdate = Date.now();
-        }
-      }
-      flush();
-      return completed;
-    },
-    onSuccess: (completed, { id }) => {
-      const failed = completed.filter((row) => row.outcome === "FAILED").length;
-      const created = completed.filter(
-        (row) => row.outcome === "APPLIED",
-      ).length;
-      const approvals = completed.filter(
-        (row) => row.outcome === "PENDING_APPROVAL",
-      ).length;
+    mutationFn: ({ rows }: { rows: ImportRow[]; id: string }) =>
+      startImport(state.boardId, fileName || "CSV import", rows),
+    onSuccess: () => {
+      setOpen(false);
+      setPreview(null);
+      setParsed(null);
       onNotice({
-        id,
-        kind: failed ? "warning" : "success",
-        title: failed ? "Import needs attention" : "Import complete",
-        message: `${created} created, ${approvals} awaiting approval, ${completed.filter((row) => row.outcome === "SKIPPED").length} skipped${failed ? `, ${failed} failed. Reopen Import CSV to retry.` : "."}`,
-        progress: 100,
+        id: crypto.randomUUID(),
+        kind: "info",
+        title: "Import saved",
+        message:
+          "Follow the lemon for upload and processing progress. You can navigate or refresh.",
       });
       onChanged();
     },
-    onError: (failure, { id }) =>
+    onError: (failure) =>
       onNotice({
-        id,
+        id: crypto.randomUUID(),
         kind: "error",
-        title: "Import interrupted",
+        title: "Import could not start",
         message: failure.message,
       }),
   });
   const busy = reading || previewMutation.isPending || mutation.isPending;
-  const resultIndex = useMemo(
-    () => new Map(results.map((item) => [item.row, item])),
-    [results],
-  );
   const previewStats = useMemo(
     () => ({
       invalid: preview?.rows.filter((row) => row.issues.length).length ?? 0,
@@ -226,15 +147,13 @@ export function ImportCsv({
     [preview],
   );
   const pageCount = Math.max(1, Math.ceil((preview?.rows.length ?? 0) / 100));
-  const finished = !mutation.isPending && results.length > 0;
-  const step =
-    results.length || mutation.isPending ? 3 : preview ? 2 : parsed ? 1 : 0;
+  const step = mutation.isPending ? 3 : preview ? 2 : parsed ? 1 : 0;
   async function readFile(file?: File) {
     const generation = ++fileRead.current;
     setError("");
     setPreview(null);
     setParsed(null);
-    setResults([]);
+
     setMapping([]);
     setFileName(file?.name ?? "");
     if (!file) return;
@@ -441,7 +360,7 @@ export function ImportCsv({
             <>
               <div className="space-y-2">
                 <h3 className="text-sm font-semibold">
-                  {finished ? "Your import results" : "Review before importing"}
+                  Review before importing
                 </h3>
                 <p className="text-xs leading-relaxed text-muted-foreground">
                   {preview.rows.length} rows · {previewStats.invalid} invalid ·{" "}
@@ -453,69 +372,21 @@ export function ImportCsv({
                     wait in the approval queue.
                   </p>
                 )}
-                {!finished && (
+                {
                   <p className="text-xs leading-relaxed text-muted-foreground">
                     Possible duplicates start unchecked. Select one to create
                     another task. Invalid rows must be corrected in the CSV and
                     previewed again.
                   </p>
-                )}
+                }
               </div>
-              {finished && (
-                <div
-                  role="status"
-                  className="grid grid-cols-2 gap-3 rounded-lg border border-border p-4 text-sm"
-                >
-                  {[
-                    [
-                      "Created",
-                      results.filter((row) => row.outcome === "APPLIED").length,
-                    ],
-                    [
-                      "Awaiting approval",
-                      results.filter(
-                        (row) => row.outcome === "PENDING_APPROVAL",
-                      ).length,
-                    ],
-                    [
-                      "Skipped",
-                      preview.rows.filter(
-                        (row) => !selected.has(row.row) && !row.issues.length,
-                      ).length +
-                        results.filter((row) => row.outcome === "SKIPPED")
-                          .length,
-                    ],
-                    [
-                      "Failed",
-                      results.filter((row) => row.outcome === "FAILED").length,
-                    ],
-                  ].map(([label, count]) => (
-                    <p key={label}>
-                      <strong className="mr-2 text-lg">{count}</strong>
-                      <span className="text-muted-foreground">{label}</span>
-                    </p>
-                  ))}
-                </div>
-              )}
               <div className="max-h-[45vh] overflow-y-auto rounded-lg border border-border divide-y divide-border">
                 {preview.rows.slice(page * 100, (page + 1) * 100).map((row) => {
-                  const result = resultIndex.get(row.row);
-                  const status =
-                    result?.outcome === "APPLIED"
-                      ? "Created"
-                      : result?.outcome === "PENDING_APPROVAL"
-                        ? "Awaiting approval"
-                        : result?.outcome === "SKIPPED"
-                          ? "Skipped: a matching task exists"
-                          : result?.outcome === "FAILED"
-                            ? result.message
-                            : row.issues.length
-                              ? "Invalid"
-                              : finished
-                                ? "Skipped"
-                                : row.duplicate
-                                  ? "Possible duplicate"
-                                  : "Ready";
+                  const status = row.issues.length
+                    ? "Invalid"
+                    : row.duplicate
+                      ? "Possible duplicate"
+                      : "Ready";
                   return (
                     <label key={row.row} className="flex items-start gap-3 p-3">
                       <input
@@ -523,7 +394,7 @@ export function ImportCsv({
                         aria-label={`Import row ${row.row}`}
                         className="mt-1 accent-primary"
                         checked={selected.has(row.row)}
-                        disabled={busy || finished || !row.token}
+                        disabled={busy || !row.token}
                         onChange={(event) =>
                           setSelected((previous) => {
                             const next = new Set(previous);
@@ -538,7 +409,7 @@ export function ImportCsv({
                           {row.name}
                         </span>
                         <span
-                          className={`mt-1 block text-xs ${row.issues.length || result?.outcome === "FAILED" ? "text-destructive" : "text-muted-foreground"}`}
+                          className={`mt-1 block text-xs ${row.issues.length ? "text-destructive" : "text-muted-foreground"}`}
                         >
                           Row {row.row} · {status}
                         </span>
@@ -566,7 +437,7 @@ export function ImportCsv({
                             {issue}
                           </span>
                         ))}
-                        {row.duplicate && !result && (
+                        {row.duplicate && (
                           <span className="mt-1 block text-xs text-muted-foreground">
                             {row.duplicateReason}
                           </span>
@@ -625,7 +496,7 @@ export function ImportCsv({
                   </Button>
                 </nav>
               )}
-              {!busy && !finished && (
+              {!busy && (
                 <div className="flex flex-wrap gap-2">
                   <Button
                     size="sm"
@@ -654,45 +525,14 @@ export function ImportCsv({
               <div className="grid gap-3 pb-2">
                 {mutation.isPending ? (
                   <p role="status" className="text-sm text-muted-foreground">
-                    Importing… {progress.done} of {progress.total} rows
-                    processed. Closing this panel keeps the import running.
+                    Saving your import recovery copy. Follow the lemon for
+                    progress.
                   </p>
-                ) : finished ? (
-                  <>
-                    {results.some((row) => row.outcome === "FAILED") && (
-                      <Button
-                        onClick={() =>
-                          start(
-                            preview.rows.filter(
-                              (row) =>
-                                resultIndex.get(row.row)?.outcome === "FAILED",
-                            ),
-                          )
-                        }
-                      >
-                        Retry failed rows
-                      </Button>
-                    )}
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        setPreview(null);
-                        setResults([]);
-                        setParsed(null);
-                        setMapping([]);
-                        setFileName("");
-                        setError("");
-                      }}
-                    >
-                      Import another CSV
-                    </Button>
-                  </>
                 ) : (
                   <>
                     <Button
                       disabled={selected.size === 0 || busy}
                       onClick={() => {
-                        setResults([]);
                         start(
                           preview.rows.filter(
                             (row) => selected.has(row.row) && row.token,

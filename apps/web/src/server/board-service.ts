@@ -672,112 +672,122 @@ export async function createTask(
   headers: Headers,
   importOptions?: { skipDuplicate: boolean; sourceId?: string },
 ): Promise<TaskMutationResult> {
-  const body = createTaskSchema.parse(input);
   const { user } = await requireIdentity(headers);
-  return serial(async (tx) => {
-    const context = await access(tx, user.id, body.boardId, true);
-    const inputDigest = digest(
-      JSON.stringify({
-        ...body,
-        fieldValues: Object.entries(body.fieldValues ?? {}).sort(([a], [b]) =>
-          a.localeCompare(b),
-        ),
-      }),
-    );
-    const existing = await tx.task.findUnique({
-      where: {
-        createdById_createKey: {
-          createdById: user.id,
-          createKey: body.createKey,
-        },
+  return serial((tx) =>
+    createTaskInTransaction(tx, input, user.id, importOptions),
+  );
+}
+// Shared domain entry point; background jobs supply their persisted owner, never session cookies.
+export async function createTaskInTransaction(
+  tx: DatabaseTransaction,
+  input: unknown,
+  actorId: string,
+  importOptions?: { skipDuplicate: boolean; sourceId?: string },
+): Promise<TaskMutationResult> {
+  const body = createTaskSchema.parse(input);
+  const context = await access(tx, actorId, body.boardId, true);
+  const inputDigest = digest(
+    JSON.stringify({
+      ...body,
+      fieldValues: Object.entries(body.fieldValues ?? {}).sort(([a], [b]) =>
+        a.localeCompare(b),
+      ),
+    }),
+  );
+  const existing = await tx.task.findUnique({
+    where: {
+      createdById_createKey: {
+        createdById: actorId,
+        createKey: body.createKey,
       },
+    },
+  });
+  if (existing) {
+    if (
+      existing.boardId !== body.boardId ||
+      existing.createDigest !== inputDigest
+    )
+      throw new SetupError(
+        409,
+        "RETRY_CHANGED",
+        "This creation key already belongs to a different task request.",
+      );
+    return {
+      outcome: "APPLIED",
+      taskId: existing.id,
+      revision: existing.revision,
+    };
+  }
+  const cached = await existingProposal(
+    tx,
+    actorId,
+    body.createKey,
+    inputDigest,
+  );
+  if (cached) return cached;
+  if (importOptions?.skipDuplicate) {
+    const duplicate = await tx.task.findFirst({
+      where: {
+        boardId: body.boardId,
+        OR: [
+          { name: { equals: body.name, mode: "insensitive" } },
+          ...(importOptions.sourceId ? [{ id: importOptions.sourceId }] : []),
+        ],
+      },
+      select: { id: true },
     });
-    if (existing) {
-      if (
-        existing.boardId !== body.boardId ||
-        existing.createDigest !== inputDigest
-      )
-        throw new SetupError(
-          409,
-          "RETRY_CHANGED",
-          "This creation key already belongs to a different task request.",
-        );
-      return {
-        outcome: "APPLIED",
-        taskId: existing.id,
-        revision: existing.revision,
-      };
-    }
-    const cached = await existingProposal(
-      tx,
-      user.id,
-      body.createKey,
-      inputDigest,
-    );
-    if (cached) return cached;
-    if (importOptions?.skipDuplicate) {
-      const duplicate = await tx.task.findFirst({
-        where: {
-          boardId: body.boardId,
-          OR: [
-            { name: { equals: body.name, mode: "insensitive" } },
-            ...(importOptions.sourceId ? [{ id: importOptions.sourceId }] : []),
-          ],
-        },
-        select: { id: true },
-      });
-      const proposed = await tx.$queryRaw<{ id: string }[]>`
+    const proposed = await tx.$queryRaw<{ id: string }[]>`
         SELECT "id" FROM "BoardProposal"
         WHERE "boardId" = ${body.boardId} AND "operation" = 'CREATE' AND "status" = 'PENDING'
         AND lower("changes"->>'name') = lower(${body.name}) LIMIT 1
       `;
-      if (duplicate || proposed.length)
-        throw new SetupError(
-          409,
-          "IMPORT_DUPLICATE",
-          "A matching task already exists. This row was skipped.",
-        );
-    }
-    const people = new Set(
-      (await eligiblePeople(tx, context.board.workspaceId)).map(
-        (person) => person.id,
-      ),
-    );
-    const initial = {
-      ...body,
-      description: body.description ?? "",
-      checklist: body.checklist ?? [],
-      priority: body.priority ?? "NORMAL",
-      dueDate: body.dueDate ?? null,
-      assigneeIds: body.assigneeIds ?? [],
-      fieldValues: body.fieldValues ?? {},
-      statusId:
-        body.statusId === undefined
-          ? (options(context.board)[0]?.id ?? null)
-          : body.statusId,
-      groupId:
-        body.groupId === undefined
-          ? (context.board.groups[0]?.id ?? null)
-          : body.groupId,
-    };
-    validateCore(initial, context.board, people);
-    validateValues(initial.fieldValues, context.board, people);
-    const policy = await readApprovalPolicy(tx, context.board);
-    if (needsApproval(policy, "CREATE", initial, context.board.columns))
-      return submitProposal(tx, {
-        boardId: body.boardId,
-        authorId: user.id,
-        operation: "CREATE",
-        requestKey: body.createKey,
-        requestDigest: inputDigest,
-        changes: initial,
-        baseline: {},
-        policy,
-        eligible: people,
-      });
-    return createTaskRecord(tx, context, people, initial, user.id, inputDigest);
-  });
+    if (duplicate || proposed.length)
+      throw new SetupError(
+        409,
+        "IMPORT_DUPLICATE",
+        "A matching task already exists. This row was skipped.",
+      );
+  }
+  const people = new Set(
+    (await eligiblePeople(tx, context.board.workspaceId)).map(
+      (person) => person.id,
+    ),
+  );
+  const initial = {
+    ...body,
+    description: body.description ?? "",
+    checklist: body.checklist ?? [],
+    priority: body.priority ?? "NORMAL",
+    dueDate: body.dueDate ?? null,
+    assigneeIds: body.assigneeIds ?? [],
+    fieldValues: body.fieldValues ?? {},
+    statusId:
+      body.statusId === undefined
+        ? (options(context.board)[0]?.id ?? null)
+        : body.statusId,
+    groupId:
+      body.groupId === undefined
+        ? (context.board.groups[0]?.id ?? null)
+        : body.groupId,
+  };
+  validateCore(initial, context.board, people);
+  validateValues(initial.fieldValues, context.board, people);
+  const policy = await readApprovalPolicy(tx, context.board);
+  if (needsApproval(policy, "CREATE", initial, context.board.columns))
+    return submitProposal(tx, {
+      boardId: body.boardId,
+      authorId: actorId,
+      operation: "CREATE",
+      requestKey: body.createKey,
+      requestDigest: inputDigest,
+      changes: initial,
+      baseline: {},
+      policy,
+      eligible: people,
+    });
+  return createTaskRecord(tx, context, people, initial, actorId, inputDigest);
 }
+
 export async function mutateTask(
   action: string,
   input: unknown,

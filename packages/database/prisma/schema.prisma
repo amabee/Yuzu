@@ -53,6 +53,7 @@ model User {
   role                    String                @default("MEMBER")
   createdAt               DateTime              @default(now())
   updatedAt               DateTime              @updatedAt
+  transfers               CsvTransfer[]
   savedBoardViews         SavedBoardView[]
   boardViewSelections     BoardViewSelection[]
   sessions                Session[]
@@ -208,6 +209,7 @@ model Board {
   approvalPolicy BoardApprovalPolicy?
   proposals      BoardProposal[]
   notifications  Notification[]
+  transfers      CsvTransfer[]
   savedViews     SavedBoardView[]
   viewSelections BoardViewSelection[]
   tasks          Task[]
@@ -543,4 +545,54 @@ model BoardViewSelection {
 
   @@id([boardId, userId])
   @@index([viewId])
+}
+
+// Durable user-facing transfer state; queue scheduling lives in pg-boss's own schema.
+model CsvTransfer {
+  id          String   @id @default(uuid(7))
+  ownerId     String
+  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  boardId     String
+  board       Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  kind        String
+  name        String
+  status      String   @default("UPLOADING")
+  total       Int
+  done        Int      @default(0)
+  chunkCount  Int      @default(0)
+  config      Json
+  error       String?
+  filename    String?
+  outputKey   String?
+  queueId     String   @unique @default(uuid(7))
+  enqueuedAt  DateTime? @db.Timestamptz(3)
+  finishedAt  DateTime? @db.Timestamptz(3)
+  dismissedAt DateTime? @db.Timestamptz(3)
+  expiresAt   DateTime  @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
+  chunks      CsvTransferChunk[]
+  rows        CsvTransferRow[]
+  @@index([ownerId, dismissedAt, createdAt])
+  @@index([status, enqueuedAt])
+}
+model CsvTransferChunk {
+  transferId String
+  transfer   CsvTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  index      Int
+  count      Int
+  bytes      Int
+  digest     String
+  objectKey  String
+  @@id([transferId, index])
+}
+model CsvTransferRow {
+  transferId String
+  transfer   CsvTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  row        Int
+  outcome    String
+  taskId     String?
+  proposalId String?
+  message    String?
+  @@id([transferId, row])
 }

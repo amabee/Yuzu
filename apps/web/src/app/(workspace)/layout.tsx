@@ -1,3 +1,4 @@
+import { CsvTransferRuntime } from "@/components/transfers/csv-transfer-runtime";
 import { workspaceContext } from "@/server/workspace-access";
 import { getDatabase } from "@yuzu/database";
 import { cookies } from "next/headers";
@@ -25,16 +26,18 @@ export default async function WorkspaceLayout({
   const sidebarDefaultOpen =
     (await cookies()).get("sidebar_state")?.value !== "false";
   return (
-    <AppShell
-      principalId={user.id}
-      sidebarDefaultOpen={sidebarDefaultOpen}
-      installationName={settings.name}
-      workspaceName={workspace?.name ?? "No workspace access"}
-      ownerName={user.name}
-      role={user.role}
-      workspaces={navigationWorkspaces}
-    >
-      {children}
-    </AppShell>
+    <CsvTransferRuntime key={user.id} principalId={user.id}>
+      <AppShell
+        principalId={user.id}
+        sidebarDefaultOpen={sidebarDefaultOpen}
+        installationName={settings.name}
+        workspaceName={workspace?.name ?? "No workspace access"}
+        ownerName={user.name}
+        role={user.role}
+        workspaces={navigationWorkspaces}
+      >
+        {children}
+      </AppShell>
+    </CsvTransferRuntime>
   );
 }

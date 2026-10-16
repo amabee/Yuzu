@@ -303,7 +303,8 @@ Exports support up to 10,000 matching tasks or 10,000,000 UTF-8 bytes. Oversized
 timed-out exports return an error without a partial download. The server reads
 100-task batches with a 30-second snapshot timeout and a 50,000-task scan ceiling;
 use narrower status/group/assignee/priority filters for large boards. Closing the
-export panel keeps the download running while the board remains open.
+export panel hands preparation to the worker. Follow the floating lemon across
+navigation or refresh, then choose **Download CSV** when the file is ready.
 
 The authenticated, same-origin JSON endpoint is `POST /api/v1/boards/export`:
 
@@ -340,9 +341,11 @@ created after the preview. Matching pending creation proposals are also skipped
 at execution. Titles alone are a heuristic, so review flagged rows before choosing.
 
 Import progress and row results distinguish created tasks, pending approvals,
-skipped rows and failures. Closing the sheet keeps an active import running;
-keep the board page open until it finishes. Reopen **Import CSV** to see results
-and retry failed rows. Retries reuse creation keys, including when the server
+skipped rows and failures. Confirming the import saves a browser recovery copy,
+then uploads bounded, resumable chunks. The floating lemon shows uploading, queued,
+and processing stages across navigation and refresh. Once queued, the server
+continues even if the browser is closed. Use the lemon panel to download the
+results CSV or retry unfinished rows. Retries reuse creation keys, including when the server
 committed a task but its response was lost. Preview tickets are signed, tied to
 the importer and expire after 24 hours. Preview again after expiry. Permissions,
 maintenance, fields and approval policy are rechecked for every imported row.
@@ -355,6 +358,51 @@ are zero-based. Destinations are `name`, `description`, `status`, `priority`,
 field ID. `source_id` is only a duplicate-check hint; new tasks receive UUIDv7 IDs.
 Both endpoints require a current session, board access and the configured same
 origin. CSV contents and preview tickets are not stored as uploaded attachments.
+
+## Persistent CSV transfers
+
+`docker compose up -d --build worker` runs the Node.js/TypeScript worker in Docker.
+It uses pg-boss queues in PostgreSQL's `pgboss` schema; Redis remains the realtime
+transport. For a host-run worker, use `pnpm worker` with the same `.env` as the app.
+Apply `pnpm db:deploy` before processing transfers. Worker health is checked on its
+private port 3002; no worker API is exposed to the browser.
+
+The worker processes at most two CSV jobs per instance and one per board across
+instances. Imports create tasks or proposals through the ordinary domain rules.
+Each successful row and its task/proposal commit in the same transaction. Saved
+checkpoints, stable creation keys, retries with backoff, heartbeats, and a durable
+enqueue handoff let a restarted worker resume without duplicating accepted rows.
+Cancelling stops between rows; rows already committed remain on the board.
+
+Private normalized import chunks and completed exports are stored under
+`csv-jobs/` in SeaweedFS, separately from task attachments. LOCAL storage remains
+available for tests; host workers must share `YUZU_UPLOAD_DIR` with the web app.
+The queue carries job IDs, not CSV contents. Each user can have three active
+transfers and create up to 100 per day. Import staging is bounded to 80 MB after
+normalization, in addition to the existing 25 MB CSV and 25,000-row limits.
+
+Socket.IO invalidates the owner's transfer query when progress changes; a
+five-second active-job reconciliation recovers missed events. Zustand owns only
+panel visibility. Every transfer action and download rechecks ownership and
+current board access. The worker rechecks current access, maintenance, fields,
+and approval policy during processing without storing session cookies.
+
+The browser recovery copy uses IndexedDB and is removed after the handoff or
+cancellation. Refreshing during upload resumes missing chunks when that same
+account opens the workspace again. Uploads cannot transmit while the browser is
+closed, and clearing browser data/private-session storage removes that recovery
+copy. Drafts and preview tickets expire after 24 hours. Preview/mapping changes
+before confirmation are not saved as background jobs.
+
+Completed files and result reports expire after 24 hours. The worker periodically
+removes expired transfer objects and reclaims orphaned objects after 48 hours.
+Downloads use the shared runtime and a non-dismissible progress toast, so normal
+page navigation keeps the transfer running. A browser download itself may be
+interrupted by refresh; the prepared file can be
+downloaded again until expiry. Back up both PostgreSQL (including `pgboss`) and
+SeaweedFS. The existing synchronous export/row endpoints remain for integrations;
+the app uses `POST /api/v1/transfers`, per-transfer upload/action endpoints, and
+owner-scoped GET status, download, and result-report endpoints.
 
 ## Contributing
 

@@ -1838,3 +1838,83 @@ body:has(:is(.task-sheet-panel, .export-sheet-panel)[data-state="open"])
     grid-template-columns: minmax(0, 1fr);
   }
 }
+/* A lemon carries transfer progress; the panel stays quiet until opened. */
+.csv-activity {
+  position: fixed;
+  right: max(1.25rem, env(safe-area-inset-right));
+  bottom: max(1.25rem, env(safe-area-inset-bottom));
+  z-index: 45;
+  max-width: calc(100vw - 2rem);
+}
+.csv-activity-panel {
+  width: min(380px, calc(100vw - 2rem));
+  margin-bottom: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--foreground);
+  background: var(--popover);
+  box-shadow: 0 12px 48px color-mix(in srgb, var(--foreground) 14%, transparent);
+}
+.csv-activity-caption {
+  max-width: 240px;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--popover);
+  color: var(--foreground);
+}
+.csv-lemon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 80px;
+  height: 80px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+.csv-lemon:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+}
+.csv-lemon-ring {
+  position: absolute;
+  inset: 0;
+  width: 80px;
+  height: 80px;
+  transform: rotate(-90deg);
+}
+.csv-lemon-ring circle {
+  transition: stroke-dashoffset 500ms ease;
+}
+.csv-lemon-count {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  min-width: 30px;
+  height: 22px;
+  place-items: center;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: var(--popover);
+  color: var(--foreground);
+  font-size: 10px;
+  font-weight: 600;
+}
+@media (max-width: 480px) {
+  .csv-activity {
+    right: 1rem;
+    bottom: 1rem;
+  }
+  .csv-activity-caption {
+    max-width: 180px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .csv-lemon-ring circle {
+    transition: none;
+  }
+}

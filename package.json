@@ -26,7 +26,8 @@
     "db:check": "pnpm --filter @yuzu/database check",
     "db:upgrade:ids": "pnpm --filter @yuzu/database upgrade:ids",
     "attachments:cleanup": "pnpm --filter @yuzu/database attachments:cleanup",
-    "attachments:migrate-s3": "pnpm --filter @yuzu/database attachments:migrate-s3"
+    "attachments:migrate-s3": "pnpm --filter @yuzu/database attachments:migrate-s3",
+    "worker": "pnpm --filter @yuzu/worker start"
   },
   "devDependencies": {
     "prettier": "3.7.4"

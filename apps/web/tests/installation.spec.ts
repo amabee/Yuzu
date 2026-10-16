@@ -1,3 +1,4 @@
+import { startTestCsvWorker, stopTestCsvWorker } from "./csv-worker-process";
 import { defaultViewConfig } from "../src/lib/saved-view-contract";
 import { test as base, expect } from "@playwright/test";
 import { SMTPServer } from "smtp-server";
@@ -40,6 +41,9 @@ const test = base.extend<{ mailbox: string[] }>({
     await new Promise<void>((resolve) => server.close(resolve));
   },
 });
+test.beforeAll(() => startTestCsvWorker());
+test.afterAll(() => stopTestCsvWorker());
+
 test.beforeEach(async () => {
   if (new URL(process.env.DATABASE_URL!).pathname !== "/yuzu_e2e")
     throw new Error("Refusing to reset a non-test database.");
@@ -7501,7 +7505,7 @@ test("CSV export downloads fresh current-view data with safe typed fields and co
 }) => {
   test.setTimeout(90_000);
   const team = await approvalTeam(page, browser);
-  let release = () => {};
+  const release = () => {};
   try {
     const definitions = [
       { name: "Notes", type: "LONG_TEXT" },
@@ -7593,31 +7597,21 @@ test("CSV export downloads fresh current-view data with safe typed fields and co
         })
       ).status(),
     ).toBe(200);
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await page.route("**/api/v1/boards/export", async (route) => {
-      await held;
-      await route.continue().catch(() => {});
-    });
-    const downloaded = page.waitForEvent("download");
     await panel
       .getByRole("button", { name: "Download CSV", exact: true })
       .click();
-    const toast = page.locator(
-      '[data-slot="board-notification"][data-variant="loading"]',
-    );
-    await expect(toast).toContainText("Exporting CSV");
-    await expect(
-      toast.getByRole("button", {
-        name: "Dismiss notification",
-        includeHidden: true,
-      }),
-    ).toHaveCount(0);
-    await panel.getByRole("button", { name: "Close", exact: true }).click();
     await expect(panel).toHaveCount(0);
-    await expect(toast).toBeVisible();
-    release();
+    await page.goto("/boards");
+    await page.reload();
+    await page.getByRole("button", { name: /^Show transfers:/ }).click();
+    const activity = page.getByRole("region", { name: "Transfer progress" });
+    await expect(
+      activity.getByText("Ready to download", { exact: true }),
+    ).toBeVisible({ timeout: 30_000 });
+    const downloaded = page.waitForEvent("download");
+    await activity
+      .getByRole("link", { name: "Download CSV", exact: true })
+      .click();
     const download = await downloaded;
     expect(download.suggestedFilename()).toMatch(
       /^yuzu-Approval project-.*\.csv$/u,
@@ -7641,10 +7635,7 @@ test("CSV export downloads fresh current-view data with safe typed fields and co
       { text: "Unique step", done: false },
     ]);
     expect(JSON.parse(records[0]!["Assignee IDs"]!)).toEqual([team.ownerId]);
-    await expect(
-      page.locator('[data-slot="board-notification"]'),
-    ).toContainText("CSV exported");
-    await page.unroute("**/api/v1/boards/export");
+    await page.goto(`/boards/${team.boardId}`);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole("button", { name: "Export CSV", exact: true }).click();
     expect(
@@ -7908,6 +7899,12 @@ const postImport = (page: Page, action: "preview" | "row", data: unknown) =>
     headers: { origin: "http://127.0.0.1:3100" },
     data,
   });
+
+const postTransfer = (page: Page, path: string, data: unknown) =>
+  page.request.post(`/api/v1/transfers${path}`, {
+    headers: { origin: "http://127.0.0.1:3100" },
+    data,
+  });
 const importFixture = (records: string[][]) =>
   records
     .map((record) =>
@@ -8010,9 +8007,11 @@ test("large CSV import accepts 25 MB and 25000 tasks with bounded previews, cros
   await panel
     .getByRole("button", { name: "Import 2 tasks", exact: true })
     .click();
-  await expect(panel.getByRole("status")).toContainText("2Created", {
-    timeout: 30_000,
-  });
+  await expect
+    .poll(() => getDatabase().task.count({ where: { boardId: board.id } }), {
+      timeout: 30_000,
+    })
+    .toBe(2);
   expect(await getDatabase().task.count({ where: { boardId: board.id } })).toBe(
     2,
   );
@@ -8030,9 +8029,7 @@ test("large CSV import accepts 25 MB and 25000 tasks with bounded previews, cros
     0,
     { timeout: 8000 },
   );
-  await panel
-    .getByRole("button", { name: "Import another CSV", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Import CSV", exact: true }).click();
   await panel.getByLabel("CSV file").setInputFiles({
     name: "too-large.csv",
     mimeType: "text/csv",
@@ -8271,38 +8268,19 @@ test("CSV import maps columns, previews invalid and duplicate rows, continues wi
     path: "../../artifacts/phase-3/csv-import-preview-mobile.png",
     fullPage: false,
   });
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  await page.route("**/api/v1/boards/import/row", async (route) => {
-    await gate;
-    await route.continue();
-  });
   await panel
     .getByRole("button", { name: "Import 2 tasks", exact: true })
     .click();
-  await expect(page.locator('[data-slot="board-notification"]')).toContainText(
-    "Importing tasks",
-  );
-  await expect(
-    page.locator(
-      '[data-slot="board-notification"] button[aria-label="Dismiss notification"]',
-    ),
-  ).toHaveCount(0);
-  await panel.getByRole("button", { name: "Close", exact: true }).click();
-  release();
+  await expect(panel).toHaveCount(0);
   await expect
-    .poll(() => getDatabase().task.count({ where: { boardId } }))
+    .poll(() => getDatabase().task.count({ where: { boardId } }), {
+      timeout: 30_000,
+    })
     .toBe(3);
+  await expect(page.getByRole("button", { name: /^New lemon/ })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "New lemon 🍋", exact: true }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Import CSV", exact: true }).click();
-  await expect(
-    panel.getByRole("heading", { name: "Your import results" }),
-  ).toBeVisible();
-  await expect(panel.getByRole("status")).toContainText("2Created");
+    page.getByRole("region", { name: "Transfer progress" }),
+  ).toContainText("2 created");
   const original = await getDatabase().task.findUniqueOrThrow({
     where: { id: oldId },
   });
@@ -8568,8 +8546,12 @@ test("CSV import retries after a lost response without duplicate tasks and reval
     .getByRole("button", { name: "Preview tasks", exact: true })
     .click();
   let lost = false;
-  await page.route("**/api/v1/boards/import/row", async (route) => {
-    if (!lost) {
+  await page.route("**/api/v1/transfers/*", async (route) => {
+    if (
+      route.request().method() === "POST" &&
+      route.request().postDataJSON()?.action === "chunk" &&
+      !lost
+    ) {
       lost = true;
       expect((await route.fetch()).status()).toBe(200);
       await route.abort("failed");
@@ -8578,17 +8560,16 @@ test("CSV import retries after a lost response without duplicate tasks and reval
   await panel
     .getByRole("button", { name: "Import 2 tasks", exact: true })
     .click();
-  await expect(
-    panel.getByRole("button", { name: "Retry failed rows", exact: true }),
-  ).toBeVisible();
+  await expect.poll(() => lost).toBe(true);
+  await page.reload();
+  await expect
+    .poll(() => getDatabase().task.count({ where: { boardId } }), {
+      timeout: 45_000,
+    })
+    .toBe(2);
   expect(
     await getDatabase().task.count({ where: { boardId, name: "Only once" } }),
   ).toBe(1);
-  await panel
-    .getByRole("button", { name: "Retry failed rows", exact: true })
-    .click();
-  await expect(panel.getByRole("status")).toContainText("2Created");
-  expect(await getDatabase().task.count({ where: { boardId } })).toBe(2);
   await page.screenshot({
     path: "../../artifacts/phase-3/csv-import-results.png",
     fullPage: false,
@@ -8647,4 +8628,535 @@ test("CSV import retries after a lost response without duplicate tasks and reval
       })
     ).status(),
   ).toBe(422);
+});
+
+test("durable CSV import resumes after worker crash, navigation and refresh without duplicate tasks", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  const { board } = await readyTeam(page);
+  const preview = await postImport(page, "preview", {
+    boardId: board.id,
+    csv:
+      "Task\n" +
+      Array.from({ length: 300 }, (_, i) => `Durable task ${i}`).join("\n"),
+    mapping: [{ column: 0, target: "name" }],
+  });
+  expect(preview.status()).toBe(200);
+  const rows = (await preview.json()).data.rows.map(
+    (row: { row: number; token: string }) => ({
+      row: row.row,
+      token: row.token,
+      allowDuplicate: false,
+    }),
+  );
+  const id = createRecordId();
+  expect(
+    (
+      await postTransfer(page, "", {
+        id,
+        kind: "IMPORT",
+        boardId: board.id,
+        name: "restart.csv",
+        total: rows.length,
+        chunkCount: 3,
+      })
+    ).status(),
+  ).toBe(200);
+  for (let index = 0; index < 3; index++)
+    expect(
+      (
+        await postTransfer(page, `/${id}`, {
+          action: "chunk",
+          index,
+          rows: rows.slice(index * 100, (index + 1) * 100),
+        })
+      ).status(),
+    ).toBe(200);
+  expect(
+    (await postTransfer(page, `/${id}`, { action: "start" })).status(),
+  ).toBe(200);
+  await expect
+    .poll(
+      () => getDatabase().csvTransferRow.count({ where: { transferId: id } }),
+      { timeout: 30_000, intervals: [100] },
+    )
+    .toBeGreaterThan(5);
+  await stopTestCsvWorker();
+  const checkpoint = await getDatabase().task.count({
+    where: { boardId: board.id },
+  });
+  expect(checkpoint).toBeLessThan(300);
+  await page.goto("/boards");
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: /^Show transfers:/ }),
+  ).toBeVisible();
+  await startTestCsvWorker();
+  await expect
+    .poll(
+      async () =>
+        (await getDatabase().csvTransfer.findUniqueOrThrow({ where: { id } }))
+          .status,
+      { timeout: 120_000 },
+    )
+    .toBe("COMPLETED");
+  expect(await getDatabase().task.count({ where: { boardId: board.id } })).toBe(
+    300,
+  );
+  expect(
+    await getDatabase().csvTransferRow.count({
+      where: { transferId: id, outcome: "APPLIED" },
+    }),
+  ).toBe(300);
+  await page.getByRole("button", { name: /^Show transfers:/ }).click();
+  await expect(
+    page.getByRole("region", { name: "Transfer progress" }),
+  ).toContainText("300 created");
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "../../artifacts/phase-3/durable-csv-lemon-mobile.png",
+    fullPage: true,
+  });
+  const report = await page.request.get(`/api/v1/transfers/${id}?report=1`);
+  expect(report.status()).toBe(200);
+  expect(csvRecords(await report.text())).toHaveLength(300);
+});
+
+test("durable CSV staging enforces ownership, completeness, immutable chunks and cancellation", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const response = await postImport(team.author.page, "preview", {
+      boardId: team.boardId,
+      csv: "Task\nPrivate staged row",
+      mapping: [{ column: 0, target: "name" }],
+    });
+    const token = (await response.json()).data.rows[0].token;
+    const id = createRecordId(),
+      create = {
+        id,
+        kind: "IMPORT",
+        boardId: team.boardId,
+        name: "private.csv",
+        total: 1,
+        chunkCount: 1,
+      };
+    expect((await postTransfer(team.author.page, "", create)).status()).toBe(
+      200,
+    );
+    expect((await postTransfer(team.author.page, "", create)).status()).toBe(
+      200,
+    );
+    expect(
+      (await postTransfer(page, `/${id}`, { action: "cancel" })).status(),
+    ).toBe(404);
+    expect((await page.request.get(`/api/v1/transfers/${id}`)).status()).toBe(
+      404,
+    );
+    expect(
+      (
+        await postTransfer(team.author.page, `/${id}`, { action: "start" })
+      ).status(),
+    ).toBe(409);
+    expect(
+      (
+        await postTransfer(team.author.page, `/${id}`, {
+          action: "chunk",
+          index: 0,
+          rows: [{ row: 2, token: token + "tampered", allowDuplicate: false }],
+        })
+      ).status(),
+    ).toBe(422);
+    const chunk = {
+      action: "chunk",
+      index: 0,
+      rows: [{ row: 2, token, allowDuplicate: false }],
+    };
+    expect(
+      (await postTransfer(team.author.page, `/${id}`, chunk)).status(),
+    ).toBe(200);
+    expect(
+      (await postTransfer(team.author.page, `/${id}`, chunk)).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postTransfer(team.author.page, `/${id}`, {
+          ...chunk,
+          rows: [{ row: 2, token, allowDuplicate: true }],
+        })
+      ).status(),
+    ).toBe(409);
+    expect(
+      (
+        await postTransfer(team.author.page, `/${id}`, { action: "cancel" })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postTransfer(team.author.page, `/${id}`, { action: "start" })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (await getDatabase().csvTransfer.findUniqueOrThrow({ where: { id } }))
+        .status,
+    ).toBe("CANCELLED");
+    expect(
+      await getDatabase().task.count({
+        where: { boardId: team.boardId, name: "Private staged row" },
+      }),
+    ).toBe(0);
+  } finally {
+    await team.close();
+  }
+});
+
+test("durable CSV worker preserves approvals and rechecks access to prepared downloads and queued jobs", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  const db = getDatabase();
+  try {
+    expect((await team.configure({ requireCreation: true })).status()).toBe(
+      200,
+    );
+    async function stage(name: string) {
+      const preview = await postImport(team.author.page, "preview", {
+        boardId: team.boardId,
+        csv: `Task\n${name}`,
+        mapping: [{ column: 0, target: "name" }],
+      });
+      expect(preview.status()).toBe(200);
+      const token = (await preview.json()).data.rows[0].token,
+        id = createRecordId();
+      expect(
+        (
+          await postTransfer(team.author.page, "", {
+            id,
+            kind: "IMPORT",
+            boardId: team.boardId,
+            name: name + ".csv",
+            total: 1,
+            chunkCount: 1,
+          })
+        ).status(),
+      ).toBe(200);
+      expect(
+        (
+          await postTransfer(team.author.page, `/${id}`, {
+            action: "chunk",
+            index: 0,
+            rows: [{ row: 2, token, allowDuplicate: false }],
+          })
+        ).status(),
+      ).toBe(200);
+      expect(
+        (
+          await postTransfer(team.author.page, `/${id}`, { action: "start" })
+        ).status(),
+      ).toBe(200);
+      return id;
+    }
+    const approved = await stage("Needs review");
+    await expect
+      .poll(
+        async () =>
+          (await db.csvTransfer.findUniqueOrThrow({ where: { id: approved } }))
+            .status,
+        { timeout: 30_000 },
+      )
+      .toBe("COMPLETED");
+    expect(await db.task.count({ where: { boardId: team.boardId } })).toBe(0);
+    expect(
+      await db.csvTransferRow.count({
+        where: { transferId: approved, outcome: "PENDING_APPROVAL" },
+      }),
+    ).toBe(1);
+    expect(
+      await db.boardProposal.count({
+        where: {
+          boardId: team.boardId,
+          status: "PENDING",
+          authorId: team.author.id,
+        },
+      }),
+    ).toBe(1);
+    const exported = createRecordId();
+    expect(
+      (
+        await postTransfer(team.author.page, "", {
+          id: exported,
+          kind: "EXPORT",
+          input: {
+            boardId: team.boardId,
+            scope: "BOARD",
+            includeArchived: false,
+          },
+        })
+      ).status(),
+    ).toBe(200);
+    await expect
+      .poll(
+        async () =>
+          (await db.csvTransfer.findUniqueOrThrow({ where: { id: exported } }))
+            .status,
+        { timeout: 30_000 },
+      )
+      .toBe("COMPLETED");
+    expect(
+      (
+        await team.author.page.request.get(
+          `/api/v1/transfers/${exported}?download=1`,
+        )
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await page.request.get(`/api/v1/transfers/${exported}?download=1`)
+      ).status(),
+    ).toBe(404);
+    await stopTestCsvWorker();
+    const revoked = await stage("Revoked queued import");
+    await db.workspaceMember.deleteMany({
+      where: { workspaceId: team.workspaceId, userId: team.author.id },
+    });
+    expect(
+      (
+        await team.author.page.request.get(
+          `/api/v1/transfers/${exported}?download=1`,
+        )
+      ).status(),
+    ).toBe(404);
+    await startTestCsvWorker();
+    await expect
+      .poll(
+        async () =>
+          (await db.csvTransfer.findUniqueOrThrow({ where: { id: revoked } }))
+            .status,
+        { timeout: 30_000 },
+      )
+      .toBe("FAILED");
+    expect(
+      await db.task.count({
+        where: { boardId: team.boardId, name: "Revoked queued import" },
+      }),
+    ).toBe(0);
+  } finally {
+    await team.close();
+  }
+});
+
+test("durable CSV row errors can be retried from saved inputs without repeating successful rows", async ({
+  page,
+}) => {
+  const { workspace } = await readyTeam(page),
+    db = getDatabase();
+  const boardId = (
+    await (
+      await postBoard(page, "create-board", {
+        workspaceId: workspace.id,
+        name: "Retry background rows",
+      })
+    ).json()
+  ).data.id;
+  const fieldId = (
+    await (
+      await postBoard(page, "field", {
+        boardId,
+        name: "Temporary",
+        type: "TEXT",
+        options: [],
+      })
+    ).json()
+  ).data.id;
+  const preview = await postImport(page, "preview", {
+    boardId,
+    csv: "Task,Temporary\nRetry saved input,Text",
+    mapping: [
+      { column: 0, target: "name" },
+      { column: 1, target: fieldId },
+    ],
+  });
+  expect(preview.status()).toBe(200);
+  const token = (await preview.json()).data.rows[0].token,
+    id = createRecordId();
+  const firstPreview = await postImport(page, "preview", {
+    boardId,
+    csv: "Task\nAlready successful",
+    mapping: [{ column: 0, target: "name" }],
+  });
+  const firstToken = (await firstPreview.json()).data.rows[0].token;
+  expect(
+    (
+      await postTransfer(page, "", {
+        id,
+        kind: "IMPORT",
+        boardId,
+        name: "row-retry.csv",
+        total: 2,
+        chunkCount: 1,
+      })
+    ).status(),
+  ).toBe(200);
+  expect(
+    (
+      await postTransfer(page, `/${id}`, {
+        action: "chunk",
+        index: 0,
+        rows: [
+          { row: 2, token: firstToken, allowDuplicate: false },
+          { row: 3, token, allowDuplicate: false },
+        ],
+      })
+    ).status(),
+  ).toBe(200);
+  await db.boardColumn.update({
+    where: { id: fieldId },
+    data: { archivedAt: new Date() },
+  });
+  expect(
+    (await postTransfer(page, `/${id}`, { action: "start" })).status(),
+  ).toBe(200);
+  await expect
+    .poll(
+      async () =>
+        (await db.csvTransfer.findUniqueOrThrow({ where: { id } })).status,
+      { timeout: 30_000 },
+    )
+    .toBe("COMPLETED");
+  expect(
+    await db.csvTransferRow.count({
+      where: { transferId: id, outcome: "FAILED" },
+    }),
+  ).toBe(1);
+  expect(await db.task.count({ where: { boardId } })).toBe(1);
+  await db.boardColumn.update({
+    where: { id: fieldId },
+    data: { archivedAt: null },
+  });
+  expect(
+    (await postTransfer(page, `/${id}`, { action: "retry" })).status(),
+  ).toBe(200);
+  await expect
+    .poll(
+      async () =>
+        (await db.csvTransfer.findUniqueOrThrow({ where: { id } })).status,
+      { timeout: 30_000 },
+    )
+    .toBe("COMPLETED");
+  expect(
+    await db.task.count({ where: { boardId, name: "Retry saved input" } }),
+  ).toBe(1);
+  expect(
+    await db.csvTransferRow.count({
+      where: { transferId: id, outcome: "APPLIED" },
+    }),
+  ).toBe(2);
+  expect(
+    await db.task.count({ where: { boardId, name: "Already successful" } }),
+  ).toBe(1);
+  await db.csvTransfer.update({
+    where: { id },
+    data: { expiresAt: new Date(Date.now() - 1000) },
+  });
+  expect(
+    (await page.request.get(`/api/v1/transfers/${id}?report=1`)).status(),
+  ).toBe(410);
+});
+
+test("CSV lemon downloads keep their progress toast across navigation, reopen on repeat and handle revoked files in place", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  const { board } = await readyTeam(page);
+  const id = createRecordId();
+  expect(
+    (
+      await postTransfer(page, "", {
+        id,
+        kind: "EXPORT",
+        input: { boardId: board.id, scope: "BOARD", includeArchived: false },
+      })
+    ).status(),
+  ).toBe(200);
+  await expect
+    .poll(
+      async () =>
+        (await getDatabase().csvTransfer.findUniqueOrThrow({ where: { id } }))
+          .status,
+      { timeout: 30_000 },
+    )
+    .toBe("COMPLETED");
+  await page.goto("/boards");
+  await page.getByRole("button", { name: /^Show transfers:/ }).click();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/v1/transfers/*?download=1", async (route) => {
+    await held;
+    await route.continue().catch(() => {});
+  });
+  const first = page.waitForEvent("download");
+  try {
+    await page.getByRole("link", { name: "Download CSV", exact: true }).click();
+    const toast = page.locator(
+      '[data-slot="board-notification"][data-variant="loading"]',
+    );
+    await expect(toast).toContainText("Downloading CSV");
+    await expect(
+      toast.getByRole("button", {
+        name: "Dismiss notification",
+        includeHidden: true,
+      }),
+    ).toHaveCount(0);
+    await page.getByRole("link", { name: "Overview", exact: true }).click();
+    await expect(page).toHaveURL("http://127.0.0.1:3100/");
+    await expect(toast).toBeVisible();
+    release();
+    expect((await first).suggestedFilename()).toMatch(/\.csv$/);
+    await expect(
+      page.locator('[data-slot="board-notification"]'),
+    ).toContainText("Download started");
+    await page.unroute("**/api/v1/transfers/*?download=1");
+    await page.mouse.move(0, 0);
+    await expect(page.locator('[data-slot="board-notification"]')).toHaveCount(
+      0,
+      { timeout: 8000 },
+    );
+    const second = page.waitForEvent("download");
+    await page.getByRole("link", { name: "Download CSV", exact: true }).click();
+    await second;
+    await expect(
+      page.locator('[data-slot="board-notification"]'),
+    ).toContainText("Download started");
+    await page.route("**/api/v1/transfers/*?download=1", (route) =>
+      route.fulfill({
+        status: 404,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "NOT_FOUND",
+            message: "This file is no longer available.",
+          },
+        }),
+      }),
+    );
+    await page.getByRole("link", { name: "Download CSV", exact: true }).click();
+    await expect(
+      page.locator('[data-slot="board-notification"]'),
+    ).toContainText("Download failed");
+    await expect(page).toHaveURL("http://127.0.0.1:3100/");
+  } finally {
+    release();
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+  }
 });

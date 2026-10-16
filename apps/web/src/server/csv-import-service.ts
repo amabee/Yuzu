@@ -50,7 +50,7 @@ function signTicket(ticket: z.infer<typeof ticketSchema>) {
   const payload = Buffer.from(JSON.stringify(ticket)).toString("base64url");
   return `${payload}.${signature(payload).toString("base64url")}`;
 }
-function readTicket(token: string) {
+export function readTicket(token: string) {
   const parts = token.split(".");
   const expected = signature(parts[0]);
   const supplied = Buffer.from(parts[1] ?? "", "base64url");

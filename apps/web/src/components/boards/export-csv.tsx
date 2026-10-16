@@ -9,7 +9,7 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
-import { downloadBoardCsv } from "@/lib/csv-export-client";
+import { useCsvTransfers } from "@/components/transfers/csv-transfer-runtime";
 import type { CsvExportRequest } from "@/lib/csv-export";
 import type { ViewConfig } from "@/lib/saved-view-contract";
 import type { TransferNoticeHandler } from "@/components/ui/yuzu-toast";
@@ -25,48 +25,22 @@ export function ExportCsv({
   count: number;
   onNotice: TransferNoticeHandler;
 }) {
+  const { startExport } = useCsvTransfers();
   const [open, setOpen] = useState(false);
   const [scope, setScope] = useState<"VIEW" | "BOARD">("VIEW");
   const [includeArchived, setIncludeArchived] = useState(false);
   const mutation = useMutation({
     retry: false,
-    mutationFn: async ({
-      input,
-      id,
-    }: {
-      input: CsvExportRequest;
-      id: string;
-    }) => {
-      onNotice({
-        id,
-        kind: "loading",
-        title: "Exporting CSV",
-        message: "Preparing the latest task data…",
-        icon: "download",
-        dismissible: false,
-      });
-      return downloadBoardCsv(input, (loaded, total) =>
-        onNotice({
-          id,
-          kind: "loading",
-          title: "Downloading CSV",
-          message: total
-            ? `${Math.round(loaded / 1000)} / ${Math.round(total / 1000)} KB`
-            : `${Math.round(loaded / 1000)} KB received`,
-          icon: "download",
-          dismissible: false,
-          ...(total ? { progress: Math.min(99, (loaded / total) * 100) } : {}),
-        }),
-      );
-    },
-    onSuccess: (result, { id }) => {
+    mutationFn: async ({ input }: { input: CsvExportRequest; id: string }) =>
+      startExport(input),
+    onSuccess: () => {
       setOpen(false);
       onNotice({
-        id,
-        kind: "success",
-        title: "CSV exported",
-        message: result.filename,
-        progress: 100,
+        id: crypto.randomUUID(),
+        kind: "info",
+        title: "Export queued",
+        message:
+          "Yuzu is preparing your CSV. Download it from the lemon when ready.",
       });
     },
     onError: (error, { id }) =>
@@ -190,7 +164,8 @@ export function ExportCsv({
             )}
             {mutation.isPending && (
               <p role="status" className="text-xs text-muted-foreground">
-                You can close this panel. Your download will continue.
+                You can close this panel. Your export will continue across
+                navigation and refresh.
               </p>
             )}
             <Button type="submit" disabled={mutation.isPending}>
