@@ -419,6 +419,16 @@ Run `pnpm db:deploy` after updating. The board-query migration installs PostgreS
 migration database account needs permission to install that extension. This is
 available in the bundled PostgreSQL container.
 
+## Workspace task search
+
+The header search finds tasks by name or description across all accessible
+boards. Results show their workspace and board, open the task sheet directly,
+and load 20 at a time with stable cursor pagination. Archived tasks have a
+separate search toggle. Workspace membership and the current role are checked
+on every request, including additional result pages. Pending approval drafts
+are excluded. Search updates when board events arrive, when reopened, and on
+window focus/reconnect.
+
 ## Contributing
 
 Contributions, feedback, bug reports, and thoughtful feature ideas are welcome

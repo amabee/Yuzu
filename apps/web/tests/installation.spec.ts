@@ -9246,3 +9246,128 @@ test("large boards page and filter 25000 tasks without mounting every card or lo
   await page.goto(`/boards/${board.id}?task=${ids[24999]}`);
   await expect(page.getByRole("dialog")).toContainText("Load task 24999");
 });
+
+test("workspace task search pages across boards, opens task sheets and enforces current membership", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(90_000);
+  const team = await approvalTeam(page, browser);
+  try {
+    const db = getDatabase();
+    const boards = await db.board.findMany({ orderBy: { createdAt: "asc" } });
+    const visible = boards.find(
+      (board) =>
+        board.workspaceId === team.workspaceId && board.id !== team.boardId,
+    )!;
+    const restricted = boards.find(
+      (board) => board.workspaceId !== team.workspaceId,
+    )!;
+    const data = Array.from({ length: 25 }, (_, i) => ({
+      id: createRecordId(),
+      boardId: i % 2 ? visible.id : team.boardId,
+      name: `Searchable task ${i}`,
+      description: i === 24 ? "Literal 50%_ search" : "Cross-board task",
+      createdById: team.ownerId,
+      createKey: createRecordId(),
+      createDigest: "search-test",
+    }));
+    await db.task.createMany({ data });
+    await db.task.createMany({
+      data: [
+        {
+          boardId: restricted.id,
+          name: "Searchable secret",
+          createdById: team.ownerId,
+          createKey: createRecordId(),
+          createDigest: "search-test",
+        },
+        {
+          boardId: team.boardId,
+          name: "Searchable archived",
+          archivedAt: new Date(),
+          createdById: team.ownerId,
+          createKey: createRecordId(),
+          createDigest: "search-test",
+        },
+      ],
+    });
+    const read = (params: string) =>
+      team.author.page.request.get(`/api/v1/search/tasks?${params}`);
+    const firstResponse = await read("q=searchable");
+    expect(firstResponse.status()).toBe(200);
+    expect(firstResponse.headers()["cache-control"]).toContain("no-store");
+    const first = (await firstResponse.json()).data;
+    expect(first.total).toBe(25);
+    expect(first.tasks).toHaveLength(20);
+    expect(
+      new Set(first.tasks.map((task: { boardId: string }) => task.boardId))
+        .size,
+    ).toBe(2);
+    const second = (
+      await (await read(`q=searchable&cursor=${first.nextCursor}`)).json()
+    ).data;
+    expect(second.tasks).toHaveLength(5);
+    expect(second.nextCursor).toBeNull();
+    expect(
+      new Set([...first.tasks, ...second.tasks].map((task) => task.id)).size,
+    ).toBe(25);
+    expect((await (await read("q=50%25_")).json()).data.total).toBe(1);
+    expect(
+      (await (await read("q=searchable&archived=true")).json()).data.total,
+    ).toBe(1);
+    expect(
+      (
+        await (
+          await page.request.get("/api/v1/search/tasks?q=searchable")
+        ).json()
+      ).data.total,
+    ).toBe(26);
+    expect((await read("q=x")).status()).toBe(422);
+    expect((await read("q=searchable&cursor=invalid")).status()).toBe(422);
+    await team.author.page.goto("/");
+    await team.author.page
+      .getByRole("button", { name: "Search workspace", exact: true })
+      .click();
+    await team.author.page
+      .getByLabel("Search boards", { exact: true })
+      .fill("Searchable");
+    const matches = team.author.page.getByRole("region", {
+      name: "Matching tasks",
+    });
+    await expect(matches.getByRole("link")).toHaveCount(20);
+    await matches.getByRole("button", { name: "Show more tasks" }).click();
+    await expect(matches.getByRole("link")).toHaveCount(25);
+    await team.author.page.screenshot({ path: "../../artifacts/task-search.png", fullPage: true });
+    await matches.getByRole("link").first().click();
+    await expect(team.author.page.getByRole("dialog")).toContainText(
+      "Searchable task",
+    );
+    await db.workspaceMember.delete({
+      where: {
+        workspaceId_userId: {
+          workspaceId: team.workspaceId,
+          userId: team.author.id,
+        },
+      },
+    });
+    const revoked = (
+      await (await read(`q=searchable&cursor=${first.nextCursor}`)).json()
+    ).data;
+    expect(revoked).toMatchObject({ total: 0, tasks: [] });
+    const anonymous = await browser.newContext();
+    try {
+      expect(
+        (
+          await anonymous.request.get(
+            "http://127.0.0.1:3100/api/v1/search/tasks?q=searchable",
+          )
+        ).status(),
+      ).toBe(401);
+    } finally {
+      await anonymous.close();
+    }
+  } finally {
+    await team.close();
+  }
+});

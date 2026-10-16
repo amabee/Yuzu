@@ -45,6 +45,10 @@ function useLiveSync(boardId: string | undefined, principalId: string) {
       () =>
         Promise.all([
           queryClient.invalidateQueries(
+            { queryKey: ["principal", principalId, "task-search"] },
+            { cancelRefetch: false },
+          ),
+          queryClient.invalidateQueries(
             { queryKey: ["principal", principalId, "csv-transfers"] },
             { cancelRefetch: false },
           ),
