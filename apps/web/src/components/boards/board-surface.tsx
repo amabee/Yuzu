@@ -1,5 +1,6 @@
 "use client";
 import { ExportCsv } from "./export-csv";
+import { ImportCsv } from "./import-csv";
 import { matchesBoardView, compareBoardView } from "@/lib/board-view";
 import { BoardFilters, BoardFilterSelect } from "./board-filters";
 import { SavedViewControls } from "./saved-view-controls";
@@ -534,6 +535,13 @@ export function BoardSurface({
           >
             {archived ? "Active tasks" : "Archived"}
           </Button>
+          <ImportCsv
+            state={state}
+            onNotice={transferNotice}
+            onChanged={() => {
+              void queryClient.invalidateQueries({ queryKey });
+            }}
+          />
           <ExportCsv
             boardId={state.boardId}
             config={viewConfig}

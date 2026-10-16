@@ -316,6 +316,44 @@ configuration contract. Successful responses are private, non-cacheable CSV
 attachments. Validation, permission, maintenance and size failures use the normal
 JSON API error envelope. Use database and object-storage backups for full recovery.
 
+## CSV import
+
+Open **Import CSV** on a board, choose a UTF-8 comma-separated file, and map its
+columns to task properties or existing custom fields. Imports accept up to 1 MB,
+500 task rows, and 100 columns per file. Preview does not write tasks. Unmapped
+columns are ignored; unmapped or empty values use normal task-creation defaults.
+
+Dates use `YYYY-MM-DD`. Statuses, priorities, groups, tags, selections and people must match
+saved labels/names or IDs; ambiguous names are rejected. Multiple values accept a
+JSON string array or `|` separators. Checklists accept `|`-separated steps or a
+JSON array such as `[{"text":"Review draft","done":false}]`. Imports never add
+board fields/options automatically and never update or overwrite existing tasks.
+
+The preview flags matching titles (case-insensitive), original task IDs, and
+repeated titles within the CSV. Existing archived tasks count as matches too.
+Pending creation requests also count as matches. Possible duplicates start unchecked: leave them skipped or explicitly select them
+to create separate tasks. Invalid rows stay excluded; correct the file and preview
+again. Duplicate checks run again inside the creation transaction to catch tasks
+created after the preview. Matching pending creation proposals are also skipped
+at execution. Titles alone are a heuristic, so review flagged rows before choosing.
+
+Import progress and row results distinguish created tasks, pending approvals,
+skipped rows and failures. Closing the sheet keeps an active import running;
+keep the board page open until it finishes. Reopen **Import CSV** to see results
+and retry failed rows. Retries reuse creation keys, including when the server
+committed a task but its response was lost. Preview tickets are signed, tied to
+the importer and expire after one hour. Preview again after expiry. Permissions,
+maintenance, fields and approval policy are rechecked for every imported row.
+
+The JSON endpoints are `POST /api/v1/boards/import/preview` with
+`{boardId,csv,mapping:[{column:0,target:"name"}]}` and
+`POST /api/v1/boards/import/row` with `{token,allowDuplicate:false}`. Column indices
+are zero-based. Destinations are `name`, `description`, `status`, `priority`,
+`due_date`, `group`, `assignees`, `checklist`, `source_id`, or an active custom
+field ID. `source_id` is only a duplicate-check hint; new tasks receive UUIDv7 IDs.
+Both endpoints require a current session, board access and the configured same
+origin. CSV contents and preview tickets are not stored as uploaded attachments.
+
 ## Contributing
 
 Contributions, feedback, bug reports, and thoughtful feature ideas are welcome

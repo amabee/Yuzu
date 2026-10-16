@@ -669,6 +669,7 @@ export async function applyTaskRecord(
 export async function createTask(
   input: unknown,
   headers: Headers,
+  importOptions?: { skipDuplicate: boolean; sourceId?: string },
 ): Promise<TaskMutationResult> {
   const body = createTaskSchema.parse(input);
   const { user } = await requireIdentity(headers);
@@ -713,6 +714,29 @@ export async function createTask(
       inputDigest,
     );
     if (cached) return cached;
+    if (importOptions?.skipDuplicate) {
+      const duplicate = await tx.task.findFirst({
+        where: {
+          boardId: body.boardId,
+          OR: [
+            { name: { equals: body.name, mode: "insensitive" } },
+            ...(importOptions.sourceId ? [{ id: importOptions.sourceId }] : []),
+          ],
+        },
+        select: { id: true },
+      });
+      const proposed = await tx.$queryRaw<{ id: string }[]>`
+        SELECT "id" FROM "BoardProposal"
+        WHERE "boardId" = ${body.boardId} AND "operation" = 'CREATE' AND "status" = 'PENDING'
+        AND lower("changes"->>'name') = lower(${body.name}) LIMIT 1
+      `;
+      if (duplicate || proposed.length)
+        throw new SetupError(
+          409,
+          "IMPORT_DUPLICATE",
+          "A matching task already exists. This row was skipped.",
+        );
+    }
     const people = new Set(
       (await eligiblePeople(tx, context.board.workspaceId)).map(
         (person) => person.id,

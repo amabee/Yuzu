@@ -2,7 +2,7 @@ import { defaultViewConfig } from "../src/lib/saved-view-contract";
 import { test as base, expect } from "@playwright/test";
 import { SMTPServer } from "smtp-server";
 import { readdir, mkdir, readFile, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7901,4 +7901,622 @@ test("CSV export bounds task counts and UTF-8 bytes without returning partial do
       where: { boardId: board.id, action: "Exported board CSV" },
     }),
   ).toBe(0);
+});
+
+const postImport = (page: Page, action: "preview" | "row", data: unknown) =>
+  page.request.post(`/api/v1/boards/import/${action}`, {
+    headers: { origin: "http://127.0.0.1:3100" },
+    data,
+  });
+const importFixture = (records: string[][]) =>
+  records
+    .map((record) =>
+      record.map((value) => `"${value.replaceAll('"', '""')}"`).join(","),
+    )
+    .join("\r\n");
+
+test("CSV import detects archived and original-ID matches, checks custom values and serializes duplicate races", async ({
+  page,
+}) => {
+  const { board } = await readyTeam(page);
+  const mapping = [
+    { column: 0, target: "name" },
+    { column: 1, target: "source_id" },
+  ];
+  const oldId = (
+    await (
+      await postBoard(page, "create-task", {
+        boardId: board.id,
+        createKey: createRecordId(),
+        name: "Archived source",
+        description: "Original data",
+      })
+    ).json()
+  ).data.taskId;
+  expect(
+    (await postBoard(page, "archive", { taskId: oldId, revision: 1 })).status(),
+  ).toBe(200);
+  const preview = await postImport(page, "preview", {
+    boardId: board.id,
+    csv: importFixture([
+      ["Task", "Task ID"],
+      ["New title", oldId],
+      ["ARCHIVED SOURCE", ""],
+    ]),
+    mapping,
+  });
+  expect(preview.status()).toBe(200);
+  const rows = (await preview.json()).data.rows;
+  expect(rows.every((row: { duplicate: boolean }) => row.duplicate)).toBe(true);
+  expect(
+    (
+      await (
+        await postImport(page, "row", {
+          token: rows[0].token,
+          allowDuplicate: false,
+        })
+      ).json()
+    ).data.outcome,
+  ).toBe("SKIPPED");
+  expect(
+    (
+      await (
+        await postImport(page, "row", {
+          token: rows[0].token,
+          allowDuplicate: true,
+        })
+      ).json()
+    ).data.outcome,
+  ).toBe("APPLIED");
+  const original = await getDatabase().task.findUniqueOrThrow({
+    where: { id: oldId },
+  });
+  expect(original.name).toBe("Archived source");
+  expect(original.description).toBe("Original data");
+  expect(original.archivedAt).not.toBeNull();
+  const tokens: string[] = [];
+  for (let i = 0; i < 2; i++) {
+    const candidate = await postImport(page, "preview", {
+      boardId: board.id,
+      csv: "Task\nConcurrent name",
+      mapping: [{ column: 0, target: "name" }],
+    });
+    tokens.push((await candidate.json()).data.rows[0].token);
+  }
+  const raced = await Promise.all(
+    tokens.map((token) =>
+      postImport(page, "row", { token, allowDuplicate: false }),
+    ),
+  );
+  for (const response of raced) expect(response.status()).toBe(200);
+  const outcomes = await Promise.all(
+    raced.map(async (response) => (await response.json()).data.outcome),
+  );
+  expect(outcomes.sort()).toEqual(["APPLIED", "SKIPPED"]);
+  expect(
+    await getDatabase().task.count({
+      where: { boardId: board.id, name: "Concurrent name" },
+    }),
+  ).toBe(1);
+  const fieldIds: string[] = [];
+  for (const type of ["URL", "EMAIL", "MULTI_SELECT", "PEOPLE"]) {
+    const made = await postBoard(page, "field", {
+      boardId: board.id,
+      name: type,
+      type,
+      options: type === "MULTI_SELECT" ? ["One"] : [],
+    });
+    expect(made.status()).toBe(200);
+    fieldIds.push((await made.json()).data.id);
+  }
+  const invalid = await postImport(page, "preview", {
+    boardId: board.id,
+    csv: importFixture([
+      ["Task", "URL", "Email", "Choices", "People"],
+      ["Bad fields", "javascript:alert(1)", "bad email", "One|One", "Nobody"],
+    ]),
+    mapping: [
+      { column: 0, target: "name" },
+      ...fieldIds.map((target, column) => ({ column: column + 1, target })),
+    ],
+  });
+  expect(invalid.status()).toBe(200);
+  const bad = (await invalid.json()).data.rows[0];
+  expect(bad.issues.length).toBeGreaterThan(0);
+  expect(bad.token).toBeUndefined();
+  expect(
+    await getDatabase().task.count({
+      where: { boardId: board.id, name: "Bad fields" },
+    }),
+  ).toBe(0);
+});
+
+test("CSV import maps columns, previews invalid and duplicate rows, continues with the sheet closed and updates the board", async ({
+  page,
+}) => {
+  const { workspace } = await readyTeam(page);
+  const boardId = (
+    await (
+      await postBoard(page, "create-board", {
+        workspaceId: workspace.id,
+        name: "CSV landing",
+      })
+    ).json()
+  ).data.id;
+  const fields: Record<string, string> = {};
+  for (const [name, type, options] of [
+    ["Tags", "TAGS", ["Development", "Design"]],
+    ["Estimate", "NUMBER", []],
+    ["Ready", "CHECKBOX", []],
+  ] as const) {
+    const made = await postBoard(page, "field", {
+      boardId,
+      name,
+      type,
+      options,
+    });
+    expect(made.status()).toBe(200);
+    fields[name] = (await made.json()).data.id;
+  }
+  const made = await postBoard(page, "create-task", {
+    boardId,
+    createKey: createRecordId(),
+    name: "Existing",
+    description: "Keep this unchanged",
+  });
+  const oldId = (await made.json()).data.taskId;
+  const data = importFixture([
+    [
+      "Task",
+      "Description",
+      "Status",
+      "Due date",
+      "Tags",
+      "Estimate",
+      "Ready",
+      "Assignees",
+      "Checklist",
+    ],
+    [
+      "New lemon 🍋",
+      'Line one\nLine "two"',
+      "To do",
+      "2026-10-16",
+      '["Development","Design"]',
+      "0",
+      "false",
+      "Team Owner",
+      '[{"text":"Review","done":true}]',
+    ],
+    ["Existing", "Skip this row", "", "", "", "", "", "", ""],
+    ["Existing", "Create a separate copy", "", "", "", "", "", "", ""],
+    ["Bad date", "", "", "2026-02-30", "", "", "", "", ""],
+    ["new lemon 🍋", "Duplicate inside this file", "", "", "", "", "", "", ""],
+  ]);
+  await page.goto(`/boards/${boardId}`);
+  await page.getByRole("button", { name: "Import CSV", exact: true }).click();
+  const panel = page.getByRole("dialog");
+  await panel.getByLabel("CSV file").setInputFiles({
+    name: "team-tasks.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(data),
+  });
+  await expect(
+    panel.getByRole("combobox", { name: "Task", exact: true }),
+  ).toContainText("Task title");
+  await panel
+    .getByRole("combobox", { name: "Description", exact: true })
+    .click();
+  await page
+    .getByRole("option", { name: "Do not import", exact: true })
+    .click();
+  await panel
+    .getByRole("combobox", { name: "Description", exact: true })
+    .click();
+  await page.getByRole("option", { name: "Description", exact: true }).click();
+  await page.screenshot({
+    path: "../../artifacts/phase-3/csv-import-mapping.png",
+    fullPage: false,
+  });
+  await panel
+    .getByRole("button", { name: "Preview tasks", exact: true })
+    .click();
+  await expect(
+    panel.getByText("5 rows · 1 invalid · 3 possible duplicates"),
+  ).toBeVisible();
+  await expect(panel.getByLabel("Import row 2")).toBeChecked();
+  await expect(panel.getByLabel("Import row 3")).not.toBeChecked();
+  await expect(panel.getByLabel("Import row 5")).toBeDisabled();
+  expect(await getDatabase().task.count({ where: { boardId } })).toBe(1);
+  await panel.getByLabel("Import row 4").check();
+  await page.screenshot({
+    path: "../../artifacts/phase-3/csv-import-preview-desktop.png",
+    fullPage: false,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await panel.evaluate(
+      (element) => element.scrollWidth <= element.clientWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "../../artifacts/phase-3/csv-import-preview-mobile.png",
+    fullPage: false,
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/v1/boards/import/row", async (route) => {
+    await gate;
+    await route.continue();
+  });
+  await panel
+    .getByRole("button", { name: "Import 2 tasks", exact: true })
+    .click();
+  await expect(page.locator('[data-slot="board-notification"]')).toContainText(
+    "Importing tasks",
+  );
+  await expect(
+    page.locator(
+      '[data-slot="board-notification"] button[aria-label="Dismiss notification"]',
+    ),
+  ).toHaveCount(0);
+  await panel.getByRole("button", { name: "Close", exact: true }).click();
+  release();
+  await expect
+    .poll(() => getDatabase().task.count({ where: { boardId } }))
+    .toBe(3);
+  await expect(
+    page.getByRole("button", { name: "New lemon 🍋", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Import CSV", exact: true }).click();
+  await expect(
+    panel.getByRole("heading", { name: "Your import results" }),
+  ).toBeVisible();
+  await expect(panel.getByRole("status")).toContainText("2Created");
+  const original = await getDatabase().task.findUniqueOrThrow({
+    where: { id: oldId },
+  });
+  expect(original.description).toBe("Keep this unchanged");
+  const imported = await getDatabase().task.findFirstOrThrow({
+    where: { boardId, name: "New lemon 🍋" },
+    include: { values: true, assignees: true },
+  });
+  expect(imported.id).toMatch(/^[a-f0-9-]{14}7/);
+  expect(imported.description).toBe('Line one\nLine "two"');
+  expect(imported.dueDate?.toISOString().slice(0, 10)).toBe("2026-10-16");
+  expect(imported.assignees).toHaveLength(1);
+  expect(imported.checklist).toMatchObject([{ text: "Review", done: true }]);
+  expect(
+    imported.values.find((value) => value.fieldId === fields.Estimate)
+      ?.numberValue,
+  ).toBe(0);
+  expect(
+    imported.values.find((value) => value.fieldId === fields.Ready)
+      ?.booleanValue,
+  ).toBe(false);
+  expect(
+    imported.values.find((value) => value.fieldId === fields.Tags)?.choices,
+  ).toHaveLength(2);
+});
+
+test("CSV import uses approvals, signed previews, current permissions and idempotent row creation", async ({
+  page,
+  browser,
+  request,
+}) => {
+  const team = await approvalTeam(page, browser);
+  const mapping = [{ column: 0, target: "name" }];
+  const preview = async (actor: Page, name: string) => {
+    const response = await postImport(actor, "preview", {
+      boardId: team.boardId,
+      csv: importFixture([["Task"], [name]]),
+      mapping,
+    });
+    expect(response.status()).toBe(200);
+    return (await response.json()).data.rows[0];
+  };
+  try {
+    expect((await team.configure({ requireCreation: true })).status()).toBe(
+      200,
+    );
+    const row = await preview(team.author.page, "Approval import");
+    expect(
+      (
+        await postImport(page, "row", {
+          token: row.token,
+          allowDuplicate: false,
+        })
+      ).status(),
+    ).toBe(403);
+    const tampered = row.token.split(".");
+    tampered[0] = Buffer.from(
+      JSON.stringify({ input: { name: "Tampered" } }),
+    ).toString("base64url");
+    expect(
+      (
+        await postImport(team.author.page, "row", {
+          token: tampered.join("."),
+          allowDuplicate: false,
+        })
+      ).status(),
+    ).toBe(422);
+    expect(
+      (
+        await request.post("/api/v1/boards/import/row", {
+          headers: { origin: "http://127.0.0.1:3100" },
+          data: { token: row.token, allowDuplicate: false },
+        })
+      ).status(),
+    ).toBe(401);
+    expect(
+      (
+        await team.author.page.request.post("/api/v1/boards/import/row", {
+          headers: { origin: "https://elsewhere.test" },
+          data: { token: row.token, allowDuplicate: false },
+        })
+      ).status(),
+    ).toBe(403);
+    const body = { token: row.token, allowDuplicate: false };
+    const expired = JSON.parse(
+      Buffer.from(row.token.split(".")[0], "base64url").toString("utf8"),
+    );
+    expired.expiresAt = Date.now() - 1;
+    const expiredPayload = Buffer.from(JSON.stringify(expired)).toString(
+      "base64url",
+    );
+    const expiredSignature = createHmac(
+      "sha256",
+      "browser-tests-only-auth-secret-not-a-real-secret",
+    )
+      .update(`yuzu-csv-import-v1:${expiredPayload}`)
+      .digest("base64url");
+    const expiration = await postImport(team.author.page, "row", {
+      token: `${expiredPayload}.${expiredSignature}`,
+      allowDuplicate: false,
+    });
+    expect(expiration.status()).toBe(409);
+    expect((await expiration.json()).error.code).toBe("IMPORT_PREVIEW_EXPIRED");
+    const pending = await postImport(team.author.page, "row", body);
+    expect(pending.status()).toBe(200);
+    const result = (await pending.json()).data;
+    expect(result.outcome).toBe("PENDING_APPROVAL");
+    const anotherPreview = await preview(team.author.page, "APPROVAL IMPORT");
+    expect(anotherPreview.duplicate).toBe(true);
+    expect(
+      (
+        await (
+          await postImport(team.author.page, "row", {
+            token: anotherPreview.token,
+            allowDuplicate: false,
+          })
+        ).json()
+      ).data.outcome,
+    ).toBe("SKIPPED");
+    expect(
+      (await (await postImport(team.author.page, "row", body)).json()).data,
+    ).toEqual(result);
+    expect(
+      await getDatabase().task.count({
+        where: { boardId: team.boardId, name: "Approval import" },
+      }),
+    ).toBe(0);
+    expect(
+      await getDatabase().boardProposal.count({
+        where: { boardId: team.boardId, operation: "CREATE" },
+      }),
+    ).toBe(1);
+    expect(
+      (
+        await postApproval(page, "decide", {
+          proposalId: result.proposalId,
+          action: "approve",
+        })
+      ).status(),
+    ).toBe(200);
+    const afterApproval = await postImport(team.author.page, "row", body);
+    expect((await afterApproval.json()).data.outcome).toBe("APPLIED");
+    expect(
+      await getDatabase().task.count({
+        where: { boardId: team.boardId, name: "Approval import" },
+      }),
+    ).toBe(1);
+    const removed = await preview(team.author.page, "Removed membership");
+    await getDatabase().workspaceMember.deleteMany({
+      where: { workspaceId: team.workspaceId, userId: team.author.id },
+    });
+    expect(
+      (
+        await postImport(team.author.page, "row", {
+          token: removed.token,
+          allowDuplicate: false,
+        })
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await postImport(team.author.page, "preview", {
+          boardId: team.boardId,
+          csv: "Task\nForbidden",
+          mapping,
+        })
+      ).status(),
+    ).toBe(404);
+    await getDatabase().workspaceMember.create({
+      data: { workspaceId: team.workspaceId, userId: team.author.id },
+    });
+    await getDatabase().installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: true },
+    });
+    expect(
+      (
+        await postImport(team.author.page, "row", {
+          token: removed.token,
+          allowDuplicate: false,
+        })
+      ).status(),
+    ).toBe(503);
+    expect(
+      (
+        await postImport(page, "preview", {
+          boardId: team.boardId,
+          csv: "Task\nPaused",
+          mapping,
+        })
+      ).status(),
+    ).toBe(503);
+    await getDatabase().installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: false },
+    });
+    expect((await team.configure({ enabled: false })).status()).toBe(200);
+    const concurrent = await preview(team.author.page, "Created after preview");
+    expect(
+      (
+        await postBoard(page, "create-task", {
+          boardId: team.boardId,
+          createKey: createRecordId(),
+          name: "Created after preview",
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await (
+          await postImport(team.author.page, "row", {
+            token: concurrent.token,
+            allowDuplicate: false,
+          })
+        ).json()
+      ).data.outcome,
+    ).toBe("SKIPPED");
+    const created = await postImport(team.author.page, "row", {
+      token: concurrent.token,
+      allowDuplicate: true,
+    });
+    expect(created.status()).toBe(200);
+    const replayed = await Promise.all(
+      Array.from({ length: 3 }, () =>
+        postImport(team.author.page, "row", {
+          token: concurrent.token,
+          allowDuplicate: true,
+        }),
+      ),
+    );
+    for (const replay of replayed) expect(replay.status()).toBe(200);
+    expect(
+      await getDatabase().task.count({
+        where: { boardId: team.boardId, name: "Created after preview" },
+      }),
+    ).toBe(2);
+  } finally {
+    await team.close();
+  }
+});
+
+test("CSV import retries after a lost response without duplicate tasks and revalidates changed fields", async ({
+  page,
+}) => {
+  const { workspace } = await readyTeam(page);
+  const boardId = (
+    await (
+      await postBoard(page, "create-board", {
+        workspaceId: workspace.id,
+        name: "Retry imports",
+      })
+    ).json()
+  ).data.id;
+  await page.goto(`/boards/${boardId}`);
+  await page.getByRole("button", { name: "Import CSV", exact: true }).click();
+  const panel = page.getByRole("dialog");
+  await panel.getByLabel("CSV file").setInputFiles({
+    name: "retry.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from("Task\nOnly once\nSecond task"),
+  });
+  await panel
+    .getByRole("button", { name: "Preview tasks", exact: true })
+    .click();
+  let lost = false;
+  await page.route("**/api/v1/boards/import/row", async (route) => {
+    if (!lost) {
+      lost = true;
+      expect((await route.fetch()).status()).toBe(200);
+      await route.abort("failed");
+    } else await route.continue();
+  });
+  await panel
+    .getByRole("button", { name: "Import 2 tasks", exact: true })
+    .click();
+  await expect(
+    panel.getByRole("button", { name: "Retry failed rows", exact: true }),
+  ).toBeVisible();
+  expect(
+    await getDatabase().task.count({ where: { boardId, name: "Only once" } }),
+  ).toBe(1);
+  await panel
+    .getByRole("button", { name: "Retry failed rows", exact: true })
+    .click();
+  await expect(panel.getByRole("status")).toContainText("2Created");
+  expect(await getDatabase().task.count({ where: { boardId } })).toBe(2);
+  await page.screenshot({
+    path: "../../artifacts/phase-3/csv-import-results.png",
+    fullPage: false,
+  });
+  const made = await postBoard(page, "field", {
+    boardId,
+    name: "Temporary",
+    type: "TEXT",
+    options: [],
+  });
+  const fieldId = (await made.json()).data.id;
+  const preview = await postImport(page, "preview", {
+    boardId,
+    csv: "Task,Temporary\nStale field,Text",
+    mapping: [
+      { column: 0, target: "name" },
+      { column: 1, target: fieldId },
+    ],
+  });
+  expect(preview.status()).toBe(200);
+  const token = (await preview.json()).data.rows[0].token;
+  await getDatabase().boardColumn.update({
+    where: { id: fieldId },
+    data: { archivedAt: new Date() },
+  });
+  expect(
+    (await postImport(page, "row", { token, allowDuplicate: false })).status(),
+  ).toBe(422);
+  expect(
+    await getDatabase().task.count({ where: { boardId, name: "Stale field" } }),
+  ).toBe(0);
+  for (const csv of [
+    'Task\n"Missing quote',
+    "Task\n" + "Row\n".repeat(501),
+    "Task\n" + "🍋".repeat(250001),
+  ]) {
+    expect(
+      (
+        await postImport(page, "preview", {
+          boardId,
+          csv,
+          mapping: [{ column: 0, target: "name" }],
+        })
+      ).status(),
+    ).toBe(422);
+  }
+  expect(
+    (
+      await postImport(page, "preview", {
+        boardId,
+        csv: "Task\nTask",
+        mapping: [
+          { column: 0, target: "name" },
+          { column: 0, target: "priority" },
+        ],
+      })
+    ).status(),
+  ).toBe(422);
 });
