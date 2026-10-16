@@ -7452,3 +7452,453 @@ test("board filters provide roomy dropdowns, keyboard selection and responsive t
     fullPage: true,
   });
 });
+
+function parseExportCsv(value: string): string[][] {
+  const text = value.replace(/^\ufeff/u, "");
+  const rows: string[][] = [];
+  let row: string[] = [],
+    cell = "",
+    quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (char === '"') {
+      if (quoted && text[i + 1] === '"') {
+        cell += '"';
+        i++;
+      } else quoted = !quoted;
+    } else if (char === "," && !quoted) {
+      row.push(cell);
+      cell = "";
+    } else if (char === "\r" && text[i + 1] === "\n" && !quoted) {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+      i++;
+    } else cell += char;
+  }
+  if (cell || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows;
+}
+const exportCsvRequest = (page: Page, data: unknown) =>
+  page.request.post("/api/v1/boards/export", {
+    headers: { origin: "http://127.0.0.1:3100" },
+    data,
+  });
+function csvRecords(text: string) {
+  const [headers, ...rows] = parseExportCsv(text);
+  return rows.map((row) =>
+    Object.fromEntries(headers!.map((name, index) => [name, row[index]!])),
+  );
+}
+
+test("CSV export downloads fresh current-view data with safe typed fields and continues after closing its panel", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(90_000);
+  const team = await approvalTeam(page, browser);
+  let release = () => {};
+  try {
+    const definitions = [
+      { name: "Notes", type: "LONG_TEXT" },
+      { name: "Estimate", type: "NUMBER" },
+      { name: "Ready", type: "CHECKBOX" },
+      { name: "Tags", type: "TAGS", options: ["Development", "Ops, Team"] },
+    ];
+    for (const field of definitions)
+      expect(
+        (
+          await postBoard(page, "field", { boardId: team.boardId, ...field })
+        ).status(),
+      ).toBe(200);
+    const current = await team.state();
+    const status = current.fields.find(
+      (field: { key: string }) => field.key === "status",
+    ).options[0];
+    const notes = current.fields.find(
+      (field: { name: string }) => field.name === "Notes",
+    );
+    const number = current.fields.find(
+      (field: { name: string }) => field.name === "Estimate",
+    );
+    const checkbox = current.fields.find(
+      (field: { name: string }) => field.name === "Ready",
+    );
+    const tags = current.fields.find(
+      (field: { name: string }) => field.name === "Tags",
+    );
+    const name = 'Alpha, "柚子" 🍋';
+    expect(
+      (
+        await postBoard(page, "create-task", {
+          boardId: team.boardId,
+          createKey: createRecordId(),
+          name,
+          statusId: status.id,
+          priority: "HIGH",
+          assigneeIds: [team.ownerId],
+          dueDate: "2026-10-20",
+          checklist: [
+            { id: createRecordId(), text: "Unique step", done: false },
+          ],
+          fieldValues: {
+            [notes.id]: 'First, line\r\n"Second line"',
+            [number.id]: -12.5,
+            [checkbox.id]: false,
+            [tags.id]: [tags.options[1].id],
+          },
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postBoard(page, "create-task", {
+          boardId: team.boardId,
+          createKey: createRecordId(),
+          name: "Beta",
+          statusId: status.id,
+          assigneeIds: [team.author.id],
+        })
+      ).status(),
+    ).toBe(200);
+    await page.goto(`/boards/${team.boardId}`);
+    await page.getByRole("button", { name: "Filter", exact: true }).click();
+    await page.getByLabel("Filter task assignee").click();
+    await page
+      .getByRole("option", { name: "Assigned to me", exact: true })
+      .click();
+    await page.getByRole("button", { name: "Export CSV", exact: true }).click();
+    const panel = page.getByRole("dialog");
+    await expect(
+      panel.getByRole("radio", { name: /^Current view/ }),
+    ).toBeChecked();
+    await expect(panel).toContainText("1 matching task");
+    await page.screenshot({
+      path: "../../artifacts/phase-3/csv-export-desktop.png",
+      fullPage: true,
+    });
+    const alpha = (await team.state()).tasks.find(
+      (task: { name: string }) => task.name === name,
+    );
+    expect(
+      (
+        await postBoard(page, "update", {
+          taskId: alpha.id,
+          revision: alpha.revision,
+          changes: { description: "=1+1" },
+        })
+      ).status(),
+    ).toBe(200);
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route("**/api/v1/boards/export", async (route) => {
+      await held;
+      await route.continue().catch(() => {});
+    });
+    const downloaded = page.waitForEvent("download");
+    await panel
+      .getByRole("button", { name: "Download CSV", exact: true })
+      .click();
+    const toast = page.locator(
+      '[data-slot="board-notification"][data-variant="loading"]',
+    );
+    await expect(toast).toContainText("Exporting CSV");
+    await expect(
+      toast.getByRole("button", {
+        name: "Dismiss notification",
+        includeHidden: true,
+      }),
+    ).toHaveCount(0);
+    await panel.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(panel).toHaveCount(0);
+    await expect(toast).toBeVisible();
+    release();
+    const download = await downloaded;
+    expect(download.suggestedFilename()).toMatch(
+      /^yuzu-Approval project-.*\.csv$/u,
+    );
+    const bytes = await readFile((await download.path())!);
+    expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    const records = csvRecords(bytes.toString("utf8"));
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      Task: name,
+      Description: "'=1+1",
+      Priority: "High",
+      Status: status.label,
+      "Due date": "2026-10-20",
+      Notes: 'First, line\r\n"Second line"',
+      Estimate: "-12.5",
+      Ready: "FALSE",
+      Tags: '["Ops, Team"]',
+    });
+    expect(JSON.parse(records[0]!.Checklist!)).toEqual([
+      { text: "Unique step", done: false },
+    ]);
+    expect(JSON.parse(records[0]!["Assignee IDs"]!)).toEqual([team.ownerId]);
+    await expect(
+      page.locator('[data-slot="board-notification"]'),
+    ).toContainText("CSV exported");
+    await page.unroute("**/api/v1/boards/export");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "Export CSV", exact: true }).click();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: "../../artifacts/phase-3/csv-export-mobile.png",
+      fullPage: true,
+    });
+  } finally {
+    release();
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await team.close();
+  }
+});
+
+test("CSV export enforces live access, archive scope, accepted values, references and request validation", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(90_000);
+  const team = await approvalTeam(page, browser);
+  try {
+    for (const name of ["Accepted Alpha", "Accepted Beta", "Archived task"])
+      expect(
+        (
+          await postBoard(page, "create-task", {
+            boardId: team.boardId,
+            createKey: createRecordId(),
+            name,
+            assigneeIds: [team.author.id],
+          })
+        ).status(),
+      ).toBe(200);
+    const initial = await team.state();
+    const archived = initial.tasks.find(
+      (task: { name: string }) => task.name === "Archived task",
+    );
+    expect(
+      (
+        await postBoard(page, "archive", {
+          taskId: archived.id,
+          revision: archived.revision,
+        })
+      ).status(),
+    ).toBe(200);
+    const protectedField = initial.fields.find(
+      (field: { key: string }) => field.key === "name",
+    );
+    expect(
+      (
+        await team.configure({
+          requireCreation: true,
+          protectedFieldIds: [protectedField.id],
+        })
+      ).status(),
+    ).toBe(200);
+    const alpha = (await team.state()).tasks.find(
+      (task: { name: string }) => task.name === "Accepted Alpha",
+    );
+    expect(
+      (
+        await postBoard(team.author.page, "update", {
+          taskId: alpha.id,
+          revision: alpha.revision,
+          changes: { name: "Pending secret rename" },
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postBoard(team.author.page, "create-task", {
+          boardId: team.boardId,
+          createKey: createRecordId(),
+          name: "Pending secret creation",
+        })
+      ).status(),
+    ).toBe(200);
+    const whole = {
+      boardId: team.boardId,
+      scope: "BOARD",
+      includeArchived: false,
+    };
+    const response = await exportCsvRequest(team.author.page, whole);
+    expect(response.status()).toBe(200);
+    expect(response.headers()["content-type"]).toContain("text/csv");
+    expect(response.headers()["cache-control"]).toContain("no-store");
+    expect(response.headers()["content-disposition"]).toContain("attachment");
+    expect(response.headers()["x-content-type-options"]).toBe("nosniff");
+    expect(csvRecords(await response.text()).map((row) => row.Task)).toEqual([
+      "Accepted Alpha",
+      "Accepted Beta",
+    ]);
+    expect(
+      csvRecords(
+        await (
+          await exportCsvRequest(page, { ...whole, includeArchived: true })
+        ).text(),
+      ),
+    ).toHaveLength(3);
+    const archiveOnly = await exportCsvRequest(page, {
+      boardId: team.boardId,
+      scope: "VIEW",
+      config: { ...defaultViewConfig, archived: true },
+    });
+    expect(csvRecords(await archiveOnly.text()).map((row) => row.Task)).toEqual(
+      ["Archived task"],
+    );
+    const filtered = await exportCsvRequest(team.author.page, {
+      boardId: team.boardId,
+      scope: "VIEW",
+      config: {
+        ...defaultViewConfig,
+        assignee: "me",
+        search: "Beta",
+        sort: "name",
+      },
+    });
+    expect(csvRecords(await filtered.text()).map((row) => row.Task)).toEqual([
+      "Accepted Beta",
+    ]);
+    const empty = await exportCsvRequest(page, {
+      boardId: team.boardId,
+      scope: "VIEW",
+      config: { ...defaultViewConfig, search: "No matches" },
+    });
+    expect(empty.status()).toBe(200);
+    expect(parseExportCsv(await empty.text())).toHaveLength(1);
+    expect(
+      (
+        await exportCsvRequest(page, { ...whole, tasks: [{ name: "Forged" }] })
+      ).status(),
+    ).toBe(422);
+    expect(
+      (
+        await exportCsvRequest(page, {
+          boardId: team.boardId,
+          scope: "VIEW",
+          config: { ...defaultViewConfig, statusId: "removed" },
+        })
+      ).status(),
+    ).toBe(422);
+    expect(
+      (
+        await exportCsvRequest(page, {
+          boardId: team.boardId,
+          scope: "VIEW",
+          config: { ...defaultViewConfig, groupId: createRecordId() },
+        })
+      ).status(),
+    ).toBe(422);
+    expect(
+      (
+        await page.request.post("/api/v1/boards/export", {
+          headers: { origin: "https://untrusted.example" },
+          data: whole,
+        })
+      ).status(),
+    ).toBe(403);
+    const outsider = await browser.newContext();
+    expect(
+      (await exportCsvRequest(await outsider.newPage(), whole)).status(),
+    ).toBe(401);
+    await outsider.close();
+    const foreign = await getDatabase().board.findFirstOrThrow({
+      where: { name: "Restricted project" },
+    });
+    expect(
+      (
+        await exportCsvRequest(team.author.page, {
+          ...whole,
+          boardId: foreign.id,
+        })
+      ).status(),
+    ).toBe(404);
+    await getDatabase().installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: true },
+    });
+    expect((await exportCsvRequest(team.author.page, whole)).status()).toBe(
+      503,
+    );
+    expect((await exportCsvRequest(page, whole)).status()).toBe(200);
+    await getDatabase().installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: false },
+    });
+    await getDatabase().workspaceMember.delete({
+      where: {
+        workspaceId_userId: {
+          workspaceId: team.workspaceId,
+          userId: team.author.id,
+        },
+      },
+    });
+    const revoked = await exportCsvRequest(team.author.page, whole);
+    expect(revoked.status()).toBe(404);
+    expect(revoked.headers()["content-disposition"]).toBeUndefined();
+    expect(
+      await getDatabase().boardEvent.count({
+        where: { boardId: team.boardId, action: "Exported board CSV" },
+      }),
+    ).toBeGreaterThan(0);
+  } finally {
+    await team.close();
+  }
+});
+
+test("CSV export bounds task counts and UTF-8 bytes without returning partial downloads", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const { board } = await readyTeam(page);
+  const db = getDatabase();
+  const owner = await db.user.findUniqueOrThrow({
+    where: { email: "owner@example.test" },
+  });
+  const request = { boardId: board.id, scope: "BOARD", includeArchived: false };
+  for (let start = 0; start < 10001; start += 500)
+    await db.task.createMany({
+      data: Array.from({ length: Math.min(500, 10001 - start) }, () => ({
+        id: createRecordId(),
+        boardId: board.id,
+        createdById: owner.id,
+        createKey: createRecordId(),
+        createDigest: "export-limit-test",
+        name: "Small task",
+      })),
+    });
+  const tooMany = await exportCsvRequest(page, request);
+  expect(tooMany.status()).toBe(413);
+  expect((await tooMany.json()).error.code).toBe("EXPORT_TOO_LARGE");
+  expect(tooMany.headers()["content-disposition"]).toBeUndefined();
+  await db.task.deleteMany({ where: { boardId: board.id } });
+  await db.task.createMany({
+    data: Array.from({ length: 501 }, () => ({
+      id: createRecordId(),
+      boardId: board.id,
+      createdById: owner.id,
+      createKey: createRecordId(),
+      createDigest: "export-byte-limit-test",
+      name: "Unicode task",
+      description: "🍋".repeat(5000),
+    })),
+  });
+  const tooBig = await exportCsvRequest(page, request);
+  expect(tooBig.status()).toBe(413);
+  expect((await tooBig.json()).error.code).toBe("EXPORT_TOO_LARGE");
+  expect(tooBig.headers()["content-disposition"]).toBeUndefined();
+  expect(
+    await db.boardEvent.count({
+      where: { boardId: board.id, action: "Exported board CSV" },
+    }),
+  ).toBe(0);
+});

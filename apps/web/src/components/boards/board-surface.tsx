@@ -1,9 +1,10 @@
 "use client";
+import { ExportCsv } from "./export-csv";
+import { matchesBoardView, compareBoardView } from "@/lib/board-view";
 import { BoardFilters, BoardFilterSelect } from "./board-filters";
 import { SavedViewControls } from "./saved-view-controls";
 import {
   defaultViewConfig,
-  dueMatches,
   type ViewConfig,
   type SavedView,
 } from "@/lib/saved-view-contract";
@@ -83,13 +84,16 @@ export function BoardSurface({
   info?: BoardInfo;
 }) {
   const [notice, setNotice] = useState<BoardNotice | null>(null);
-  const [pendingUploads, setPendingUploads] = useState<
+  const [pendingTransfers, setPendingTransfers] = useState<
     Record<string, BoardNotice>
   >({});
   const transferNotice = (update: BoardNotice) => {
-    setPendingUploads((current) => {
+    setPendingTransfers((current) => {
       const next = { ...current };
-      if (update.kind === "loading" && update.icon === "upload")
+      if (
+        update.kind === "loading" &&
+        (update.icon === "upload" || update.icon === "download")
+      )
         next[update.id] = update;
       else delete next[update.id];
       return next;
@@ -160,11 +164,9 @@ export function BoardSurface({
   ) => setViewConfig((current) => ({ ...current, [key]: value }));
   const archived = viewConfig.archived;
   const setArchived = (value: boolean) => configureView("archived", value);
-  const search = viewConfig.search;
   const activeGroupFilter = viewConfig.groupId ?? "";
   const setGroupFilter = (value: string) =>
     configureView("groupId", value || null);
-  const sort = viewConfig.sort;
   const statusFilter = viewConfig.statusId ?? "";
   const missingReferences = Boolean(
     (activeGroupFilter &&
@@ -183,38 +185,15 @@ export function BoardSurface({
   );
   const [creating, setCreating] = useState(false);
   const tasks = state.tasks
-    .filter(
-      (task) =>
-        Boolean(task.archivedAt) === archived &&
-        (!statusFilter ||
-          (statusFilter === "__none__"
-            ? !task.statusId
-            : task.statusId === statusFilter)) &&
-        (viewConfig.assignee === "all" ||
-          (viewConfig.assignee === "me"
-            ? task.assigneeIds.includes(state.currentUserId)
-            : !task.assigneeIds.length)) &&
-        (viewConfig.priority === "all" ||
-          task.priority === viewConfig.priority) &&
-        dueMatches(
-          task.dueDate,
-          viewConfig.due,
-          state.calendarDate
-            ? new Date(`${state.calendarDate}T12:00:00`)
-            : new Date(),
-        ) &&
-        (!activeGroupFilter || task.groupId === activeGroupFilter) &&
-        `${task.name} ${task.description}`
-          .toLowerCase()
-          .includes(search.toLowerCase()),
+    .filter((task) =>
+      matchesBoardView(
+        task,
+        viewConfig,
+        state.currentUserId,
+        state.calendarDate ?? new Date().toISOString().slice(0, 10),
+      ),
     )
-    .sort((a, b) =>
-      sort === "name"
-        ? a.name.localeCompare(b.name)
-        : sort === "due"
-          ? (a.dueDate ?? "9999").localeCompare(b.dueDate ?? "9999")
-          : 0,
-    );
+    .sort((a, b) => compareBoardView(a, b, viewConfig.sort));
   let emptyStatusLabel = savedStatuses.length ? "No status" : group;
   while (savedStatuses.some((option) => option.label === emptyStatusLabel))
     emptyStatusLabel += " (unassigned)";
@@ -438,7 +417,7 @@ export function BoardSurface({
     <section className="board-surface" data-connection={live.status}>
       <OperationToast
         notice={notice}
-        pinnedNotices={Object.values(pendingUploads)}
+        pinnedNotices={Object.values(pendingTransfers)}
       />
       <SavedViewControls
         views={state.savedViews ?? []}
@@ -524,7 +503,7 @@ export function BoardSurface({
             <SlidersHorizontal size={14} />
             Filter
             {(statusFilter ||
-              search ||
+              viewConfig.search ||
               viewConfig.assignee !== "all" ||
               viewConfig.priority !== "all" ||
               viewConfig.due !== "all") && (
@@ -555,6 +534,12 @@ export function BoardSurface({
           >
             {archived ? "Active tasks" : "Archived"}
           </Button>
+          <ExportCsv
+            boardId={state.boardId}
+            config={viewConfig}
+            count={tasks.length}
+            onNotice={transferNotice}
+          />
           <Button
             variant="outline"
             size="sm"

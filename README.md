@@ -281,6 +281,41 @@ Set `YUZU_E2E_DEV=1` to run the browser tests through Turbopack development mode
 with separate build output. The binary-file regression checks JPG/PDF validation
 and verifies that runtime uploads do not trigger unsolicited document reloads.
 
+## CSV task export
+
+Use **Export CSV** in a board's toolbar. **Current view** keeps the current search,
+filters, sorting, and active/archive selection. **Entire board** exports active tasks;
+select **Include archived tasks** to add archived records. Each export uses a fresh,
+consistent snapshot of accepted task values.
+
+Anyone with current board viewing access can export its data. Access is checked again
+before the response is returned, and an audit event records the actor, range and row
+count. Personal view definitions and pending proposal contents stay private.
+
+CSV files use UTF-8 with a BOM, CRLF records, quoted cells, and spreadsheet formula
+protection for text. They include task IDs, descriptions, status/priority labels,
+ISO due dates, groups, assignees, checklists and active custom fields. Collection
+cells use JSON arrays; checklists contain ordered `{ text, done }` entries. Boolean
+values use `TRUE`/`FALSE`, numbers retain zero/negative values, and missing values are
+blank. Custom column headers are disambiguated when names collide.
+
+Exports support up to 10,000 matching tasks or 10,000,000 UTF-8 bytes. Oversized or
+timed-out exports return an error without a partial download. The server reads
+100-task batches with a 30-second snapshot timeout and a 50,000-task scan ceiling;
+use narrower status/group/assignee/priority filters for large boards. Closing the
+export panel keeps the download running while the board remains open.
+
+The authenticated, same-origin JSON endpoint is `POST /api/v1/boards/export`:
+
+```json
+{ "boardId": "<board UUID>", "scope": "BOARD", "includeArchived": false }
+```
+
+For the current view, send `{ boardId, scope: "VIEW", config }` using the saved-view
+configuration contract. Successful responses are private, non-cacheable CSV
+attachments. Validation, permission, maintenance and size failures use the normal
+JSON API error envelope. Use database and object-storage backups for full recovery.
+
 ## Contributing
 
 Contributions, feedback, bug reports, and thoughtful feature ideas are welcome
