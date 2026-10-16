@@ -37,9 +37,8 @@ export function matchesBoardView(
       new Date(`${calendarDate}T12:00:00`),
     ) &&
     (!config.groupId || task.groupId === config.groupId) &&
-    `${task.name} ${task.description}`
-      .toLowerCase()
-      .includes(config.search.toLowerCase())
+    (task.name.toLowerCase().includes(config.search.toLowerCase()) ||
+      task.description.toLowerCase().includes(config.search.toLowerCase()))
   );
 }
 

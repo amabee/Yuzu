@@ -9160,3 +9160,89 @@ test("CSV lemon downloads keep their progress toast across navigation, reopen on
     await page.unrouteAll({ behavior: "ignoreErrors" });
   }
 });
+
+test("large boards page and filter 25000 tasks without mounting every card or losing deep links", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const { board } = await readyTeam(page);
+  const db = getDatabase();
+  const owner = await db.user.findUniqueOrThrow({
+    where: { email: "owner@example.test" },
+  });
+  const ids: string[] = [];
+  for (let batch = 0; batch < 5; batch++) {
+    const data = Array.from({ length: 5000 }, (_, index) => {
+      const position = batch * 5000 + index;
+      const id = createRecordId();
+      ids.push(id);
+      return {
+        id,
+        boardId: board.id,
+        createdById: owner.id,
+        createKey: id,
+        createDigest: "load-test",
+        name: `Load task ${String(position).padStart(5, "0")}`,
+        description:
+          position === 24999
+            ? "Needle 50%_ literal"
+            : "Task load fixture ".repeat(60),
+        createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, position)),
+        priority: "NORMAL" as const,
+      };
+    });
+    await db.task.createMany({ data });
+  }
+  const read = async (query: unknown) => {
+    const response = await page.request.get(
+      `/api/v1/boards/state?boardId=${board.id}&query=${encodeURIComponent(JSON.stringify(query))}`,
+    );
+    expect(response.status()).toBe(200);
+    return (await response.json()).data;
+  };
+  const first = await read({ config: defaultViewConfig });
+  expect(first.tasks).toHaveLength(100);
+  expect(first.pagination).toMatchObject({
+    total: 25000,
+    pageCount: 250,
+    page: 1,
+  });
+  const second = await read({ config: defaultViewConfig, page: 2 });
+  expect(second.tasks[0].id).toBe(ids[100]);
+  expect(
+    second.tasks.some((task: { id: string }) =>
+      first.tasks.some((other: { id: string }) => task.id === other.id),
+    ),
+  ).toBe(false);
+  const last = await read({ config: { ...defaultViewConfig, search: "50%_" } });
+  expect(last.tasks).toHaveLength(1);
+  expect(last.tasks[0].id).toBe(ids[24999]);
+  const focused = await read({ config: defaultViewConfig, taskId: ids[24999] });
+  expect(focused.focusedTask.id).toBe(ids[24999]);
+  expect(focused.tasks).toHaveLength(100);
+  await page.goto(`/boards/${board.id}`);
+  await expect(
+    page.getByRole("navigation", { name: "Task pages" }),
+  ).toContainText("25,000 tasks");
+  await expect(page.locator(".task-card").first()).toBeVisible();
+  expect(await page.locator(".task-card").count()).toBeLessThan(25);
+  const lane = page.getByLabel("Scroll tasks in this status");
+  await lane.evaluate((node) => {
+    node.scrollTop = node.scrollHeight;
+  });
+  await expect(
+    page.locator(`.task-card[data-task-id="${ids[99]}"]`),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Next tasks", exact: true }).click();
+  await expect(
+    page.getByRole("navigation", { name: "Task pages" }),
+  ).toContainText("101-200");
+  await page.getByRole("button", { name: "Table", exact: true }).click();
+  expect(await page.locator("tr[data-task-id]").count()).toBeLessThan(35);
+  await page.locator(".board-table-scroll").evaluate((node) => {
+    node.scrollTop = node.scrollHeight;
+  });
+  await expect(page.locator(`tr[data-task-id="${ids[199]}"]`)).toBeVisible();
+  await page.goto(`/boards/${board.id}?task=${ids[24999]}`);
+  await expect(page.getByRole("dialog")).toContainText("Load task 24999");
+});

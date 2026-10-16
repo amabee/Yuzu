@@ -1,5 +1,6 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient, type Prisma } from "./generated/prisma/client";
+export type { Prisma } from "./generated/prisma/client";
 export type DatabaseTransaction = Prisma.TransactionClient;
 export { createRecordId } from "./ids";
 

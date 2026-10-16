@@ -21,6 +21,9 @@ async function handle(request: Request, action: string) {
       data = await boardState(
         recordId.parse(new URL(request.url).searchParams.get("boardId")),
         request.headers,
+        new URL(request.url).searchParams.has("query")
+          ? JSON.parse(new URL(request.url).searchParams.get("query")!)
+          : {},
       );
     else if (request.method === "GET" && action === "comments")
       data = await taskComments(
@@ -69,7 +72,7 @@ async function handle(request: Request, action: string) {
     );
   } catch (error) {
     const known = error instanceof SetupError;
-    const invalid = error instanceof z.ZodError;
+    const invalid = error instanceof z.ZodError || error instanceof SyntaxError;
     return Response.json(
       {
         error: {
@@ -81,7 +84,9 @@ async function handle(request: Request, action: string) {
           message: known
             ? error.message
             : invalid
-              ? (error.issues[0]?.message ?? "Check the task fields.")
+              ? error instanceof z.ZodError
+                ? (error.issues[0]?.message ?? "Check the task fields.")
+                : "Invalid board query."
               : "This change could not finish. Refresh and try again.",
         },
         requestId,

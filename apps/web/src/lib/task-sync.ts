@@ -1,3 +1,4 @@
+import type { BoardQuery } from "./board-query";
 import { ApiError, apiRequest } from "./api-client";
 import { sameApprovalValue } from "./approval-rules";
 import {
@@ -98,11 +99,18 @@ export function reconcileTaskDraft(
   return { draft, changes, conflicts };
 }
 
-export async function readBoardState(boardId: string, signal?: AbortSignal) {
-  const response = await apiRequest(`/api/v1/boards/state?boardId=${boardId}`, {
-    signal,
-    cache: "no-store",
-  });
+export async function readBoardState(
+  boardId: string,
+  signal?: AbortSignal,
+  query?: BoardQuery,
+) {
+  const response = await apiRequest(
+    `/api/v1/boards/state?boardId=${boardId}${query ? `&query=${encodeURIComponent(JSON.stringify(query))}` : ""}`,
+    {
+      signal,
+      cache: "no-store",
+    },
+  );
   const parsed = boardStateSchema.safeParse(response.data);
   if (!parsed.success)
     throw new Error(
@@ -130,9 +138,12 @@ export async function saveTaskUpdate(
   } catch (error) {
     if (!(error instanceof ApiError) || error.code !== "TASK_CHANGED")
       throw error;
-    const latest = (await readBoardState(boardId)).tasks.find(
-      (task) => task.id === input.taskId,
-    );
+    const current = await readBoardState(boardId, undefined, {
+      taskId: input.taskId,
+    });
+    const latest =
+      current.focusedTask ??
+      current.tasks.find((task) => task.id === input.taskId);
     if (!latest || latest.archivedAt || !latest.canEdit) throw error;
     const original = taskDraft(base);
     const local = {

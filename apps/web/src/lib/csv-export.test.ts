@@ -137,7 +137,7 @@ describe("CSV spreadsheet compatibility and safety", () => {
     };
     const config = {
       ...defaultViewConfig,
-      search: "Work release",
+      search: "release",
       statusId: "doing",
       assignee: "me" as const,
       priority: "HIGH" as const,

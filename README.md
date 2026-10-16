@@ -404,6 +404,21 @@ SeaweedFS. The existing synchronous export/row endpoints remain for integrations
 the app uses `POST /api/v1/transfers`, per-transfer upload/action endpoints, and
 owner-scoped GET status, download, and result-report endpoints.
 
+## Large boards
+
+Board and Table views request 100 tasks at a time. Search (task name or
+description), status, assignment, priority, dates, groups, archive filtering,
+and sorting run in PostgreSQL across the entire board before paging. The footer
+shows the filtered total and page controls; status counts include matches on all
+pages. A status with matches elsewhere offers a shortcut to filter that status.
+Long lanes and tables render only the visible rows. Task links load their task
+independently of the current page or saved filter.
+
+Run `pnpm db:deploy` after updating. The board-query migration installs PostgreSQL
+`pg_trgm` for indexed substring search and adds compound board/date indexes. Your
+migration database account needs permission to install that extension. This is
+available in the bundled PostgreSQL container.
+
 ## Contributing
 
 Contributions, feedback, bug reports, and thoughtful feature ideas are welcome

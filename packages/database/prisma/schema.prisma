@@ -277,7 +277,10 @@ model Task {
   notifications Notification[]
 
   @@unique([createdById, createKey])
-  @@index([boardId, archivedAt, createdAt])
+  @@index([boardId, archivedAt, createdAt, id])
+  @@index([boardId, archivedAt, dueDate, id])
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Task_name_trgm_idx")
+  @@index([description(ops: raw("gin_trgm_ops"))], type: Gin, map: "Task_description_trgm_idx")
   @@index([boardId, statusId])
 }
 
