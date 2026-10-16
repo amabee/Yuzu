@@ -1,3 +1,4 @@
+import { saveResponseDownload } from "./download-file";
 import { ApiError, type ApiResponse } from "./api-client";
 import { retryDeadline, signalServiceStatus } from "./service-status";
 
@@ -107,56 +108,5 @@ export async function downloadTaskFile(
     if (error instanceof TypeError) signalServiceStatus({ kind: "network" });
     throw error;
   });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    if (response.status === 503 && body.error?.code === "MAINTENANCE")
-      signalServiceStatus({ kind: "maintenance" });
-    throw new ApiError(
-      response.status,
-      body.error?.code ?? "DOWNLOAD_FAILED",
-      body.error?.message ?? "This download could not start.",
-    );
-  }
-  const length = Number(response.headers.get("Content-Length"));
-  const encoding = response.headers.get("Content-Encoding");
-  const total =
-    (!encoding || encoding === "identity") &&
-    Number.isSafeInteger(length) &&
-    length > 0
-      ? length
-      : undefined;
-  onProgress?.(0, total);
-  let blob: Blob;
-  if (response.body) {
-    const reader = response.body.getReader();
-    const chunks: ArrayBuffer[] = [];
-    let loaded = 0;
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        chunks.push(value.slice().buffer);
-        loaded += value.byteLength;
-        onProgress?.(loaded, total);
-      }
-      if (total !== undefined && loaded !== total)
-        throw new Error("The download was interrupted. Try again.");
-      blob = new Blob(chunks, {
-        type:
-          response.headers.get("Content-Type") ?? "application/octet-stream",
-      });
-    } finally {
-      await reader.cancel().catch(() => {});
-      reader.releaseLock();
-    }
-  } else {
-    blob = await response.blob();
-    onProgress?.(blob.size, total);
-  }
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = name;
-  anchor.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  await saveResponseDownload(response, name, onProgress);
 }

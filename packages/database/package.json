@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./ids": "./src/ids.ts",
     "./attachment-objects": "./src/attachment-objects.ts",
-    "./upgrade-ids": "./src/upgrade-ids.ts"
+    "./upgrade-ids": "./src/upgrade-ids.ts",
+    "./csv-objects": "./src/csv-objects.ts"
   },
   "scripts": {
     "generate": "prisma generate --config prisma7.config.ts",

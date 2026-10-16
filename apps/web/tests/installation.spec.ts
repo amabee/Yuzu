@@ -1,8 +1,9 @@
+import { startTestCsvWorker, stopTestCsvWorker } from "./csv-worker-process";
 import { defaultViewConfig } from "../src/lib/saved-view-contract";
 import { test as base, expect } from "@playwright/test";
 import { SMTPServer } from "smtp-server";
 import { readdir, mkdir, readFile, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,6 +41,9 @@ const test = base.extend<{ mailbox: string[] }>({
     await new Promise<void>((resolve) => server.close(resolve));
   },
 });
+test.beforeAll(() => startTestCsvWorker());
+test.afterAll(() => stopTestCsvWorker());
+
 test.beforeEach(async () => {
   if (new URL(process.env.DATABASE_URL!).pathname !== "/yuzu_e2e")
     throw new Error("Refusing to reset a non-test database.");
@@ -192,7 +196,7 @@ test("owner setup resumes, verifies actual receipt, and completes exactly once",
     await (await page.request.get("/api/v1/setup/status")).json()
   ).data;
   const simultaneous = await Promise.all(
-    [1, 2].map(() =>
+    Array.from({ length: 6 }, () =>
       page.request.post("/api/v1/setup/complete", {
         headers: { origin: "http://127.0.0.1:3100" },
         data: {
@@ -7451,4 +7455,2263 @@ test("board filters provide roomy dropdowns, keyboard selection and responsive t
     path: "../../artifacts/phase-3/filters-mobile-panel.png",
     fullPage: true,
   });
+});
+
+function parseExportCsv(value: string): string[][] {
+  const text = value.replace(/^\ufeff/u, "");
+  const rows: string[][] = [];
+  let row: string[] = [],
+    cell = "",
+    quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (char === '"') {
+      if (quoted && text[i + 1] === '"') {
+        cell += '"';
+        i++;
+      } else quoted = !quoted;
+    } else if (char === "," && !quoted) {
+      row.push(cell);
+      cell = "";
+    } else if (char === "\r" && text[i + 1] === "\n" && !quoted) {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+      i++;
+    } else cell += char;
+  }
+  if (cell || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows;
+}
+const exportCsvRequest = (page: Page, data: unknown) =>
+  page.request.post("/api/v1/boards/export", {
+    headers: { origin: "http://127.0.0.1:3100" },
+    data,
+  });
+function csvRecords(text: string) {
+  const [headers, ...rows] = parseExportCsv(text);
+  return rows.map((row) =>
+    Object.fromEntries(headers!.map((name, index) => [name, row[index]!])),
+  );
+}
+
+test("CSV export downloads fresh current-view data with safe typed fields and continues after closing its panel", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(90_000);
+  const team = await approvalTeam(page, browser);
+  const release = () => {};
+  try {
+    const definitions = [
+      { name: "Notes", type: "LONG_TEXT" },
+      { name: "Estimate", type: "NUMBER" },
+      { name: "Ready", type: "CHECKBOX" },
+      { name: "Tags", type: "TAGS", options: ["Development", "Ops, Team"] },
+    ];
+    for (const field of definitions)
+      expect(
+        (
+          await postBoard(page, "field", { boardId: team.boardId, ...field })
+        ).status(),
+      ).toBe(200);
+    const current = await team.state();
+    const status = current.fields.find(
+      (field: { key: string }) => field.key === "status",
+    ).options[0];
+    const notes = current.fields.find(
+      (field: { name: string }) => field.name === "Notes",
+    );
+    const number = current.fields.find(
+      (field: { name: string }) => field.name === "Estimate",
+    );
+    const checkbox = current.fields.find(
+      (field: { name: string }) => field.name === "Ready",
+    );
+    const tags = current.fields.find(
+      (field: { name: string }) => field.name === "Tags",
+    );
+    const name = 'Alpha, "柚子" 🍋';
+    expect(
+      (
+        await postBoard(page, "create-task", {
+          boardId: team.boardId,
+          createKey: createRecordId(),
+          name,
+          statusId: status.id,
+          priority: "HIGH",
+          assigneeIds: [team.ownerId],
+          dueDate: "2026-10-20",
+          checklist: [
+            { id: createRecordId(), text: "Unique step", done: false },
+          ],
+          fieldValues: {
+            [notes.id]: 'First, line\r\n"Second line"',
+            [number.id]: -12.5,
+            [checkbox.id]: false,
+            [tags.id]: [tags.options[1].id],
+          },
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postBoard(page, "create-task", {
+          boardId: team.boardId,
+          createKey: createRecordId(),
+          name: "Beta",
+          statusId: status.id,
+          assigneeIds: [team.author.id],
+        })
+      ).status(),
+    ).toBe(200);
+    await page.goto(`/boards/${team.boardId}`);
+    await page.getByRole("button", { name: "Filter", exact: true }).click();
+    await page.getByLabel("Filter task assignee").click();
+    await page
+      .getByRole("option", { name: "Assigned to me", exact: true })
+      .click();
+    await page.getByRole("button", { name: "Export CSV", exact: true }).click();
+    const panel = page.getByRole("dialog");
+    await expect(
+      panel.getByRole("radio", { name: /^Current view/ }),
+    ).toBeChecked();
+    await expect(panel).toContainText("1 matching task");
+    await page.screenshot({
+      path: "../../artifacts/phase-3/csv-export-desktop.png",
+      fullPage: true,
+    });
+    const alpha = (await team.state()).tasks.find(
+      (task: { name: string }) => task.name === name,
+    );
+    expect(
+      (
+        await postBoard(page, "update", {
+          taskId: alpha.id,
+          revision: alpha.revision,
+          changes: { description: "=1+1" },
+        })
+      ).status(),
+    ).toBe(200);
+    await panel
+      .getByRole("button", { name: "Download CSV", exact: true })
+      .click();
+    await expect(panel).toHaveCount(0);
+    await page.goto("/boards");
+    await page.reload();
+    await page.getByRole("button", { name: /^Show transfers:/ }).click();
+    const activity = page.getByRole("region", { name: "Transfer progress" });
+    await expect(
+      activity.getByText("Ready to download", { exact: true }),
+    ).toBeVisible({ timeout: 30_000 });
+    const downloaded = page.waitForEvent("download");
+    await activity
+      .getByRole("link", { name: "Download CSV", exact: true })
+      .click();
+    const download = await downloaded;
+    expect(download.suggestedFilename()).toMatch(
+      /^yuzu-Approval project-.*\.csv$/u,
+    );
+    const bytes = await readFile((await download.path())!);
+    expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    const records = csvRecords(bytes.toString("utf8"));
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      Task: name,
+      Description: "'=1+1",
+      Priority: "High",
+      Status: status.label,
+      "Due date": "2026-10-20",
+      Notes: 'First, line\r\n"Second line"',
+      Estimate: "-12.5",
+      Ready: "FALSE",
+      Tags: '["Ops, Team"]',
+    });
+    expect(JSON.parse(records[0]!.Checklist!)).toEqual([
+      { text: "Unique step", done: false },
+    ]);
+    expect(JSON.parse(records[0]!["Assignee IDs"]!)).toEqual([team.ownerId]);
+    await page.goto(`/boards/${team.boardId}`);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "Export CSV", exact: true }).click();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: "../../artifacts/phase-3/csv-export-mobile.png",
+      fullPage: true,
+    });
+  } finally {
+    release();
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await team.close();
+  }
+});
+
+test("CSV export enforces live access, archive scope, accepted values, references and request validation", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(90_000);
+  const team = await approvalTeam(page, browser);
+  try {
+    for (const name of ["Accepted Alpha", "Accepted Beta", "Archived task"])
+      expect(
+        (
+          await postBoard(page, "create-task", {
+            boardId: team.boardId,
+            createKey: createRecordId(),
+            name,
+            assigneeIds: [team.author.id],
+          })
+        ).status(),
+      ).toBe(200);
+    const initial = await team.state();
+    const archived = initial.tasks.find(
+      (task: { name: string }) => task.name === "Archived task",
+    );
+    expect(
+      (
+        await postBoard(page, "archive", {
+          taskId: archived.id,
+          revision: archived.revision,
+        })
+      ).status(),
+    ).toBe(200);
+    const protectedField = initial.fields.find(
+      (field: { key: string }) => field.key === "name",
+    );
+    expect(
+      (
+        await team.configure({
+          requireCreation: true,
+          protectedFieldIds: [protectedField.id],
+        })
+      ).status(),
+    ).toBe(200);
+    const alpha = (await team.state()).tasks.find(
+      (task: { name: string }) => task.name === "Accepted Alpha",
+    );
+    expect(
+      (
+        await postBoard(team.author.page, "update", {
+          taskId: alpha.id,
+          revision: alpha.revision,
+          changes: { name: "Pending secret rename" },
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postBoard(team.author.page, "create-task", {
+          boardId: team.boardId,
+          createKey: createRecordId(),
+          name: "Pending secret creation",
+        })
+      ).status(),
+    ).toBe(200);
+    const whole = {
+      boardId: team.boardId,
+      scope: "BOARD",
+      includeArchived: false,
+    };
+    const response = await exportCsvRequest(team.author.page, whole);
+    expect(response.status()).toBe(200);
+    expect(response.headers()["content-type"]).toContain("text/csv");
+    expect(response.headers()["cache-control"]).toContain("no-store");
+    expect(response.headers()["content-disposition"]).toContain("attachment");
+    expect(response.headers()["x-content-type-options"]).toBe("nosniff");
+    expect(csvRecords(await response.text()).map((row) => row.Task)).toEqual([
+      "Accepted Alpha",
+      "Accepted Beta",
+    ]);
+    expect(
+      csvRecords(
+        await (
+          await exportCsvRequest(page, { ...whole, includeArchived: true })
+        ).text(),
+      ),
+    ).toHaveLength(3);
+    const archiveOnly = await exportCsvRequest(page, {
+      boardId: team.boardId,
+      scope: "VIEW",
+      config: { ...defaultViewConfig, archived: true },
+    });
+    expect(csvRecords(await archiveOnly.text()).map((row) => row.Task)).toEqual(
+      ["Archived task"],
+    );
+    const filtered = await exportCsvRequest(team.author.page, {
+      boardId: team.boardId,
+      scope: "VIEW",
+      config: {
+        ...defaultViewConfig,
+        assignee: "me",
+        search: "Beta",
+        sort: "name",
+      },
+    });
+    expect(csvRecords(await filtered.text()).map((row) => row.Task)).toEqual([
+      "Accepted Beta",
+    ]);
+    const empty = await exportCsvRequest(page, {
+      boardId: team.boardId,
+      scope: "VIEW",
+      config: { ...defaultViewConfig, search: "No matches" },
+    });
+    expect(empty.status()).toBe(200);
+    expect(parseExportCsv(await empty.text())).toHaveLength(1);
+    expect(
+      (
+        await exportCsvRequest(page, { ...whole, tasks: [{ name: "Forged" }] })
+      ).status(),
+    ).toBe(422);
+    expect(
+      (
+        await exportCsvRequest(page, {
+          boardId: team.boardId,
+          scope: "VIEW",
+          config: { ...defaultViewConfig, statusId: "removed" },
+        })
+      ).status(),
+    ).toBe(422);
+    expect(
+      (
+        await exportCsvRequest(page, {
+          boardId: team.boardId,
+          scope: "VIEW",
+          config: { ...defaultViewConfig, groupId: createRecordId() },
+        })
+      ).status(),
+    ).toBe(422);
+    expect(
+      (
+        await page.request.post("/api/v1/boards/export", {
+          headers: { origin: "https://untrusted.example" },
+          data: whole,
+        })
+      ).status(),
+    ).toBe(403);
+    const outsider = await browser.newContext();
+    expect(
+      (await exportCsvRequest(await outsider.newPage(), whole)).status(),
+    ).toBe(401);
+    await outsider.close();
+    const foreign = await getDatabase().board.findFirstOrThrow({
+      where: { name: "Restricted project" },
+    });
+    expect(
+      (
+        await exportCsvRequest(team.author.page, {
+          ...whole,
+          boardId: foreign.id,
+        })
+      ).status(),
+    ).toBe(404);
+    await getDatabase().installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: true },
+    });
+    expect((await exportCsvRequest(team.author.page, whole)).status()).toBe(
+      503,
+    );
+    expect((await exportCsvRequest(page, whole)).status()).toBe(200);
+    await getDatabase().installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: false },
+    });
+    await getDatabase().workspaceMember.delete({
+      where: {
+        workspaceId_userId: {
+          workspaceId: team.workspaceId,
+          userId: team.author.id,
+        },
+      },
+    });
+    const revoked = await exportCsvRequest(team.author.page, whole);
+    expect(revoked.status()).toBe(404);
+    expect(revoked.headers()["content-disposition"]).toBeUndefined();
+    expect(
+      await getDatabase().boardEvent.count({
+        where: { boardId: team.boardId, action: "Exported board CSV" },
+      }),
+    ).toBeGreaterThan(0);
+  } finally {
+    await team.close();
+  }
+});
+
+test("CSV export bounds task counts and UTF-8 bytes without returning partial downloads", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const { board } = await readyTeam(page);
+  const db = getDatabase();
+  const owner = await db.user.findUniqueOrThrow({
+    where: { email: "owner@example.test" },
+  });
+  const request = { boardId: board.id, scope: "BOARD", includeArchived: false };
+  for (let start = 0; start < 10001; start += 500)
+    await db.task.createMany({
+      data: Array.from({ length: Math.min(500, 10001 - start) }, () => ({
+        id: createRecordId(),
+        boardId: board.id,
+        createdById: owner.id,
+        createKey: createRecordId(),
+        createDigest: "export-limit-test",
+        name: "Small task",
+      })),
+    });
+  const tooMany = await exportCsvRequest(page, request);
+  expect(tooMany.status()).toBe(413);
+  expect((await tooMany.json()).error.code).toBe("EXPORT_TOO_LARGE");
+  expect(tooMany.headers()["content-disposition"]).toBeUndefined();
+  await db.task.deleteMany({ where: { boardId: board.id } });
+  await db.task.createMany({
+    data: Array.from({ length: 501 }, () => ({
+      id: createRecordId(),
+      boardId: board.id,
+      createdById: owner.id,
+      createKey: createRecordId(),
+      createDigest: "export-byte-limit-test",
+      name: "Unicode task",
+      description: "🍋".repeat(5000),
+    })),
+  });
+  const tooBig = await exportCsvRequest(page, request);
+  expect(tooBig.status()).toBe(413);
+  expect((await tooBig.json()).error.code).toBe("EXPORT_TOO_LARGE");
+  expect(tooBig.headers()["content-disposition"]).toBeUndefined();
+  expect(
+    await db.boardEvent.count({
+      where: { boardId: board.id, action: "Exported board CSV" },
+    }),
+  ).toBe(0);
+});
+
+const postImport = (page: Page, action: "preview" | "row", data: unknown) =>
+  page.request.post(`/api/v1/boards/import/${action}`, {
+    headers: { origin: "http://127.0.0.1:3100" },
+    data,
+  });
+
+const postTransfer = (page: Page, path: string, data: unknown) =>
+  page.request.post(`/api/v1/transfers${path}`, {
+    headers: { origin: "http://127.0.0.1:3100" },
+    data,
+  });
+const importFixture = (records: string[][]) =>
+  records
+    .map((record) =>
+      record.map((value) => `"${value.replaceAll('"', '""')}"`).join(","),
+    )
+    .join("\r\n");
+
+test("large CSV import accepts 25 MB and 25000 tasks with bounded previews, cross-batch duplicates and pagination", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  const { board } = await readyTeam(page);
+  const header =
+    importFixture([
+      ["Task", "Description", "Priority", "Due date", "Checklist"],
+    ]) + "\r\n";
+  const csv =
+    header +
+    Array.from({ length: 25_000 }, (_, index) => {
+      const row = [
+        `Bulk task ${String(index === 500 ? 1 : index + 1).padStart(5, "0")}`,
+        "",
+        "NORMAL",
+        "2026-10-20",
+        "Check input|Record result",
+      ];
+      const target = 1000 - (index === 24_999 ? Buffer.byteLength(header) : 0);
+      row[1] = "x".repeat(
+        target - Buffer.byteLength(importFixture([row]) + "\r\n"),
+      );
+      return importFixture([row]) + "\r\n";
+    }).join("");
+  expect(Buffer.byteLength(csv)).toBe(25_000_000);
+  await page.goto(`/boards/${board.id}`);
+  await page.getByRole("button", { name: "Import CSV", exact: true }).click();
+  const panel = page.getByRole("dialog");
+  const choose = page.waitForEvent("filechooser");
+  await panel.getByLabel("CSV file").click();
+  await (
+    await choose
+  ).setFiles({
+    name: "large-25000.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(csv),
+  });
+  await expect(
+    panel.getByText(
+      "large-25000.csv · 25000 rows. Unmapped columns are ignored.",
+    ),
+  ).toBeVisible({ timeout: 30_000 });
+  const batches: { bytes: number; lines: number }[] = [];
+  page.on("request", (request) => {
+    if (request.url().endsWith("/api/v1/boards/import/preview")) {
+      const body = request.postDataJSON();
+      batches.push({
+        bytes: Buffer.byteLength(body.csv),
+        lines: body.csv.split("\r\n").length - 2,
+      });
+    }
+  });
+  await panel
+    .getByRole("button", { name: "Preview tasks", exact: true })
+    .click();
+  await expect(
+    panel.getByText("25000 rows · 0 invalid · 1 possible duplicates"),
+  ).toBeVisible({ timeout: 120_000 });
+  expect(batches.length).toBe(50);
+  expect(
+    batches.every((batch) => batch.bytes <= 1_000_000 && batch.lines <= 500),
+  ).toBe(true);
+  await expect(
+    panel.getByRole("checkbox", { name: /^Import row / }),
+  ).toHaveCount(100);
+  expect(await getDatabase().task.count({ where: { boardId: board.id } })).toBe(
+    0,
+  );
+  await panel
+    .getByRole("button", { name: "Clear selection", exact: true })
+    .click();
+  await panel.getByLabel("Import row 2", { exact: true }).check();
+  await panel.getByLabel("Preview page").fill("6");
+  await expect(
+    panel.getByLabel("Import row 502", { exact: true }),
+  ).not.toBeChecked();
+  await expect(
+    panel.getByText("Matches an earlier CSV row.", { exact: true }),
+  ).toBeVisible();
+  await panel.getByLabel("Preview page").fill("250");
+  await panel.getByLabel("Import row 25001", { exact: true }).check();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await panel.evaluate(
+      (element) => element.scrollWidth <= element.clientWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "../../artifacts/phase-3/large-csv-preview-mobile.png",
+    fullPage: false,
+  });
+  await panel
+    .getByRole("button", { name: "Import 2 tasks", exact: true })
+    .click();
+  await expect
+    .poll(() => getDatabase().task.count({ where: { boardId: board.id } }), {
+      timeout: 30_000,
+    })
+    .toBe(2);
+  expect(await getDatabase().task.count({ where: { boardId: board.id } })).toBe(
+    2,
+  );
+  const titles = await getDatabase().task.findMany({
+    where: { boardId: board.id },
+    select: { name: true },
+  });
+  expect(titles.map((task) => task.name).sort()).toEqual([
+    "Bulk task 00001",
+    "Bulk task 25000",
+  ]);
+  // Hover intentionally pauses toast dismissal; move off the mobile action area.
+  await page.mouse.move(0, 0);
+  await expect(page.locator('[data-slot="board-notification"]')).toHaveCount(
+    0,
+    { timeout: 8000 },
+  );
+  await page.getByRole("button", { name: "Import CSV", exact: true }).click();
+  await panel.getByLabel("CSV file").setInputFiles({
+    name: "too-large.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.alloc(25_000_001),
+  });
+  await expect(panel.getByRole("alert")).toHaveText(
+    "Choose a CSV file up to 25 MB.",
+  );
+});
+
+test("CSV import detects archived and original-ID matches, checks custom values and serializes duplicate races", async ({
+  page,
+}) => {
+  const { board } = await readyTeam(page);
+  const mapping = [
+    { column: 0, target: "name" },
+    { column: 1, target: "source_id" },
+  ];
+  const oldId = (
+    await (
+      await postBoard(page, "create-task", {
+        boardId: board.id,
+        createKey: createRecordId(),
+        name: "Archived source",
+        description: "Original data",
+      })
+    ).json()
+  ).data.taskId;
+  expect(
+    (await postBoard(page, "archive", { taskId: oldId, revision: 1 })).status(),
+  ).toBe(200);
+  const preview = await postImport(page, "preview", {
+    boardId: board.id,
+    csv: importFixture([
+      ["Task", "Task ID"],
+      ["New title", oldId],
+      ["ARCHIVED SOURCE", ""],
+    ]),
+    mapping,
+  });
+  expect(preview.status()).toBe(200);
+  const rows = (await preview.json()).data.rows;
+  expect(rows.every((row: { duplicate: boolean }) => row.duplicate)).toBe(true);
+  expect(
+    (
+      await (
+        await postImport(page, "row", {
+          token: rows[0].token,
+          allowDuplicate: false,
+        })
+      ).json()
+    ).data.outcome,
+  ).toBe("SKIPPED");
+  expect(
+    (
+      await (
+        await postImport(page, "row", {
+          token: rows[0].token,
+          allowDuplicate: true,
+        })
+      ).json()
+    ).data.outcome,
+  ).toBe("APPLIED");
+  const original = await getDatabase().task.findUniqueOrThrow({
+    where: { id: oldId },
+  });
+  expect(original.name).toBe("Archived source");
+  expect(original.description).toBe("Original data");
+  expect(original.archivedAt).not.toBeNull();
+  const tokens: string[] = [];
+  for (let i = 0; i < 2; i++) {
+    const candidate = await postImport(page, "preview", {
+      boardId: board.id,
+      csv: "Task\nConcurrent name",
+      mapping: [{ column: 0, target: "name" }],
+    });
+    tokens.push((await candidate.json()).data.rows[0].token);
+  }
+  const raced = await Promise.all(
+    tokens.map((token) =>
+      postImport(page, "row", { token, allowDuplicate: false }),
+    ),
+  );
+  for (const response of raced) expect(response.status()).toBe(200);
+  const outcomes = await Promise.all(
+    raced.map(async (response) => (await response.json()).data.outcome),
+  );
+  expect(outcomes.sort()).toEqual(["APPLIED", "SKIPPED"]);
+  expect(
+    await getDatabase().task.count({
+      where: { boardId: board.id, name: "Concurrent name" },
+    }),
+  ).toBe(1);
+  const fieldIds: string[] = [];
+  for (const type of ["URL", "EMAIL", "MULTI_SELECT", "PEOPLE"]) {
+    const made = await postBoard(page, "field", {
+      boardId: board.id,
+      name: type,
+      type,
+      options: type === "MULTI_SELECT" ? ["One"] : [],
+    });
+    expect(made.status()).toBe(200);
+    fieldIds.push((await made.json()).data.id);
+  }
+  const invalid = await postImport(page, "preview", {
+    boardId: board.id,
+    csv: importFixture([
+      ["Task", "URL", "Email", "Choices", "People"],
+      ["Bad fields", "javascript:alert(1)", "bad email", "One|One", "Nobody"],
+    ]),
+    mapping: [
+      { column: 0, target: "name" },
+      ...fieldIds.map((target, column) => ({ column: column + 1, target })),
+    ],
+  });
+  expect(invalid.status()).toBe(200);
+  const bad = (await invalid.json()).data.rows[0];
+  expect(bad.issues.length).toBeGreaterThan(0);
+  expect(bad.token).toBeUndefined();
+  expect(
+    await getDatabase().task.count({
+      where: { boardId: board.id, name: "Bad fields" },
+    }),
+  ).toBe(0);
+});
+
+test("CSV import maps columns, previews invalid and duplicate rows, continues with the sheet closed and updates the board", async ({
+  page,
+}) => {
+  const { workspace } = await readyTeam(page);
+  const boardId = (
+    await (
+      await postBoard(page, "create-board", {
+        workspaceId: workspace.id,
+        name: "CSV landing",
+      })
+    ).json()
+  ).data.id;
+  const fields: Record<string, string> = {};
+  for (const [name, type, options] of [
+    ["Tags", "TAGS", ["Development", "Design"]],
+    ["Estimate", "NUMBER", []],
+    ["Ready", "CHECKBOX", []],
+  ] as const) {
+    const made = await postBoard(page, "field", {
+      boardId,
+      name,
+      type,
+      options,
+    });
+    expect(made.status()).toBe(200);
+    fields[name] = (await made.json()).data.id;
+  }
+  const made = await postBoard(page, "create-task", {
+    boardId,
+    createKey: createRecordId(),
+    name: "Existing",
+    description: "Keep this unchanged",
+  });
+  const oldId = (await made.json()).data.taskId;
+  const data = importFixture([
+    [
+      "Task",
+      "Description",
+      "Status",
+      "Due date",
+      "Tags",
+      "Estimate",
+      "Ready",
+      "Assignees",
+      "Checklist",
+    ],
+    [
+      "New lemon 🍋",
+      'Line one\nLine "two"',
+      "To do",
+      "2026-10-16",
+      '["Development","Design"]',
+      "0",
+      "false",
+      "Team Owner",
+      '[{"text":"Review","done":true}]',
+    ],
+    ["Existing", "Skip this row", "", "", "", "", "", "", ""],
+    ["Existing", "Create a separate copy", "", "", "", "", "", "", ""],
+    ["Bad date", "", "", "2026-02-30", "", "", "", "", ""],
+    ["new lemon 🍋", "Duplicate inside this file", "", "", "", "", "", "", ""],
+  ]);
+  await page.goto(`/boards/${boardId}`);
+  await page.getByRole("button", { name: "Import CSV", exact: true }).click();
+  const panel = page.getByRole("dialog");
+  await panel.getByLabel("CSV file").setInputFiles({
+    name: "team-tasks.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(data),
+  });
+  await expect(
+    panel.getByRole("combobox", { name: "Task", exact: true }),
+  ).toContainText("Task title");
+  await panel
+    .getByRole("combobox", { name: "Description", exact: true })
+    .click();
+  await page
+    .getByRole("option", { name: "Do not import", exact: true })
+    .click();
+  await panel
+    .getByRole("combobox", { name: "Description", exact: true })
+    .click();
+  await page.getByRole("option", { name: "Description", exact: true }).click();
+  await page.screenshot({
+    path: "../../artifacts/phase-3/csv-import-mapping.png",
+    fullPage: false,
+  });
+  await panel
+    .getByRole("button", { name: "Preview tasks", exact: true })
+    .click();
+  await expect(
+    panel.getByText("5 rows · 1 invalid · 3 possible duplicates"),
+  ).toBeVisible();
+  await expect(panel.getByLabel("Import row 2")).toBeChecked();
+  await expect(panel.getByLabel("Import row 3")).not.toBeChecked();
+  await expect(panel.getByLabel("Import row 5")).toBeDisabled();
+  expect(await getDatabase().task.count({ where: { boardId } })).toBe(1);
+  await panel.getByLabel("Import row 4").check();
+  await page.screenshot({
+    path: "../../artifacts/phase-3/csv-import-preview-desktop.png",
+    fullPage: false,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await panel.evaluate(
+      (element) => element.scrollWidth <= element.clientWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "../../artifacts/phase-3/csv-import-preview-mobile.png",
+    fullPage: false,
+  });
+  await panel
+    .getByRole("button", { name: "Import 2 tasks", exact: true })
+    .click();
+  await expect(panel).toHaveCount(0);
+  await expect
+    .poll(() => getDatabase().task.count({ where: { boardId } }), {
+      timeout: 30_000,
+    })
+    .toBe(3);
+  await expect(page.getByRole("button", { name: /^New lemon/ })).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Transfer progress" }),
+  ).toContainText("2 created");
+  const original = await getDatabase().task.findUniqueOrThrow({
+    where: { id: oldId },
+  });
+  expect(original.description).toBe("Keep this unchanged");
+  const imported = await getDatabase().task.findFirstOrThrow({
+    where: { boardId, name: "New lemon 🍋" },
+    include: { values: true, assignees: true },
+  });
+  expect(imported.id).toMatch(/^[a-f0-9-]{14}7/);
+  expect(imported.description).toBe('Line one\nLine "two"');
+  expect(imported.dueDate?.toISOString().slice(0, 10)).toBe("2026-10-16");
+  expect(imported.assignees).toHaveLength(1);
+  expect(imported.checklist).toMatchObject([{ text: "Review", done: true }]);
+  expect(
+    imported.values.find((value) => value.fieldId === fields.Estimate)
+      ?.numberValue,
+  ).toBe(0);
+  expect(
+    imported.values.find((value) => value.fieldId === fields.Ready)
+      ?.booleanValue,
+  ).toBe(false);
+  expect(
+    imported.values.find((value) => value.fieldId === fields.Tags)?.choices,
+  ).toHaveLength(2);
+});
+
+test("CSV import uses approvals, signed previews, current permissions and idempotent row creation", async ({
+  page,
+  browser,
+  request,
+}) => {
+  const team = await approvalTeam(page, browser);
+  const mapping = [{ column: 0, target: "name" }];
+  const preview = async (actor: Page, name: string) => {
+    const response = await postImport(actor, "preview", {
+      boardId: team.boardId,
+      csv: importFixture([["Task"], [name]]),
+      mapping,
+    });
+    expect(response.status()).toBe(200);
+    return (await response.json()).data.rows[0];
+  };
+  try {
+    expect((await team.configure({ requireCreation: true })).status()).toBe(
+      200,
+    );
+    const row = await preview(team.author.page, "Approval import");
+    expect(
+      (
+        await postImport(page, "row", {
+          token: row.token,
+          allowDuplicate: false,
+        })
+      ).status(),
+    ).toBe(403);
+    const tampered = row.token.split(".");
+    tampered[0] = Buffer.from(
+      JSON.stringify({ input: { name: "Tampered" } }),
+    ).toString("base64url");
+    expect(
+      (
+        await postImport(team.author.page, "row", {
+          token: tampered.join("."),
+          allowDuplicate: false,
+        })
+      ).status(),
+    ).toBe(422);
+    expect(
+      (
+        await request.post("/api/v1/boards/import/row", {
+          headers: { origin: "http://127.0.0.1:3100" },
+          data: { token: row.token, allowDuplicate: false },
+        })
+      ).status(),
+    ).toBe(401);
+    expect(
+      (
+        await team.author.page.request.post("/api/v1/boards/import/row", {
+          headers: { origin: "https://elsewhere.test" },
+          data: { token: row.token, allowDuplicate: false },
+        })
+      ).status(),
+    ).toBe(403);
+    const body = { token: row.token, allowDuplicate: false };
+    const expired = JSON.parse(
+      Buffer.from(row.token.split(".")[0], "base64url").toString("utf8"),
+    );
+    expired.expiresAt = Date.now() - 1;
+    const expiredPayload = Buffer.from(JSON.stringify(expired)).toString(
+      "base64url",
+    );
+    const expiredSignature = createHmac(
+      "sha256",
+      "browser-tests-only-auth-secret-not-a-real-secret",
+    )
+      .update(`yuzu-csv-import-v1:${expiredPayload}`)
+      .digest("base64url");
+    const expiration = await postImport(team.author.page, "row", {
+      token: `${expiredPayload}.${expiredSignature}`,
+      allowDuplicate: false,
+    });
+    expect(expiration.status()).toBe(409);
+    expect((await expiration.json()).error.code).toBe("IMPORT_PREVIEW_EXPIRED");
+    const pending = await postImport(team.author.page, "row", body);
+    expect(pending.status()).toBe(200);
+    const result = (await pending.json()).data;
+    expect(result.outcome).toBe("PENDING_APPROVAL");
+    const anotherPreview = await preview(team.author.page, "APPROVAL IMPORT");
+    expect(anotherPreview.duplicate).toBe(true);
+    expect(
+      (
+        await (
+          await postImport(team.author.page, "row", {
+            token: anotherPreview.token,
+            allowDuplicate: false,
+          })
+        ).json()
+      ).data.outcome,
+    ).toBe("SKIPPED");
+    expect(
+      (await (await postImport(team.author.page, "row", body)).json()).data,
+    ).toEqual(result);
+    expect(
+      await getDatabase().task.count({
+        where: { boardId: team.boardId, name: "Approval import" },
+      }),
+    ).toBe(0);
+    expect(
+      await getDatabase().boardProposal.count({
+        where: { boardId: team.boardId, operation: "CREATE" },
+      }),
+    ).toBe(1);
+    expect(
+      (
+        await postApproval(page, "decide", {
+          proposalId: result.proposalId,
+          action: "approve",
+        })
+      ).status(),
+    ).toBe(200);
+    const afterApproval = await postImport(team.author.page, "row", body);
+    expect((await afterApproval.json()).data.outcome).toBe("APPLIED");
+    expect(
+      await getDatabase().task.count({
+        where: { boardId: team.boardId, name: "Approval import" },
+      }),
+    ).toBe(1);
+    const removed = await preview(team.author.page, "Removed membership");
+    await getDatabase().workspaceMember.deleteMany({
+      where: { workspaceId: team.workspaceId, userId: team.author.id },
+    });
+    expect(
+      (
+        await postImport(team.author.page, "row", {
+          token: removed.token,
+          allowDuplicate: false,
+        })
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await postImport(team.author.page, "preview", {
+          boardId: team.boardId,
+          csv: "Task\nForbidden",
+          mapping,
+        })
+      ).status(),
+    ).toBe(404);
+    await getDatabase().workspaceMember.create({
+      data: { workspaceId: team.workspaceId, userId: team.author.id },
+    });
+    await getDatabase().installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: true },
+    });
+    expect(
+      (
+        await postImport(team.author.page, "row", {
+          token: removed.token,
+          allowDuplicate: false,
+        })
+      ).status(),
+    ).toBe(503);
+    expect(
+      (
+        await postImport(page, "preview", {
+          boardId: team.boardId,
+          csv: "Task\nPaused",
+          mapping,
+        })
+      ).status(),
+    ).toBe(503);
+    await getDatabase().installationSettings.update({
+      where: { id: "installation" },
+      data: { maintenanceMode: false },
+    });
+    expect((await team.configure({ enabled: false })).status()).toBe(200);
+    const concurrent = await preview(team.author.page, "Created after preview");
+    expect(
+      (
+        await postBoard(page, "create-task", {
+          boardId: team.boardId,
+          createKey: createRecordId(),
+          name: "Created after preview",
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await (
+          await postImport(team.author.page, "row", {
+            token: concurrent.token,
+            allowDuplicate: false,
+          })
+        ).json()
+      ).data.outcome,
+    ).toBe("SKIPPED");
+    const created = await postImport(team.author.page, "row", {
+      token: concurrent.token,
+      allowDuplicate: true,
+    });
+    expect(created.status()).toBe(200);
+    const replayed = await Promise.all(
+      Array.from({ length: 3 }, () =>
+        postImport(team.author.page, "row", {
+          token: concurrent.token,
+          allowDuplicate: true,
+        }),
+      ),
+    );
+    for (const replay of replayed) expect(replay.status()).toBe(200);
+    expect(
+      await getDatabase().task.count({
+        where: { boardId: team.boardId, name: "Created after preview" },
+      }),
+    ).toBe(2);
+  } finally {
+    await team.close();
+  }
+});
+
+test("CSV import retries after a lost response without duplicate tasks and revalidates changed fields", async ({
+  page,
+}) => {
+  const { workspace } = await readyTeam(page);
+  const boardId = (
+    await (
+      await postBoard(page, "create-board", {
+        workspaceId: workspace.id,
+        name: "Retry imports",
+      })
+    ).json()
+  ).data.id;
+  await page.goto(`/boards/${boardId}`);
+  await page.getByRole("button", { name: "Import CSV", exact: true }).click();
+  const panel = page.getByRole("dialog");
+  await panel.getByLabel("CSV file").setInputFiles({
+    name: "retry.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from("Task\nOnly once\nSecond task"),
+  });
+  await panel
+    .getByRole("button", { name: "Preview tasks", exact: true })
+    .click();
+  let lost = false;
+  await page.route("**/api/v1/transfers/*", async (route) => {
+    if (
+      route.request().method() === "POST" &&
+      route.request().postDataJSON()?.action === "chunk" &&
+      !lost
+    ) {
+      lost = true;
+      expect((await route.fetch()).status()).toBe(200);
+      await route.abort("failed");
+    } else await route.continue();
+  });
+  await panel
+    .getByRole("button", { name: "Import 2 tasks", exact: true })
+    .click();
+  await expect.poll(() => lost).toBe(true);
+  await page.reload();
+  await expect
+    .poll(() => getDatabase().task.count({ where: { boardId } }), {
+      timeout: 45_000,
+    })
+    .toBe(2);
+  expect(
+    await getDatabase().task.count({ where: { boardId, name: "Only once" } }),
+  ).toBe(1);
+  await page.screenshot({
+    path: "../../artifacts/phase-3/csv-import-results.png",
+    fullPage: false,
+  });
+  const made = await postBoard(page, "field", {
+    boardId,
+    name: "Temporary",
+    type: "TEXT",
+    options: [],
+  });
+  const fieldId = (await made.json()).data.id;
+  const preview = await postImport(page, "preview", {
+    boardId,
+    csv: "Task,Temporary\nStale field,Text",
+    mapping: [
+      { column: 0, target: "name" },
+      { column: 1, target: fieldId },
+    ],
+  });
+  expect(preview.status()).toBe(200);
+  const token = (await preview.json()).data.rows[0].token;
+  await getDatabase().boardColumn.update({
+    where: { id: fieldId },
+    data: { archivedAt: new Date() },
+  });
+  expect(
+    (await postImport(page, "row", { token, allowDuplicate: false })).status(),
+  ).toBe(422);
+  expect(
+    await getDatabase().task.count({ where: { boardId, name: "Stale field" } }),
+  ).toBe(0);
+  for (const csv of [
+    'Task\n"Missing quote',
+    "Task\n" + "Row\n".repeat(501),
+    "Task\n" + "🍋".repeat(250001),
+  ]) {
+    expect(
+      (
+        await postImport(page, "preview", {
+          boardId,
+          csv,
+          mapping: [{ column: 0, target: "name" }],
+        })
+      ).status(),
+    ).toBe(422);
+  }
+  expect(
+    (
+      await postImport(page, "preview", {
+        boardId,
+        csv: "Task\nTask",
+        mapping: [
+          { column: 0, target: "name" },
+          { column: 0, target: "priority" },
+        ],
+      })
+    ).status(),
+  ).toBe(422);
+});
+
+test("durable CSV import resumes after worker crash, navigation and refresh without duplicate tasks", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  const { board } = await readyTeam(page);
+  const preview = await postImport(page, "preview", {
+    boardId: board.id,
+    csv:
+      "Task\n" +
+      Array.from({ length: 300 }, (_, i) => `Durable task ${i}`).join("\n"),
+    mapping: [{ column: 0, target: "name" }],
+  });
+  expect(preview.status()).toBe(200);
+  const rows = (await preview.json()).data.rows.map(
+    (row: { row: number; token: string }) => ({
+      row: row.row,
+      token: row.token,
+      allowDuplicate: false,
+    }),
+  );
+  const id = createRecordId();
+  expect(
+    (
+      await postTransfer(page, "", {
+        id,
+        kind: "IMPORT",
+        boardId: board.id,
+        name: "restart.csv",
+        total: rows.length,
+        chunkCount: 3,
+      })
+    ).status(),
+  ).toBe(200);
+  for (let index = 0; index < 3; index++)
+    expect(
+      (
+        await postTransfer(page, `/${id}`, {
+          action: "chunk",
+          index,
+          rows: rows.slice(index * 100, (index + 1) * 100),
+        })
+      ).status(),
+    ).toBe(200);
+  expect(
+    (await postTransfer(page, `/${id}`, { action: "start" })).status(),
+  ).toBe(200);
+  await expect
+    .poll(
+      () => getDatabase().csvTransferRow.count({ where: { transferId: id } }),
+      { timeout: 30_000, intervals: [100] },
+    )
+    .toBeGreaterThan(5);
+  await stopTestCsvWorker();
+  const checkpoint = await getDatabase().task.count({
+    where: { boardId: board.id },
+  });
+  expect(checkpoint).toBeLessThan(300);
+  await page.goto("/boards");
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: /^Show transfers:/ }),
+  ).toBeVisible();
+  await startTestCsvWorker();
+  await expect
+    .poll(
+      async () =>
+        (await getDatabase().csvTransfer.findUniqueOrThrow({ where: { id } }))
+          .status,
+      { timeout: 120_000 },
+    )
+    .toBe("COMPLETED");
+  expect(await getDatabase().task.count({ where: { boardId: board.id } })).toBe(
+    300,
+  );
+  expect(
+    await getDatabase().csvTransferRow.count({
+      where: { transferId: id, outcome: "APPLIED" },
+    }),
+  ).toBe(300);
+  await page.getByRole("button", { name: /^Show transfers:/ }).click();
+  await expect(
+    page.getByRole("region", { name: "Transfer progress" }),
+  ).toContainText("300 created");
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "../../artifacts/phase-3/durable-csv-lemon-mobile.png",
+    fullPage: true,
+  });
+  const report = await page.request.get(`/api/v1/transfers/${id}?report=1`);
+  expect(report.status()).toBe(200);
+  expect(csvRecords(await report.text())).toHaveLength(300);
+});
+
+test("durable CSV staging enforces ownership, completeness, immutable chunks and cancellation", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  try {
+    const response = await postImport(team.author.page, "preview", {
+      boardId: team.boardId,
+      csv: "Task\nPrivate staged row",
+      mapping: [{ column: 0, target: "name" }],
+    });
+    const token = (await response.json()).data.rows[0].token;
+    const id = createRecordId(),
+      create = {
+        id,
+        kind: "IMPORT",
+        boardId: team.boardId,
+        name: "private.csv",
+        total: 1,
+        chunkCount: 1,
+      };
+    expect((await postTransfer(team.author.page, "", create)).status()).toBe(
+      200,
+    );
+    expect((await postTransfer(team.author.page, "", create)).status()).toBe(
+      200,
+    );
+    expect(
+      (await postTransfer(page, `/${id}`, { action: "cancel" })).status(),
+    ).toBe(404);
+    expect((await page.request.get(`/api/v1/transfers/${id}`)).status()).toBe(
+      404,
+    );
+    expect(
+      (
+        await postTransfer(team.author.page, `/${id}`, { action: "start" })
+      ).status(),
+    ).toBe(409);
+    expect(
+      (
+        await postTransfer(team.author.page, `/${id}`, {
+          action: "chunk",
+          index: 0,
+          rows: [{ row: 2, token: token + "tampered", allowDuplicate: false }],
+        })
+      ).status(),
+    ).toBe(422);
+    const chunk = {
+      action: "chunk",
+      index: 0,
+      rows: [{ row: 2, token, allowDuplicate: false }],
+    };
+    expect(
+      (await postTransfer(team.author.page, `/${id}`, chunk)).status(),
+    ).toBe(200);
+    expect(
+      (await postTransfer(team.author.page, `/${id}`, chunk)).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postTransfer(team.author.page, `/${id}`, {
+          ...chunk,
+          rows: [{ row: 2, token, allowDuplicate: true }],
+        })
+      ).status(),
+    ).toBe(409);
+    expect(
+      (
+        await postTransfer(team.author.page, `/${id}`, { action: "cancel" })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await postTransfer(team.author.page, `/${id}`, { action: "start" })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (await getDatabase().csvTransfer.findUniqueOrThrow({ where: { id } }))
+        .status,
+    ).toBe("CANCELLED");
+    expect(
+      await getDatabase().task.count({
+        where: { boardId: team.boardId, name: "Private staged row" },
+      }),
+    ).toBe(0);
+  } finally {
+    await team.close();
+  }
+});
+
+test("durable CSV worker preserves approvals and rechecks access to prepared downloads and queued jobs", async ({
+  page,
+  browser,
+}) => {
+  const team = await approvalTeam(page, browser);
+  const db = getDatabase();
+  try {
+    expect((await team.configure({ requireCreation: true })).status()).toBe(
+      200,
+    );
+    async function stage(name: string) {
+      const preview = await postImport(team.author.page, "preview", {
+        boardId: team.boardId,
+        csv: `Task\n${name}`,
+        mapping: [{ column: 0, target: "name" }],
+      });
+      expect(preview.status()).toBe(200);
+      const token = (await preview.json()).data.rows[0].token,
+        id = createRecordId();
+      expect(
+        (
+          await postTransfer(team.author.page, "", {
+            id,
+            kind: "IMPORT",
+            boardId: team.boardId,
+            name: name + ".csv",
+            total: 1,
+            chunkCount: 1,
+          })
+        ).status(),
+      ).toBe(200);
+      expect(
+        (
+          await postTransfer(team.author.page, `/${id}`, {
+            action: "chunk",
+            index: 0,
+            rows: [{ row: 2, token, allowDuplicate: false }],
+          })
+        ).status(),
+      ).toBe(200);
+      expect(
+        (
+          await postTransfer(team.author.page, `/${id}`, { action: "start" })
+        ).status(),
+      ).toBe(200);
+      return id;
+    }
+    const approved = await stage("Needs review");
+    await expect
+      .poll(
+        async () =>
+          (await db.csvTransfer.findUniqueOrThrow({ where: { id: approved } }))
+            .status,
+        { timeout: 30_000 },
+      )
+      .toBe("COMPLETED");
+    expect(await db.task.count({ where: { boardId: team.boardId } })).toBe(0);
+    expect(
+      await db.csvTransferRow.count({
+        where: { transferId: approved, outcome: "PENDING_APPROVAL" },
+      }),
+    ).toBe(1);
+    expect(
+      await db.boardProposal.count({
+        where: {
+          boardId: team.boardId,
+          status: "PENDING",
+          authorId: team.author.id,
+        },
+      }),
+    ).toBe(1);
+    const exported = createRecordId();
+    expect(
+      (
+        await postTransfer(team.author.page, "", {
+          id: exported,
+          kind: "EXPORT",
+          input: {
+            boardId: team.boardId,
+            scope: "BOARD",
+            includeArchived: false,
+          },
+        })
+      ).status(),
+    ).toBe(200);
+    await expect
+      .poll(
+        async () =>
+          (await db.csvTransfer.findUniqueOrThrow({ where: { id: exported } }))
+            .status,
+        { timeout: 30_000 },
+      )
+      .toBe("COMPLETED");
+    expect(
+      (
+        await team.author.page.request.get(
+          `/api/v1/transfers/${exported}?download=1`,
+        )
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await page.request.get(`/api/v1/transfers/${exported}?download=1`)
+      ).status(),
+    ).toBe(404);
+    await stopTestCsvWorker();
+    const revoked = await stage("Revoked queued import");
+    await db.workspaceMember.deleteMany({
+      where: { workspaceId: team.workspaceId, userId: team.author.id },
+    });
+    expect(
+      (
+        await team.author.page.request.get(
+          `/api/v1/transfers/${exported}?download=1`,
+        )
+      ).status(),
+    ).toBe(404);
+    await startTestCsvWorker();
+    await expect
+      .poll(
+        async () =>
+          (await db.csvTransfer.findUniqueOrThrow({ where: { id: revoked } }))
+            .status,
+        { timeout: 30_000 },
+      )
+      .toBe("FAILED");
+    expect(
+      await db.task.count({
+        where: { boardId: team.boardId, name: "Revoked queued import" },
+      }),
+    ).toBe(0);
+  } finally {
+    await team.close();
+  }
+});
+
+test("durable CSV row errors can be retried from saved inputs without repeating successful rows", async ({
+  page,
+}) => {
+  const { workspace } = await readyTeam(page),
+    db = getDatabase();
+  const boardId = (
+    await (
+      await postBoard(page, "create-board", {
+        workspaceId: workspace.id,
+        name: "Retry background rows",
+      })
+    ).json()
+  ).data.id;
+  const fieldId = (
+    await (
+      await postBoard(page, "field", {
+        boardId,
+        name: "Temporary",
+        type: "TEXT",
+        options: [],
+      })
+    ).json()
+  ).data.id;
+  const preview = await postImport(page, "preview", {
+    boardId,
+    csv: "Task,Temporary\nRetry saved input,Text",
+    mapping: [
+      { column: 0, target: "name" },
+      { column: 1, target: fieldId },
+    ],
+  });
+  expect(preview.status()).toBe(200);
+  const token = (await preview.json()).data.rows[0].token,
+    id = createRecordId();
+  const firstPreview = await postImport(page, "preview", {
+    boardId,
+    csv: "Task\nAlready successful",
+    mapping: [{ column: 0, target: "name" }],
+  });
+  const firstToken = (await firstPreview.json()).data.rows[0].token;
+  expect(
+    (
+      await postTransfer(page, "", {
+        id,
+        kind: "IMPORT",
+        boardId,
+        name: "row-retry.csv",
+        total: 2,
+        chunkCount: 1,
+      })
+    ).status(),
+  ).toBe(200);
+  expect(
+    (
+      await postTransfer(page, `/${id}`, {
+        action: "chunk",
+        index: 0,
+        rows: [
+          { row: 2, token: firstToken, allowDuplicate: false },
+          { row: 3, token, allowDuplicate: false },
+        ],
+      })
+    ).status(),
+  ).toBe(200);
+  await db.boardColumn.update({
+    where: { id: fieldId },
+    data: { archivedAt: new Date() },
+  });
+  expect(
+    (await postTransfer(page, `/${id}`, { action: "start" })).status(),
+  ).toBe(200);
+  await expect
+    .poll(
+      async () =>
+        (await db.csvTransfer.findUniqueOrThrow({ where: { id } })).status,
+      { timeout: 30_000 },
+    )
+    .toBe("COMPLETED");
+  expect(
+    await db.csvTransferRow.count({
+      where: { transferId: id, outcome: "FAILED" },
+    }),
+  ).toBe(1);
+  expect(await db.task.count({ where: { boardId } })).toBe(1);
+  await db.boardColumn.update({
+    where: { id: fieldId },
+    data: { archivedAt: null },
+  });
+  expect(
+    (await postTransfer(page, `/${id}`, { action: "retry" })).status(),
+  ).toBe(200);
+  await expect
+    .poll(
+      async () =>
+        (await db.csvTransfer.findUniqueOrThrow({ where: { id } })).status,
+      { timeout: 30_000 },
+    )
+    .toBe("COMPLETED");
+  expect(
+    await db.task.count({ where: { boardId, name: "Retry saved input" } }),
+  ).toBe(1);
+  expect(
+    await db.csvTransferRow.count({
+      where: { transferId: id, outcome: "APPLIED" },
+    }),
+  ).toBe(2);
+  expect(
+    await db.task.count({ where: { boardId, name: "Already successful" } }),
+  ).toBe(1);
+  await db.csvTransfer.update({
+    where: { id },
+    data: { expiresAt: new Date(Date.now() - 1000) },
+  });
+  expect(
+    (await page.request.get(`/api/v1/transfers/${id}?report=1`)).status(),
+  ).toBe(410);
+});
+
+test("CSV lemon downloads keep their progress toast across navigation, reopen on repeat and handle revoked files in place", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  const { board } = await readyTeam(page);
+  const id = createRecordId();
+  expect(
+    (
+      await postTransfer(page, "", {
+        id,
+        kind: "EXPORT",
+        input: { boardId: board.id, scope: "BOARD", includeArchived: false },
+      })
+    ).status(),
+  ).toBe(200);
+  await expect
+    .poll(
+      async () =>
+        (await getDatabase().csvTransfer.findUniqueOrThrow({ where: { id } }))
+          .status,
+      { timeout: 30_000 },
+    )
+    .toBe("COMPLETED");
+  await page.goto("/boards");
+  await page.getByRole("button", { name: /^Show transfers:/ }).click();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/v1/transfers/*?download=1", async (route) => {
+    await held;
+    await route.continue().catch(() => {});
+  });
+  const first = page.waitForEvent("download");
+  try {
+    await page.getByRole("link", { name: "Download CSV", exact: true }).click();
+    const toast = page.locator(
+      '[data-slot="board-notification"][data-variant="loading"]',
+    );
+    await expect(toast).toContainText("Downloading CSV");
+    await expect(
+      toast.getByRole("button", {
+        name: "Dismiss notification",
+        includeHidden: true,
+      }),
+    ).toHaveCount(0);
+    await page.getByRole("link", { name: "Overview", exact: true }).click();
+    await expect(page).toHaveURL("http://127.0.0.1:3100/");
+    await expect(toast).toBeVisible();
+    release();
+    expect((await first).suggestedFilename()).toMatch(/\.csv$/);
+    await expect(
+      page.locator('[data-slot="board-notification"]'),
+    ).toContainText("Download started");
+    await page.unroute("**/api/v1/transfers/*?download=1");
+    await page.mouse.move(0, 0);
+    await expect(page.locator('[data-slot="board-notification"]')).toHaveCount(
+      0,
+      { timeout: 8000 },
+    );
+    const second = page.waitForEvent("download");
+    await page.getByRole("link", { name: "Download CSV", exact: true }).click();
+    await second;
+    await expect(
+      page.locator('[data-slot="board-notification"]'),
+    ).toContainText("Download started");
+    await page.route("**/api/v1/transfers/*?download=1", (route) =>
+      route.fulfill({
+        status: 404,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "NOT_FOUND",
+            message: "This file is no longer available.",
+          },
+        }),
+      }),
+    );
+    await page.getByRole("link", { name: "Download CSV", exact: true }).click();
+    await expect(
+      page.locator('[data-slot="board-notification"]'),
+    ).toContainText("Download failed");
+    await expect(page).toHaveURL("http://127.0.0.1:3100/");
+  } finally {
+    release();
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+  }
+});
+
+test("large boards page and filter 25000 tasks without mounting every card or losing deep links", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const { board } = await readyTeam(page);
+  const db = getDatabase();
+  const owner = await db.user.findUniqueOrThrow({
+    where: { email: "owner@example.test" },
+  });
+  await db.boardColumn.create({
+    data: {
+      boardId: board.id,
+      key: "status",
+      name: "Status",
+      type: "STATUS",
+      position: 0,
+      config: {
+        options: [
+          { id: "todo", label: "To do" },
+          { id: "in_progress", label: "In progress" },
+          { id: "done", label: "Done" },
+        ],
+      },
+    },
+  });
+  const ids: string[] = [];
+  for (let batch = 0; batch < 5; batch++) {
+    const data = Array.from({ length: 5000 }, (_, index) => {
+      const position = batch * 5000 + index;
+      const id = createRecordId();
+      ids.push(id);
+      return {
+        id,
+        boardId: board.id,
+        createdById: owner.id,
+        createKey: id,
+        createDigest: "load-test",
+        statusId: "todo",
+        name: `Load task ${String(position).padStart(5, "0")}`,
+        description:
+          position === 24999
+            ? "Needle 50%_ literal"
+            : "Task load fixture ".repeat(60),
+        createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, position)),
+        priority: "NORMAL" as const,
+      };
+    });
+    await db.task.createMany({ data });
+  }
+  const read = async (query: unknown) => {
+    const response = await page.request.get(
+      `/api/v1/boards/state?boardId=${board.id}&query=${encodeURIComponent(JSON.stringify(query))}`,
+    );
+    expect(response.status()).toBe(200);
+    return (await response.json()).data;
+  };
+  const first = await read({ config: defaultViewConfig });
+  expect(first.tasks).toHaveLength(100);
+  expect(first.pagination).toMatchObject({
+    total: 25000,
+    pageCount: 250,
+    page: 1,
+  });
+  const second = await read({ config: defaultViewConfig, page: 2 });
+  expect(second.tasks[0].id).toBe(ids[100]);
+  expect(
+    second.tasks.some((task: { id: string }) =>
+      first.tasks.some((other: { id: string }) => task.id === other.id),
+    ),
+  ).toBe(false);
+  const last = await read({ config: { ...defaultViewConfig, search: "50%_" } });
+  expect(last.tasks).toHaveLength(1);
+  expect(last.tasks[0].id).toBe(ids[24999]);
+  const focused = await read({ config: defaultViewConfig, taskId: ids[24999] });
+  expect(focused.focusedTask.id).toBe(ids[24999]);
+  expect(focused.tasks).toHaveLength(100);
+  await page.goto(`/boards/${board.id}`);
+  await expect(
+    page.getByRole("navigation", { name: "Task pages" }),
+  ).toContainText("25,000 tasks");
+  await expect(page.locator(".task-card").first()).toBeVisible();
+  expect(await page.locator(".task-card").count()).toBeLessThan(25);
+  const lane = page.getByLabel("Scroll tasks in this status");
+  await lane.evaluate((node) => {
+    node.scrollTop = node.scrollHeight;
+  });
+  await expect(
+    page.locator(`.task-card[data-task-id="${ids[99]}"]`),
+  ).toBeVisible();
+  const progressLane = page.locator(".board-lane").filter({
+    has: page.getByRole("heading", { name: "In progress", exact: true }),
+  });
+  // Move the pointer from the scrolled card to the visible part of the lane.
+  // dragTo scrolls the tall target after measuring the source, changing that point.
+  const lastCard = page.locator(`.task-card[data-task-id="${ids[99]}"]`);
+  await lastCard.hover();
+  const source = (await lastCard.boundingBox())!;
+  const target = (await progressLane.boundingBox())!;
+  const targetY = Math.max(90, Math.min(650, target.y + 60));
+  await page.mouse.move(
+    source.x + source.width / 2,
+    source.y + source.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    source.x + source.width / 2,
+    source.y + source.height / 2 - 10,
+    { steps: 5 },
+  );
+  await page.mouse.move(target.x + target.width / 2, targetY, { steps: 10 });
+  await page.mouse.move(target.x + target.width / 2, targetY + 1);
+  await page.mouse.up();
+  await expect(
+    progressLane.locator(`.task-card[data-task-id="${ids[99]}"]`),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Next tasks", exact: true }).click();
+  await expect(
+    page.getByRole("navigation", { name: "Task pages" }),
+  ).toContainText("101-200");
+  await page.getByRole("button", { name: "Table", exact: true }).click();
+  expect(await page.locator("tr[data-task-id]").count()).toBeLessThan(35);
+  await page.locator(".board-table-scroll").evaluate((node) => {
+    node.scrollTop = node.scrollHeight;
+  });
+  await expect(page.locator(`tr[data-task-id="${ids[199]}"]`)).toBeVisible();
+  await page.goto(`/boards/${board.id}?task=${ids[24999]}`);
+  await expect(page.getByRole("dialog")).toContainText("Load task 24999");
+});
+
+test("workspace task search pages across boards, opens task sheets and enforces current membership", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(90_000);
+  const team = await approvalTeam(page, browser);
+  try {
+    const db = getDatabase();
+    const boards = await db.board.findMany({ orderBy: { createdAt: "asc" } });
+    const visible = boards.find(
+      (board) =>
+        board.workspaceId === team.workspaceId && board.id !== team.boardId,
+    )!;
+    const restricted = boards.find(
+      (board) => board.workspaceId !== team.workspaceId,
+    )!;
+    const data = Array.from({ length: 25 }, (_, i) => ({
+      id: createRecordId(),
+      boardId: i % 2 ? visible.id : team.boardId,
+      name: `Searchable task ${i}`,
+      description: i === 24 ? "Literal 50%_ search" : "Cross-board task",
+      createdById: team.ownerId,
+      createKey: createRecordId(),
+      createDigest: "search-test",
+    }));
+    await db.task.createMany({ data });
+    await db.task.createMany({
+      data: [
+        {
+          boardId: restricted.id,
+          name: "Searchable secret",
+          createdById: team.ownerId,
+          createKey: createRecordId(),
+          createDigest: "search-test",
+        },
+        {
+          boardId: team.boardId,
+          name: "Searchable archived",
+          archivedAt: new Date(),
+          createdById: team.ownerId,
+          createKey: createRecordId(),
+          createDigest: "search-test",
+        },
+      ],
+    });
+    const read = (params: string) =>
+      team.author.page.request.get(`/api/v1/search/tasks?${params}`);
+    const firstResponse = await read("q=searchable");
+    expect(firstResponse.status()).toBe(200);
+    expect(firstResponse.headers()["cache-control"]).toContain("no-store");
+    const first = (await firstResponse.json()).data;
+    expect(first.total).toBe(25);
+    expect(first.tasks).toHaveLength(20);
+    expect(
+      new Set(first.tasks.map((task: { boardId: string }) => task.boardId))
+        .size,
+    ).toBe(2);
+    const second = (
+      await (await read(`q=searchable&cursor=${first.nextCursor}`)).json()
+    ).data;
+    expect(second.tasks).toHaveLength(5);
+    expect(second.nextCursor).toBeNull();
+    expect(
+      new Set([...first.tasks, ...second.tasks].map((task) => task.id)).size,
+    ).toBe(25);
+    expect((await (await read("q=50%25_")).json()).data.total).toBe(1);
+    expect(
+      (await (await read("q=searchable&archived=true")).json()).data.total,
+    ).toBe(1);
+    expect(
+      (
+        await (
+          await page.request.get("/api/v1/search/tasks?q=searchable")
+        ).json()
+      ).data.total,
+    ).toBe(26);
+    expect((await read("q=x")).status()).toBe(422);
+    expect((await read("q=searchable&cursor=invalid")).status()).toBe(422);
+    await team.author.page.goto("/");
+    await team.author.page
+      .getByRole("button", { name: "Search workspace", exact: true })
+      .click();
+    await team.author.page
+      .getByLabel("Search boards", { exact: true })
+      .fill("Searchable");
+    const matches = team.author.page.getByRole("region", {
+      name: "Matching tasks",
+    });
+    await expect(matches.getByRole("link")).toHaveCount(20);
+    await matches.getByRole("button", { name: "Show more tasks" }).click();
+    await expect(matches.getByRole("link")).toHaveCount(25);
+    expect(
+      (
+        await postBoard(page, "update", {
+          taskId: data[24].id,
+          revision: 1,
+          changes: { name: "Searchable task 24 updated" },
+        })
+      ).status(),
+    ).toBe(200);
+    await expect(matches).toContainText("Searchable task 24 updated", {
+      timeout: 15000,
+    });
+    await team.author.page.screenshot({
+      path: "../../artifacts/task-search.png",
+      fullPage: true,
+    });
+    await matches.getByRole("link").first().click();
+    await expect(team.author.page.getByRole("dialog")).toContainText(
+      "Searchable task",
+    );
+    const openedBoardId = new URL(team.author.page.url()).pathname
+      .split("/")
+      .at(-1)!;
+    await team.author.page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Close", exact: true })
+      .click();
+    await expect(team.author.page).toHaveURL(
+      new RegExp(`/boards/${openedBoardId}$`),
+    );
+    await team.author.page
+      .getByRole("button", { name: "Search workspace", exact: true })
+      .click();
+    const sameBoard = team.author.page
+      .getByRole("region", { name: "Matching tasks" })
+      .locator(`a[href^="/boards/${openedBoardId}?task="]`)
+      .nth(1);
+    const targetName = await sameBoard.locator("p").first().innerText();
+    await sameBoard.click();
+    await expect(team.author.page.getByRole("dialog")).toContainText(
+      targetName,
+    );
+    await db.workspaceMember.delete({
+      where: {
+        workspaceId_userId: {
+          workspaceId: team.workspaceId,
+          userId: team.author.id,
+        },
+      },
+    });
+    const revoked = (
+      await (await read(`q=searchable&cursor=${first.nextCursor}`)).json()
+    ).data;
+    expect(revoked).toMatchObject({ total: 0, tasks: [] });
+    const anonymous = await browser.newContext();
+    try {
+      expect(
+        (
+          await anonymous.request.get(
+            "http://127.0.0.1:3100/api/v1/search/tasks?q=searchable",
+          )
+        ).status(),
+      ).toBe(401);
+    } finally {
+      await anonymous.close();
+    }
+  } finally {
+    await team.close();
+  }
+});
+
+test("workspace dashboard counts real work, bounds reports, follows realtime and protects workspace data", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(120_000);
+  const team = await approvalTeam(page, browser);
+  try {
+    const db = getDatabase();
+    const settings = await db.installationSettings.findUniqueOrThrow({
+      where: { id: "installation" },
+    });
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: settings.timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    const day = (offset: number) => {
+      const date = new Date(`${today}T00:00:00Z`);
+      date.setUTCDate(date.getUTCDate() + offset);
+      return date;
+    };
+    const create = (name: string, values: Record<string, unknown> = {}) =>
+      db.task.create({
+        data: {
+          boardId: team.boardId,
+          name,
+          createdById: team.ownerId,
+          createKey: createRecordId(),
+          createDigest: "dashboard-test",
+          ...values,
+        },
+      });
+    const shared = await create("Dashboard overdue shared", {
+      dueDate: day(-1),
+      statusId: "doing",
+      assignees: {
+        create: [{ userId: team.author.id }, { userId: team.backup.id }],
+      },
+    });
+    await create("Dashboard completed overdue", {
+      dueDate: day(-1),
+      statusId: "done",
+      assignees: { create: { userId: team.author.id } },
+    });
+    await create("Dashboard due today", { dueDate: day(0), statusId: "todo" });
+    const returned = await create("Dashboard return next week", {
+      dueDate: day(7),
+      statusId: "return",
+      assignees: { create: { userId: team.backup.id } },
+    });
+    await create("Dashboard beyond next week", { dueDate: day(8) });
+    await create("Dashboard without date");
+    await create("Dashboard archived overdue", {
+      dueDate: day(-2),
+      archivedAt: new Date(),
+    });
+    for (let index = 0; index < 12; index++)
+      await create(`Dashboard upcoming ${index}`, { dueDate: day(2) });
+    const restricted = await db.board.findFirstOrThrow({
+      where: { workspaceId: { not: team.workspaceId } },
+    });
+    await create("Dashboard restricted secret", {
+      boardId: restricted.id,
+      dueDate: day(-1),
+    });
+    await db.board.createMany({
+      data: Array.from({ length: 12 }, (_, i) => ({
+        name: `Report board ${i}`,
+        workspaceId: team.workspaceId,
+        createdById: team.ownerId,
+      })),
+    });
+    const field = await db.boardColumn.findFirstOrThrow({
+      where: { boardId: team.boardId, key: "status" },
+    });
+    await db.boardColumn.update({
+      where: { id: field.id },
+      data: {
+        config: {
+          options: [
+            { id: "todo", label: "To do" },
+            { id: "doing", label: "In progress" },
+            { id: "done", label: "Finished", color: "#3aad52" },
+            {
+              id: "return",
+              label: "Returned",
+              color: "#9a60b5",
+              icon: "rotate-ccw",
+            },
+          ],
+        },
+      },
+    });
+    expect((await team.configure({ requireCreation: true })).status()).toBe(
+      200,
+    );
+    const pending = await postBoard(team.author.page, "create-task", {
+      boardId: team.boardId,
+      createKey: createRecordId(),
+      name: "Dashboard pending draft",
+      dueDate: today,
+    });
+    expect((await pending.json()).data.outcome).toBe("PENDING_APPROVAL");
+    const read = async (params = "") => {
+      const response = await team.author.page.request.get(
+        `/api/v1/dashboard${params}`,
+      );
+      expect(response.status()).toBe(200);
+      expect(response.headers()["cache-control"]).toContain("no-store");
+      return (await response.json()).data;
+    };
+    const report = await read();
+    expect(report).toMatchObject({
+      total: 18,
+      open: 17,
+      completed: 1,
+      overdue: 1,
+      upcomingCount: 14,
+      unassigned: 15,
+      boardCount: 14,
+      page: 1,
+      pageCount: 2,
+    });
+    expect(report.upcoming).toHaveLength(10);
+    expect(report.overdueTasks.map((task: { id: string }) => task.id)).toEqual([
+      shared.id,
+    ]);
+    expect(report.workload).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          userId: team.author.id,
+          count: 1,
+          overdue: 1,
+        }),
+        expect.objectContaining({
+          userId: team.backup.id,
+          count: 2,
+          overdue: 1,
+        }),
+      ]),
+    );
+    const board = report.boards.find(
+      (row: { id: string }) => row.id === team.boardId,
+    );
+    expect(board.statuses).toContainEqual(
+      expect.objectContaining({ id: "done", label: "Finished", count: 1 }),
+    );
+    expect(board.statuses).toContainEqual(
+      expect.objectContaining({
+        id: "return",
+        label: "Returned",
+        color: "#9a60b5",
+        count: 1,
+      }),
+    );
+    const second = await read("?page=2");
+    expect(second.boards).toHaveLength(2);
+    expect(second.total).toBe(18);
+    expect(
+      new Set([...report.boards, ...second.boards].map((board) => board.id))
+        .size,
+    ).toBe(14);
+    expect(await read(`?workspaceId=${restricted.workspaceId}`)).toMatchObject({
+      total: 0,
+      boards: [],
+      workload: [],
+    });
+    expect(
+      (await team.author.page.request.get("/api/v1/dashboard?page=0")).status(),
+    ).toBe(422);
+    await team.author.page.goto("/");
+    await expect(
+      team.author.page.locator('[data-metric="overdue"] dd'),
+    ).toHaveText("1");
+    await team.author.page
+      .getByRole("button", { name: "Overdue", exact: true })
+      .click();
+    await expect(
+      team.author.page.getByRole("region", { name: "Task deadlines" }),
+    ).toContainText(shared.name);
+    expect(
+      (
+        await postBoard(page, "update", {
+          taskId: shared.id,
+          revision: shared.revision,
+          changes: { statusId: "done" },
+        })
+      ).status(),
+    ).toBe(200);
+    await expect(
+      team.author.page.locator('[data-metric="overdue"] dd'),
+    ).toHaveText("0", { timeout: 15000 });
+    await expect(
+      team.author.page.locator('[data-metric="completed"] dd'),
+    ).toHaveText("2");
+    await team.author.page
+      .getByRole("button", { name: "Upcoming", exact: true })
+      .click();
+    await team.author.page.screenshot({
+      path: "../../artifacts/workspace-dashboard.png",
+      fullPage: true,
+    });
+    await team.author.page.emulateMedia({ reducedMotion: "reduce" });
+    await team.author.page
+      .getByRole("switch", { name: "Dark mode", exact: true })
+      .check();
+    await team.author.page.screenshot({
+      path: "../../artifacts/workspace-dashboard-dark.png",
+      fullPage: true,
+    });
+    await team.author.page.setViewportSize({ width: 390, height: 844 });
+    await team.author.page.screenshot({
+      path: "../../artifacts/workspace-dashboard-mobile.png",
+      fullPage: true,
+    });
+    expect(
+      await team.author.page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await team.author.page
+      .getByRole("combobox", { name: "Dashboard workspace" })
+      .click();
+    await team.author.page
+      .getByRole("option", { name: "Our team", exact: true })
+      .click();
+    await expect(
+      team.author.page.locator('[data-metric="open"] dd'),
+    ).toHaveText("16");
+    // A forged filter cannot reveal any aggregate from the revoked workspace.
+    await db.workspaceMember.delete({
+      where: {
+        workspaceId_userId: {
+          workspaceId: team.workspaceId,
+          userId: team.author.id,
+        },
+      },
+    });
+    expect(await read(`?workspaceId=${team.workspaceId}`)).toMatchObject({
+      total: 0,
+      overdue: 0,
+      upcoming: [],
+      workload: [],
+      boards: [],
+    });
+    const anonymous = await browser.newContext();
+    try {
+      expect(
+        (
+          await anonymous.request.get("http://127.0.0.1:3100/api/v1/dashboard")
+        ).status(),
+      ).toBe(401);
+    } finally {
+      await anonymous.close();
+    }
+    expect(returned.dueDate?.toISOString().slice(0, 10)).toBe(
+      day(7).toISOString().slice(0, 10),
+    );
+  } finally {
+    await team.close();
+  }
 });

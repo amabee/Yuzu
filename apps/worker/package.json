@@ -1,0 +1,14 @@
+{
+  "name": "@yuzu/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "pnpm --filter @yuzu/web exec tsx --tsconfig tsconfig.json ../worker/src/index.ts",
+    "typecheck": "pnpm --filter @yuzu/web exec tsc --noEmit --project ../worker/tsconfig.json"
+  },
+  "dependencies": {
+    "@yuzu/web": "workspace:*",
+    "dotenv": "17.2.3"
+  }
+}

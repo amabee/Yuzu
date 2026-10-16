@@ -297,7 +297,9 @@ function GroupConfiguration({
 }) {
   const [name, setName] = useState(group.name);
   const [confirm, setConfirm] = useState(false);
-  const usage = state.tasks.filter((task) => task.groupId === group.id).length;
+  const usage =
+    state.groupTaskCounts?.[group.id] ??
+    state.tasks.filter((task) => task.groupId === group.id).length;
   return (
     <div className="space-y-2 rounded-lg border p-3" data-group-id={group.id}>
       <form

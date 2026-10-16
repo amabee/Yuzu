@@ -279,7 +279,10 @@ export function AppShell({
         <header className="yuzu-topbar sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b px-4 sm:px-8">
           <div className="flex min-w-0 items-center gap-3">
             <SidebarTrigger aria-label="Toggle navigation" />
-            <WorkspaceSearch workspaces={workspaces} />
+            <WorkspaceSearch
+              workspaces={workspaces}
+              principalId={principalId}
+            />
             <span className="sr-only">{title}</span>
           </div>
           <div className="flex shrink-0 items-center gap-2 sm:gap-4">

@@ -83,6 +83,39 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-yuzu}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://127.0.0.1:3000}
+      YUZU_STORAGE_PROVIDER: S3
+      YUZU_S3_ENDPOINT: http://seaweedfs:8333
+      YUZU_S3_BUCKET: ${YUZU_S3_BUCKET:-yuzu-attachments}
+      YUZU_S3_ACCESS_KEY_ID: ${YUZU_S3_ACCESS_KEY_ID:?Run pnpm setup:keys first}
+      YUZU_S3_SECRET_ACCESS_KEY: ${YUZU_S3_SECRET_ACCESS_KEY:?Run pnpm setup:keys first}
+      REALTIME_SECRET: ${REALTIME_SECRET:?Run pnpm setup:keys first}
+      REALTIME_INTERNAL_URL: http://realtime:3001
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      realtime:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
   mailpit:
     image: axllent/mailpit@sha256:94f6b70c1436defae6799d9ac7ff0eeff9540465b842026d5cdb018f1c0234ea
     restart: unless-stopped

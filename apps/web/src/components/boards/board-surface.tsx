@@ -1,9 +1,13 @@
 "use client";
+import { ExportCsv } from "./export-csv";
+import { ImportCsv } from "./import-csv";
+import { matchesBoardView } from "@/lib/board-view";
+import { mergeBoardState } from "@/lib/board-cache";
+import { VirtualTaskList, VirtualTableBody } from "./virtual-task-list";
 import { BoardFilters, BoardFilterSelect } from "./board-filters";
 import { SavedViewControls } from "./saved-view-controls";
 import {
   defaultViewConfig,
-  dueMatches,
   type ViewConfig,
   type SavedView,
 } from "@/lib/saved-view-contract";
@@ -24,8 +28,9 @@ import { OperationToast, type BoardNotice } from "./operation-toast";
 import { TaskEditor } from "./task-editor";
 import { useTaskUploads } from "./use-task-uploads";
 import { BoardManagement } from "./board-management";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { needsApproval } from "@/lib/approval-rules";
 import { taskMutationResultSchema } from "@/lib/approval-contract";
 import { useBoardLiveSync } from "./use-board-live-sync";
@@ -82,14 +87,25 @@ export function BoardSurface({
   group: string;
   info?: BoardInfo;
 }) {
+  const router = useRouter();
+  const clearTaskLink = () => {
+    if (!initialTaskId) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("task");
+    url.searchParams.delete("tab");
+    router.replace(url.pathname + url.search, { scroll: false });
+  };
   const [notice, setNotice] = useState<BoardNotice | null>(null);
-  const [pendingUploads, setPendingUploads] = useState<
+  const [pendingTransfers, setPendingTransfers] = useState<
     Record<string, BoardNotice>
   >({});
   const transferNotice = (update: BoardNotice) => {
-    setPendingUploads((current) => {
+    setPendingTransfers((current) => {
       const next = { ...current };
-      if (update.kind === "loading" && update.icon === "upload")
+      if (
+        update.kind === "loading" &&
+        (update.icon === "upload" || update.icon === "download")
+      )
         next[update.id] = update;
       else delete next[update.id];
       return next;
@@ -105,66 +121,96 @@ export function BoardSurface({
   const notify = (message: string, kind: BoardNotice["kind"]) =>
     setNotice({ id: crypto.randomUUID(), message, kind });
   const queryClient = useQueryClient();
-  const queryKey = [
-    "principal",
-    initialState.currentUserId,
-    "boards",
-    initialState.boardId,
-  ];
-  const live = useBoardLiveSync(
-    initialState.boardId,
-    initialState.currentUserId,
-  );
-  const query = useQuery({
-    queryKey,
-    initialData: initialState,
-    queryFn: ({ signal }) => readBoardState(initialState.boardId, signal),
-    staleTime: 0,
-    refetchInterval: (current) => {
-      const error = current.state.error;
-      if (error instanceof ApiError && [401, 403, 404].includes(error.status))
-        return false;
-      return queryClient.isMutating({ mutationKey: queryKey })
-        ? false
-        : live.syncInterval;
-    },
-    refetchIntervalInBackground: false,
-    refetchOnWindowFocus: () =>
-      queryClient.isMutating({ mutationKey: queryKey }) ? false : "always",
-    refetchOnReconnect: () =>
-      queryClient.isMutating({ mutationKey: queryKey }) ? false : "always",
-  });
-  const state = query.data;
-  const fields = state.fields;
-  const savedStatuses =
-    state.fields.find((field) => field.key === "status")?.options ?? [];
   const initialView =
     initialState.savedViews?.find(
       (view) => view.id === initialState.selectedViewId,
     ) ?? null;
   const [activeView, setActiveView] = useState<SavedView | null>(initialView);
   const [viewConfig, setViewConfig] = useState<ViewConfig>({
-    ...(initialView?.config ?? defaultViewConfig),
+    ...(initialState.pagination?.config ??
+      initialView?.config ??
+      defaultViewConfig),
     ...(initialTaskId
       ? {
           archived: Boolean(
-            initialState.tasks.find((task) => task.id === initialTaskId)
-              ?.archivedAt,
+            (
+              initialState.focusedTask ??
+              initialState.tasks.find((task) => task.id === initialTaskId)
+            )?.archivedAt,
           ),
         }
       : {}),
   });
+  const [selectedId, setSelectedId] = useState<string | null>(
+    Boolean(initialTaskId) &&
+      (initialState.focusedTask?.id === initialTaskId ||
+        initialState.tasks.some((task) => task.id === initialTaskId))
+      ? initialTaskId!
+      : null,
+  );
+  const [requestConfig, setRequestConfig] = useState(viewConfig);
+  useEffect(() => {
+    const timer = setTimeout(() => setRequestConfig(viewConfig), 200);
+    return () => clearTimeout(timer);
+  }, [viewConfig]);
+  const configKey = JSON.stringify(requestConfig);
+  const [pageRequest, setPageRequest] = useState({ configKey, page: 1 });
+  const page = pageRequest.configKey === configKey ? pageRequest.page : 1;
+  const boardKey = [
+    "principal",
+    initialState.currentUserId,
+    "boards",
+    initialState.boardId,
+  ];
+  const queryKey = [...boardKey, "page", requestConfig, page, selectedId];
+  const live = useBoardLiveSync(
+    initialState.boardId,
+    initialState.currentUserId,
+  );
+  const query = useQuery({
+    queryKey,
+    initialData:
+      page === 1 &&
+      selectedId === (initialTaskId ?? null) &&
+      JSON.stringify(requestConfig) ===
+        JSON.stringify(initialState.pagination?.config ?? defaultViewConfig)
+        ? initialState
+        : undefined,
+    placeholderData: (previous) => previous,
+    queryFn: ({ signal }) =>
+      readBoardState(initialState.boardId, signal, {
+        config: requestConfig,
+        page,
+        ...(selectedId ? { taskId: selectedId } : {}),
+      }),
+    staleTime: 0,
+    refetchInterval: (current) => {
+      const error = current.state.error;
+      if (error instanceof ApiError && [401, 403, 404].includes(error.status))
+        return false;
+      return queryClient.isMutating({ mutationKey: boardKey })
+        ? false
+        : live.syncInterval;
+    },
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: () =>
+      queryClient.isMutating({ mutationKey: boardKey }) ? false : "always",
+    refetchOnReconnect: () =>
+      queryClient.isMutating({ mutationKey: boardKey }) ? false : "always",
+  });
+  const state = query.data ?? initialState;
+  const fields = state.fields;
+  const savedStatuses =
+    state.fields.find((field) => field.key === "status")?.options ?? [];
   const configureView = <K extends keyof ViewConfig>(
     key: K,
     value: ViewConfig[K],
   ) => setViewConfig((current) => ({ ...current, [key]: value }));
   const archived = viewConfig.archived;
   const setArchived = (value: boolean) => configureView("archived", value);
-  const search = viewConfig.search;
   const activeGroupFilter = viewConfig.groupId ?? "";
   const setGroupFilter = (value: string) =>
     configureView("groupId", value || null);
-  const sort = viewConfig.sort;
   const statusFilter = viewConfig.statusId ?? "";
   const missingReferences = Boolean(
     (activeGroupFilter &&
@@ -176,45 +222,40 @@ export function BoardSurface({
   const [selectedTab, setSelectedTab] = useState<"details" | "comments">(
     initialCommentsTab ? "comments" : "details",
   );
-  const [selectedId, setSelectedId] = useState<string | null>(
-    initialState.tasks.some((task) => task.id === initialTaskId)
-      ? initialTaskId!
-      : null,
-  );
   const [creating, setCreating] = useState(false);
-  const tasks = state.tasks
-    .filter(
-      (task) =>
-        Boolean(task.archivedAt) === archived &&
-        (!statusFilter ||
-          (statusFilter === "__none__"
-            ? !task.statusId
-            : task.statusId === statusFilter)) &&
-        (viewConfig.assignee === "all" ||
-          (viewConfig.assignee === "me"
-            ? task.assigneeIds.includes(state.currentUserId)
-            : !task.assigneeIds.length)) &&
-        (viewConfig.priority === "all" ||
-          task.priority === viewConfig.priority) &&
-        dueMatches(
-          task.dueDate,
-          viewConfig.due,
-          state.calendarDate
-            ? new Date(`${state.calendarDate}T12:00:00`)
-            : new Date(),
-        ) &&
-        (!activeGroupFilter || task.groupId === activeGroupFilter) &&
-        `${task.name} ${task.description}`
-          .toLowerCase()
-          .includes(search.toLowerCase()),
-    )
-    .sort((a, b) =>
-      sort === "name"
-        ? a.name.localeCompare(b.name)
-        : sort === "due"
-          ? (a.dueDate ?? "9999").localeCompare(b.dueDate ?? "9999")
-          : 0,
+  const linkKey = `${initialTaskId ?? ""}:${Boolean(initialCommentsTab)}`;
+  const [previousLink, setPreviousLink] = useState(linkKey);
+  // Next keeps this board mounted when a search/notification links to another task.
+  // Synchronize the changed route during render so uploads and board filters survive.
+  if (previousLink !== linkKey) {
+    setPreviousLink(linkKey);
+    const task =
+      initialState.focusedTask ??
+      initialState.tasks.find((task) => task.id === initialTaskId);
+    setSelectedId(
+      initialTaskId && task?.id === initialTaskId ? initialTaskId : null,
     );
+    setSelectedTab(initialCommentsTab ? "comments" : "details");
+    setCreating(false);
+    if (initialTaskId && task)
+      setViewConfig((current) => ({
+        ...current,
+        archived: Boolean(task.archivedAt),
+      }));
+  }
+  const tasks = state.tasks.filter((task) =>
+    matchesBoardView(
+      task,
+      viewConfig,
+      state.currentUserId,
+      state.calendarDate ?? new Date().toISOString().slice(0, 10),
+    ),
+  );
+  const total = state.pagination?.total ?? tasks.length;
+  const totalForStatus = (status: string) =>
+    state.pagination?.statusCounts[
+      savedStatuses.find((option) => option.label === status)?.id ?? "__none__"
+    ] ?? tasks.filter((task) => statusLabel(task) === status).length;
   let emptyStatusLabel = savedStatuses.length ? "No status" : group;
   while (savedStatuses.some((option) => option.label === emptyStatusLabel))
     emptyStatusLabel += " (unassigned)";
@@ -224,13 +265,15 @@ export function BoardSurface({
   const statuses = savedStatuses.length
     ? [
         ...savedStatuses.map((option) => option.label),
-        ...(statusFilter === "__none__" || tasks.some((task) => !task.statusId)
+        ...(statusFilter === "__none__" ||
+        (state.pagination?.statusCounts.__none__ ?? 0) > 0 ||
+        tasks.some((task) => !task.statusId)
           ? [emptyStatusLabel]
           : []),
       ]
     : initialStatuses;
   const mutation = useMutation({
-    mutationKey: queryKey,
+    mutationKey: boardKey,
     onMutate: () => queryClient.cancelQueries({ queryKey }),
     mutationFn: ({
       action,
@@ -257,6 +300,30 @@ export function BoardSurface({
             },
           ),
     onSuccess: async (_result, variables) => {
+      const result = taskMutationResultSchema.safeParse(_result.data);
+      const pendingApproval =
+        result.success && result.data.outcome === "PENDING_APPROVAL";
+      let refreshError: Error | null = null;
+      try {
+        const targetId = result.success
+          ? result.data.taskId
+          : (variables.input as { taskId?: string }).taskId;
+        const fresh = await readBoardState(state.boardId, undefined, {
+          config: requestConfig,
+          page,
+          ...(targetId ? { taskId: targetId } : {}),
+        });
+        queryClient.setQueryData(queryKey, fresh);
+        queryClient.setQueriesData<BoardState>(
+          { queryKey: boardKey },
+          (current) => current && mergeBoardState(current, fresh),
+        );
+      } catch (error) {
+        refreshError =
+          error instanceof Error
+            ? error
+            : new Error("Could not refresh the board.");
+      }
       if (
         ["create-task", "update", "archive", "restore", "editor"].includes(
           variables.action,
@@ -264,11 +331,8 @@ export function BoardSurface({
       ) {
         setCreating(false);
         setSelectedId(null);
+        clearTaskLink();
       }
-      const result = taskMutationResultSchema.safeParse(_result.data);
-      const pendingApproval =
-        result.success && result.data.outcome === "PENDING_APPROVAL";
-      const refreshed = await query.refetch();
       const labels: Record<string, string> = {
         "approval-policy": "Approval settings saved",
         "create-task": "Task created",
@@ -285,7 +349,7 @@ export function BoardSurface({
         manager: "Board managers updated",
       };
       notify(
-        refreshed.error
+        refreshError
           ? "Change saved, but the board could not refresh. Try opening it again."
           : pendingApproval
             ? variables.action === "create-task"
@@ -294,13 +358,14 @@ export function BoardSurface({
                 ? "Archive request sent for approval"
                 : "Changes sent for approval"
             : (labels[variables.action] ?? "Change saved"),
-        refreshed.error ? "error" : pendingApproval ? "info" : "success",
+        refreshError ? "error" : pendingApproval ? "info" : "success",
       );
     },
     onError: async (error) => {
       notify(error.message, "error");
       await query.refetch();
     },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: boardKey }),
   });
   const act = (action: string, input: unknown, base?: BoardTask) => {
     if (!mutation.isPending && !inlineMutation.isPending) {
@@ -321,7 +386,7 @@ export function BoardSurface({
   // Inline changes update the shared table/Kanban cache before waiting for the network.
   // Cancel older reads so they cannot overwrite a move that is still being saved.
   const inlineMutation = useMutation({
-    mutationKey: queryKey,
+    mutationKey: boardKey,
     mutationFn: async ({
       task,
       changes,
@@ -352,7 +417,7 @@ export function BoardSurface({
         );
       return { previous };
     },
-    onSuccess: (result, _variables, context) => {
+    onSuccess: (result, variables, context) => {
       if (result.outcome === "PENDING_APPROVAL") {
         if (context?.previous)
           queryClient.setQueryData(queryKey, context.previous);
@@ -360,16 +425,19 @@ export function BoardSurface({
         return;
       }
       notify("Task updated", "success");
-      queryClient.setQueryData<BoardState>(
-        queryKey,
+      const update = (task: BoardTask) =>
+        task.id === result.taskId && task.revision <= result.revision
+          ? { ...task, ...variables.changes, revision: result.revision }
+          : task;
+      queryClient.setQueriesData<BoardState>(
+        { queryKey: boardKey },
         (current) =>
           current && {
             ...current,
-            tasks: current.tasks.map((task) =>
-              task.id === result.taskId
-                ? { ...task, revision: result.revision }
-                : task,
-            ),
+            tasks: current.tasks.map(update),
+            focusedTask: current.focusedTask
+              ? update(current.focusedTask)
+              : current.focusedTask,
           },
       );
     },
@@ -379,7 +447,7 @@ export function BoardSurface({
         queryClient.setQueryData(queryKey, context.previous);
     },
     onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey });
+      await queryClient.invalidateQueries({ queryKey: boardKey });
     },
   });
   const busy = mutation.isPending || inlineMutation.isPending;
@@ -391,7 +459,9 @@ export function BoardSurface({
   };
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropStatus, setDropStatus] = useState<string | null>(null);
-  const selected = state.tasks.find((task) => task.id === selectedId);
+  const selected =
+    state.tasks.find((task) => task.id === selectedId) ??
+    (state.focusedTask?.id === selectedId ? state.focusedTask : undefined);
   const selectedChoices = (task: BoardTask, fieldId: string) => {
     const value = task.fieldValues[fieldId];
     return Array.isArray(value) ? value : [];
@@ -438,7 +508,7 @@ export function BoardSurface({
     <section className="board-surface" data-connection={live.status}>
       <OperationToast
         notice={notice}
-        pinnedNotices={Object.values(pendingUploads)}
+        pinnedNotices={Object.values(pendingTransfers)}
       />
       <SavedViewControls
         views={state.savedViews ?? []}
@@ -480,12 +550,15 @@ export function BoardSurface({
           Table
         </Button>
       </div>
-      {state.pendingApprovals.length > 0 && (
+      {(state.pendingApprovalCount ?? state.pendingApprovals.length) > 0 && (
         <div className="mb-2 flex items-center justify-between gap-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs">
           <span>
-            {state.pendingApprovals.length} pending approval{" "}
-            {state.pendingApprovals.length === 1 ? "request" : "requests"}.
-            Current task values stay unchanged.
+            {state.pendingApprovalCount ?? state.pendingApprovals.length}{" "}
+            pending approval{" "}
+            {(state.pendingApprovalCount ?? state.pendingApprovals.length) === 1
+              ? "request"
+              : "requests"}
+            . Current task values stay unchanged.
           </span>
           <Link
             className="shrink-0 font-medium text-primary underline-offset-4 hover:underline"
@@ -524,7 +597,7 @@ export function BoardSurface({
             <SlidersHorizontal size={14} />
             Filter
             {(statusFilter ||
-              search ||
+              viewConfig.search ||
               viewConfig.assignee !== "all" ||
               viewConfig.priority !== "all" ||
               viewConfig.due !== "all") && (
@@ -533,9 +606,7 @@ export function BoardSurface({
           </Button>
         </div>
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="text-xs text-muted-foreground">
-            {tasks.length} tasks
-          </span>
+          <span className="text-xs text-muted-foreground">{total} tasks</span>
           <Button
             size="sm"
             disabled={busy}
@@ -555,6 +626,19 @@ export function BoardSurface({
           >
             {archived ? "Active tasks" : "Archived"}
           </Button>
+          <ImportCsv
+            state={state}
+            onNotice={transferNotice}
+            onChanged={() => {
+              void queryClient.invalidateQueries({ queryKey });
+            }}
+          />
+          <ExportCsv
+            boardId={state.boardId}
+            config={viewConfig}
+            count={total}
+            onNotice={transferNotice}
+          />
           <Button
             variant="outline"
             size="sm"
@@ -588,7 +672,7 @@ export function BoardSurface({
           statuses={savedStatuses}
           priorities={priorityOptions(state)}
           groupActive={!!activeGroupFilter}
-          count={tasks.length}
+          count={total}
           onChange={setViewConfig}
         />
       )}
@@ -649,15 +733,14 @@ export function BoardSurface({
                   />
                   <h2>{status}</h2>
                   <span className="board-lane-count">
-                    {
-                      tasks.filter((task) => statusLabel(task) === status)
-                        .length
-                    }
+                    {totalForStatus(status)}
                   </span>
                 </header>
-                {tasks
-                  .filter((task) => statusLabel(task) === status)
-                  .map((task) => (
+                <VirtualTaskList
+                  items={tasks.filter((task) => statusLabel(task) === status)}
+                  pinnedId={draggingId}
+                >
+                  {(task) => (
                     <article
                       key={task.id}
                       data-task-id={task.id}
@@ -898,7 +981,8 @@ export function BoardSurface({
                         </button>
                       </div>
                     </article>
-                  ))}
+                  )}
+                </VirtualTaskList>
                 {!tasks.some((task) => statusLabel(task) === status) && (
                   <div className="board-lane-empty">
                     <div
@@ -934,7 +1018,27 @@ export function BoardSurface({
                         <LemonSlice />
                       </span>
                     </div>
-                    <p>No tasks yet on this status.</p>
+                    {totalForStatus(status) ? (
+                      <>
+                        <p>No tasks from this status on this page.</p>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            configureView(
+                              "statusId",
+                              savedStatuses.find(
+                                (option) => option.label === status,
+                              )?.id ?? "__none__",
+                            )
+                          }
+                        >
+                          Show {status}
+                        </Button>
+                      </>
+                    ) : (
+                      <p>No tasks yet on this status.</p>
+                    )}
                   </div>
                 )}
               </section>
@@ -942,7 +1046,7 @@ export function BoardSurface({
           </div>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border bg-card">
+        <div className="board-table-scroll max-h-[700px] overflow-auto rounded-xl border bg-card">
           <table
             className={`w-full text-left text-sm ${fields.length ? "min-w-[700px]" : ""}`}
           >
@@ -968,155 +1072,151 @@ export function BoardSurface({
                 </th>
               </tr>
             </thead>
-            <tbody>
-              {tasks
-                .filter(
-                  (task) =>
-                    !statusFilter ||
-                    (statusFilter === "__none__"
-                      ? !task.statusId
-                      : task.statusId === statusFilter),
-                )
-                .map((task) => (
-                  <tr key={task.id} data-task-id={task.id}>
-                    {(fields.length
-                      ? state.fields
-                      : [
-                          {
-                            version: "",
-                            id: "name",
-                            key: "name",
-                            name: "Task",
-                            type: "TEXT",
-                            options: [],
-                          },
-                        ]
-                    ).map((field) => (
-                      <td key={field.id} className="border-b px-4 py-3">
-                        {field.key === "name" ? (
-                          <button
-                            className="text-left font-medium text-primary"
-                            onClick={() => {
-                              mutation.reset();
-                              setSelectedTab("details");
-                              setSelectedId(task.id);
-                            }}
-                          >
-                            {task.name}
-                          </button>
-                        ) : field.key === "status" ? (
-                          <select
-                            aria-label={`Status for ${task.name}`}
-                            className="task-select min-w-32"
-                            disabled={!task.canEdit || busy}
-                            value={task.statusId ?? ""}
-                            style={optionBadgeStyle(
-                              savedStatuses.find(
-                                (option) => option.id === task.statusId,
-                              ),
-                            )}
-                            onChange={(event) =>
-                              patch(task, {
-                                statusId: event.target.value || null,
-                              })
-                            }
-                          >
-                            <option value="">No status</option>
-                            {savedStatuses.map((option) => (
-                              <option value={option.id} key={option.id}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        ) : field.key === "priority" ? (
-                          <select
-                            aria-label={`Priority for ${task.name}`}
-                            className="task-select min-w-24"
-                            disabled={!task.canEdit || busy}
-                            value={task.priority}
-                            style={optionBadgeStyle(
-                              priorityOptions(state).find(
-                                (option) => option.id === task.priority,
-                              ),
-                            )}
-                            onChange={(event) =>
-                              patch(task, { priority: event.target.value })
-                            }
-                          >
-                            {priorityOptions(state).map(
-                              ({ id: priority, label }) => (
-                                <option key={priority} value={priority}>
-                                  {label}
-                                </option>
-                              ),
-                            )}
-                          </select>
-                        ) : field.key === "due_date" ? (
-                          task.dueDate ? (
-                            <span className="inline-flex items-center gap-2">
-                              <CalendarDays size={14} />
-                              {formatDueDate(task.dueDate)}
-                            </span>
-                          ) : (
-                            "—"
-                          )
-                        ) : field.key === "description" ? (
-                          task.description || "—"
-                        ) : field.key === "assignees" ? (
-                          <AssigneeAvatars
-                            ids={task.assigneeIds}
-                            people={state.people}
-                          />
-                        ) : field.type === "TAGS" ? (
-                          <div className="task-card-tags m-0">
-                            {selectedChoices(task, field.id).map((id) => (
-                              <span
-                                key={id}
-                                style={optionBadgeStyle(
-                                  field.options.find(
-                                    (option) => option.id === id,
-                                  ),
-                                )}
-                              >
-                                {field.options.find(
-                                  (option) => option.id === id,
-                                )?.label ?? id}
-                              </span>
-                            ))}
-                          </div>
-                        ) : (
-                          formatCustom(task, field)
-                        )}
-                      </td>
-                    ))}
-                    <td className="border-b px-4 py-3">
-                      {task.checklist.length ? (
+            <VirtualTableBody
+              items={tasks}
+              columns={Math.max(fields.length, 1) + 1}
+            >
+              {(task) => (
+                <tr key={task.id} data-task-id={task.id}>
+                  {(fields.length
+                    ? state.fields
+                    : [
+                        {
+                          version: "",
+                          id: "name",
+                          key: "name",
+                          name: "Task",
+                          type: "TEXT",
+                          options: [],
+                        },
+                      ]
+                  ).map((field) => (
+                    <td key={field.id} className="border-b px-4 py-3">
+                      {field.key === "name" ? (
                         <button
-                          type="button"
-                          className="flex items-center gap-2 text-left text-primary"
-                          aria-label={`Open checklist for ${task.name}`}
+                          className="text-left font-medium text-primary"
                           onClick={() => {
                             mutation.reset();
                             setSelectedTab("details");
                             setSelectedId(task.id);
                           }}
                         >
-                          <ListChecks size={15} />
-                          <span>
-                            {task.checklist.filter((item) => item.done).length}/
-                            {task.checklist.length}
-                          </span>
-                          <span className="max-w-48 truncate text-xs text-muted-foreground">
-                            {task.checklist.map((item) => item.text).join(", ")}
-                          </span>
+                          {task.name}
                         </button>
+                      ) : field.key === "status" ? (
+                        <select
+                          aria-label={`Status for ${task.name}`}
+                          className="task-select min-w-32"
+                          disabled={!task.canEdit || busy}
+                          value={task.statusId ?? ""}
+                          style={optionBadgeStyle(
+                            savedStatuses.find(
+                              (option) => option.id === task.statusId,
+                            ),
+                          )}
+                          onChange={(event) =>
+                            patch(task, {
+                              statusId: event.target.value || null,
+                            })
+                          }
+                        >
+                          <option value="">No status</option>
+                          {savedStatuses.map((option) => (
+                            <option value={option.id} key={option.id}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : field.key === "priority" ? (
+                        <select
+                          aria-label={`Priority for ${task.name}`}
+                          className="task-select min-w-24"
+                          disabled={!task.canEdit || busy}
+                          value={task.priority}
+                          style={optionBadgeStyle(
+                            priorityOptions(state).find(
+                              (option) => option.id === task.priority,
+                            ),
+                          )}
+                          onChange={(event) =>
+                            patch(task, { priority: event.target.value })
+                          }
+                        >
+                          {priorityOptions(state).map(
+                            ({ id: priority, label }) => (
+                              <option key={priority} value={priority}>
+                                {label}
+                              </option>
+                            ),
+                          )}
+                        </select>
+                      ) : field.key === "due_date" ? (
+                        task.dueDate ? (
+                          <span className="inline-flex items-center gap-2">
+                            <CalendarDays size={14} />
+                            {formatDueDate(task.dueDate)}
+                          </span>
+                        ) : (
+                          "—"
+                        )
+                      ) : field.key === "description" ? (
+                        task.description || "—"
+                      ) : field.key === "assignees" ? (
+                        <AssigneeAvatars
+                          ids={task.assigneeIds}
+                          people={state.people}
+                        />
+                      ) : field.type === "TAGS" ? (
+                        <div className="task-card-tags m-0">
+                          {selectedChoices(task, field.id).map((id) => (
+                            <span
+                              key={id}
+                              style={optionBadgeStyle(
+                                field.options.find(
+                                  (option) => option.id === id,
+                                ),
+                              )}
+                            >
+                              {field.options.find((option) => option.id === id)
+                                ?.label ?? id}
+                            </span>
+                          ))}
+                        </div>
                       ) : (
-                        <span className="text-muted-foreground">—</span>
+                        formatCustom(task, field)
                       )}
                     </td>
-                  </tr>
-                ))}
-              {!tasks.length && (
+                  ))}
+                  <td className="border-b px-4 py-3">
+                    {task.checklist.length ? (
+                      <button
+                        type="button"
+                        className="flex items-center gap-2 text-left text-primary"
+                        aria-label={`Open checklist for ${task.name}`}
+                        onClick={() => {
+                          mutation.reset();
+                          setSelectedTab("details");
+                          setSelectedId(task.id);
+                        }}
+                      >
+                        <ListChecks size={15} />
+                        <span>
+                          {task.checklist.filter((item) => item.done).length}/
+                          {task.checklist.length}
+                        </span>
+                        <span className="max-w-48 truncate text-xs text-muted-foreground">
+                          {task.checklist.map((item) => item.text).join(", ")}
+                        </span>
+                      </button>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </td>
+                </tr>
+              )}
+            </VirtualTableBody>
+            {!tasks.length && (
+              <tbody>
                 <tr>
                   <td
                     colSpan={Math.max(1, fields.length) + 1}
@@ -1131,10 +1231,69 @@ export function BoardSurface({
                     </p>
                   </td>
                 </tr>
-              )}
-            </tbody>
+              </tbody>
+            )}
           </table>
         </div>
+      )}
+      {state.pagination && (
+        <nav
+          aria-label="Task pages"
+          className="my-4 flex flex-wrap items-center justify-between gap-3 text-xs"
+        >
+          <span role="status">
+            {query.isFetching ? "Updating tasks... " : ""}
+            {total
+              ? `${(state.pagination.page - 1) * 100 + 1}-${Math.min(state.pagination.page * 100, total)} of ${total.toLocaleString()} tasks`
+              : "No matching tasks"}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={query.isFetching || state.pagination.page <= 1}
+              onClick={() =>
+                setPageRequest({ configKey, page: state.pagination!.page - 1 })
+              }
+            >
+              Previous tasks
+            </Button>
+            <label>
+              Page{" "}
+              <input
+                aria-label="Task page"
+                type="number"
+                className="w-16 rounded border bg-background px-2 py-1"
+                min={1}
+                max={state.pagination.pageCount}
+                value={state.pagination.page}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  if (
+                    Number.isInteger(value) &&
+                    value >= 1 &&
+                    value <= state.pagination!.pageCount
+                  )
+                    setPageRequest({ configKey, page: value });
+                }}
+              />{" "}
+              of {state.pagination.pageCount}
+            </label>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={
+                query.isFetching ||
+                state.pagination.page >= state.pagination.pageCount
+              }
+              onClick={() =>
+                setPageRequest({ configKey, page: state.pagination!.page + 1 })
+              }
+            >
+              Next tasks
+            </Button>
+          </div>
+        </nav>
       )}
       <section className="board-overview" aria-label="Board structure overview">
         <h2>
@@ -1260,6 +1419,7 @@ export function BoardSurface({
           if (!open) {
             setCreating(false);
             setSelectedId(null);
+            clearTaskLink();
             mutation.reset();
           }
         }}

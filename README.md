@@ -281,6 +281,173 @@ Set `YUZU_E2E_DEV=1` to run the browser tests through Turbopack development mode
 with separate build output. The binary-file regression checks JPG/PDF validation
 and verifies that runtime uploads do not trigger unsolicited document reloads.
 
+## CSV task export
+
+Use **Export CSV** in a board's toolbar. **Current view** keeps the current search,
+filters, sorting, and active/archive selection. **Entire board** exports active tasks;
+select **Include archived tasks** to add archived records. Each export uses a fresh,
+consistent snapshot of accepted task values.
+
+Anyone with current board viewing access can export its data. Access is checked again
+before the response is returned, and an audit event records the actor, range and row
+count. Personal view definitions and pending proposal contents stay private.
+
+CSV files use UTF-8 with a BOM, CRLF records, quoted cells, and spreadsheet formula
+protection for text. They include task IDs, descriptions, status/priority labels,
+ISO due dates, groups, assignees, checklists and active custom fields. Collection
+cells use JSON arrays; checklists contain ordered `{ text, done }` entries. Boolean
+values use `TRUE`/`FALSE`, numbers retain zero/negative values, and missing values are
+blank. Custom column headers are disambiguated when names collide.
+
+Exports support up to 10,000 matching tasks or 10,000,000 UTF-8 bytes. Oversized or
+timed-out exports return an error without a partial download. The server reads
+100-task batches with a 30-second snapshot timeout and a 50,000-task scan ceiling;
+use narrower status/group/assignee/priority filters for large boards. Closing the
+export panel hands preparation to the worker. Follow the floating lemon across
+navigation or refresh, then choose **Download CSV** when the file is ready.
+
+The authenticated, same-origin JSON endpoint is `POST /api/v1/boards/export`:
+
+```json
+{ "boardId": "<board UUID>", "scope": "BOARD", "includeArchived": false }
+```
+
+For the current view, send `{ boardId, scope: "VIEW", config }` using the saved-view
+configuration contract. Successful responses are private, non-cacheable CSV
+attachments. Validation, permission, maintenance and size failures use the normal
+JSON API error envelope. Use database and object-storage backups for full recovery.
+
+## CSV import
+
+Open **Import CSV** on a board, choose a UTF-8 comma-separated file, and map its
+columns to task properties or existing custom fields. Imports accept up to 25 MB,
+25,000 task rows, and 100 columns per file. Preview validates at most 500 rows / 1 MB
+per request and displays 100 rows per page. Duplicates are checked across the entire
+file as well as against existing tasks. Preview does not write tasks. Unmapped
+columns are ignored; unmapped or empty values use normal task-creation defaults.
+
+Dates use `YYYY-MM-DD`. Statuses, priorities, groups, tags, selections and people must match
+saved labels/names or IDs; ambiguous names are rejected. Multiple values accept a
+JSON string array or `|` separators. Checklists accept `|`-separated steps or a
+JSON array such as `[{"text":"Review draft","done":false}]`. Imports never add
+board fields/options automatically and never update or overwrite existing tasks.
+
+The preview flags matching titles (case-insensitive), original task IDs, and
+repeated titles within the CSV. Existing archived tasks count as matches too.
+Pending creation requests also count as matches. Possible duplicates start unchecked: leave them skipped or explicitly select them
+to create separate tasks. Invalid rows stay excluded; correct the file and preview
+again. Duplicate checks run again inside the creation transaction to catch tasks
+created after the preview. Matching pending creation proposals are also skipped
+at execution. Titles alone are a heuristic, so review flagged rows before choosing.
+
+Import progress and row results distinguish created tasks, pending approvals,
+skipped rows and failures. Confirming the import saves a browser recovery copy,
+then uploads bounded, resumable chunks. The floating lemon shows uploading, queued,
+and processing stages across navigation and refresh. Once queued, the server
+continues even if the browser is closed. Use the lemon panel to download the
+results CSV or retry unfinished rows. Retries reuse creation keys, including when the server
+committed a task but its response was lost. Preview tickets are signed, tied to
+the importer and expire after 24 hours. Preview again after expiry. Permissions,
+maintenance, fields and approval policy are rechecked for every imported row.
+
+The JSON endpoints are `POST /api/v1/boards/import/preview` with
+`{boardId,csv,mapping:[{column:0,target:"name"}]}` and
+`POST /api/v1/boards/import/row` with `{token,allowDuplicate:false}`. Column indices
+are zero-based. Destinations are `name`, `description`, `status`, `priority`,
+`due_date`, `group`, `assignees`, `checklist`, `source_id`, or an active custom
+field ID. `source_id` is only a duplicate-check hint; new tasks receive UUIDv7 IDs.
+Both endpoints require a current session, board access and the configured same
+origin. CSV contents and preview tickets are not stored as uploaded attachments.
+
+## Persistent CSV transfers
+
+`docker compose up -d --build worker` runs the Node.js/TypeScript worker in Docker.
+It uses pg-boss queues in PostgreSQL's `pgboss` schema; Redis remains the realtime
+transport. For a host-run worker, use `pnpm worker` with the same `.env` as the app.
+Apply `pnpm db:deploy` before processing transfers. Worker health is checked on its
+private port 3002; no worker API is exposed to the browser.
+
+The worker processes at most two CSV jobs per instance and one per board across
+instances. Imports create tasks or proposals through the ordinary domain rules.
+Each successful row and its task/proposal commit in the same transaction. Saved
+checkpoints, stable creation keys, retries with backoff, heartbeats, and a durable
+enqueue handoff let a restarted worker resume without duplicating accepted rows.
+Cancelling stops between rows; rows already committed remain on the board.
+
+Private normalized import chunks and completed exports are stored under
+`csv-jobs/` in SeaweedFS, separately from task attachments. LOCAL storage remains
+available for tests; host workers must share `YUZU_UPLOAD_DIR` with the web app.
+The queue carries job IDs, not CSV contents. Each user can have three active
+transfers and create up to 100 per day. Import staging is bounded to 80 MB after
+normalization, in addition to the existing 25 MB CSV and 25,000-row limits.
+
+Socket.IO invalidates the owner's transfer query when progress changes; a
+five-second active-job reconciliation recovers missed events. Zustand owns only
+panel visibility. Every transfer action and download rechecks ownership and
+current board access. The worker rechecks current access, maintenance, fields,
+and approval policy during processing without storing session cookies.
+
+The browser recovery copy uses IndexedDB and is removed after the handoff or
+cancellation. Refreshing during upload resumes missing chunks when that same
+account opens the workspace again. Uploads cannot transmit while the browser is
+closed, and clearing browser data/private-session storage removes that recovery
+copy. Drafts and preview tickets expire after 24 hours. Preview/mapping changes
+before confirmation are not saved as background jobs.
+
+Completed files and result reports expire after 24 hours. The worker periodically
+removes expired transfer objects and reclaims orphaned objects after 48 hours.
+Downloads use the shared runtime and a non-dismissible progress toast, so normal
+page navigation keeps the transfer running. A browser download itself may be
+interrupted by refresh; the prepared file can be
+downloaded again until expiry. Back up both PostgreSQL (including `pgboss`) and
+SeaweedFS. The existing synchronous export/row endpoints remain for integrations;
+the app uses `POST /api/v1/transfers`, per-transfer upload/action endpoints, and
+owner-scoped GET status, download, and result-report endpoints.
+
+## Large boards
+
+Board and Table views request 100 tasks at a time. Search (task name or
+description), status, assignment, priority, dates, groups, archive filtering,
+and sorting run in PostgreSQL across the entire board before paging. The footer
+shows the filtered total and page controls; status counts include matches on all
+pages. A status with matches elsewhere offers a shortcut to filter that status.
+Group-removal checks count tasks across every page, including archives. Saved
+tasks and shared board metadata stay synchronized across cached page copies.
+Long lanes and tables render only the visible rows. Task links load their task
+independently of the current page or saved filter.
+
+Run `pnpm db:deploy` after updating. The board-query migration installs PostgreSQL
+`pg_trgm` for indexed substring search and adds compound board/date indexes. Your
+migration database account needs permission to install that extension. This is
+available in the bundled PostgreSQL container.
+
+## Workspace task search
+
+The header search finds tasks by name or description across all accessible
+boards. Results show their workspace and board, open the task sheet directly,
+and load 20 at a time with stable cursor pagination. Archived tasks have a
+separate search toggle. Workspace membership and the current role are checked
+on every request, including additional result pages. Pending approval drafts
+are excluded. Search updates when board events arrive, when reopened, and on
+window focus/reconnect.
+
+## Overview reporting
+
+The overview summarizes open/completed tasks, overdue work, the next seven days
+of deadlines, unassigned tasks, per-board status counts, and assignee workload.
+Filter it by workspace; board reports page through 12 boards, deadline lists show
+the first 10 tasks, and workload shows the top 12 assignees. Totals always cover
+the whole selected scope, regardless of visible report pages. Shared tasks count
+once in task totals and once for each assignee's workload.
+
+Reports exclude archived tasks and pending approval drafts. Completion follows
+the existing task-sheet rule: the built-in status with stable ID `done`, even if
+renamed, marks completion. Custom statuses remain open. Date boundaries use the
+installation timezone and include today through seven days ahead. Counts use
+permission-scoped PostgreSQL aggregates, update from realtime board events, and
+reconcile every 60 seconds while visible and on focus/reconnect. No task data
+from inaccessible workspaces is included in counts or lists.
+
 ## Contributing
 
 Contributions, feedback, bug reports, and thoughtful feature ideas are welcome

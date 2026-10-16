@@ -1,5 +1,6 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient, type Prisma } from "./generated/prisma/client";
+export type { Prisma } from "./generated/prisma/client";
 export type DatabaseTransaction = Prisma.TransactionClient;
 export { createRecordId } from "./ids";
 
@@ -7,7 +8,7 @@ const databaseGlobal = globalThis as unknown as {
   yuzuDatabase?: PrismaClient;
   yuzuDatabaseSchemaVersion?: string;
 };
-const schemaVersion = "saved-board-views-v1";
+const schemaVersion = "csv-transfers-v1";
 
 export function getDatabase(): PrismaClient {
   if (
@@ -18,7 +19,8 @@ export function getDatabase(): PrismaClient {
     databaseGlobal.yuzuDatabase.notification &&
     databaseGlobal.yuzuDatabase.taskAttachment &&
     databaseGlobal.yuzuDatabase.savedBoardView &&
-    databaseGlobal.yuzuDatabase.boardViewSelection
+    databaseGlobal.yuzuDatabase.boardViewSelection &&
+    databaseGlobal.yuzuDatabase.csvTransfer
   )
     return databaseGlobal.yuzuDatabase;
   const connectionString = process.env.DATABASE_URL;
@@ -41,6 +43,7 @@ export async function checkDatabase(): Promise<void> {
   await db.$queryRaw`SELECT 1`;
   // Verify required feature migrations, not just TCP connectivity.
   await Promise.all([
+    db.csvTransfer.findFirst({ select: { id: true, queueId: true } }),
     db.installationSettings.count(),
     db.savedBoardView.findFirst({ select: { id: true } }),
     db.boardViewSelection.findFirst({ select: { boardId: true } }),

@@ -35,7 +35,13 @@ export default async function BoardPage({
     .safeParse(
       board.columns.find((column) => column.type === "STATUS")?.config,
     );
-  const initialState = await boardState(board.id, await headers());
+  const initialState = await boardState(board.id, await headers(), {
+    selectedView: true,
+    taskId: z
+      .string()
+      .uuid()
+      .safeParse((await searchParams).task).data,
+  });
   return (
     <div>
       <div className="workspace-breadcrumb">

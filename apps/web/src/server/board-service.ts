@@ -1,4 +1,12 @@
+import { taskWhere, taskOrder } from "./task-query";
+import {
+  boardQuerySchema,
+  BOARD_PAGE_SIZE,
+  type BoardQuery,
+} from "@/lib/board-query";
+import { defaultViewConfig } from "@/lib/saved-view-contract";
 import { savedViewSchema } from "@/lib/saved-view-contract";
+import { isTransactionConflict } from "@/lib/transaction-conflict";
 import {
   createRecordId,
   getDatabase,
@@ -39,6 +47,7 @@ import {
   updateTaskSchema,
   dateOnly,
   type BoardState,
+  type BoardTask,
   type FieldValue,
 } from "@/lib/board-contract";
 import {
@@ -70,14 +79,14 @@ export async function serial<T>(
         isolationLevel: "Serializable",
       });
     } catch (error) {
-      if (
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        ["P2034", "P2002"].includes(String(error.code)) &&
-        attempt < 2
-      )
-        continue;
+      if (isTransactionConflict(error)) {
+        if (attempt < 2) continue;
+        throw new SetupError(
+          409,
+          "CONCURRENT_CHANGE",
+          "Another change is still being saved. Retry this operation.",
+        );
+      }
       throw error;
     }
 }
@@ -331,7 +340,7 @@ const taskInclude = {
       actor: { select: { name: true } },
     },
     orderBy: { revision: "desc" as const },
-    take: 100,
+    take: 20,
   },
 };
 type LoadedTask = NonNullable<Awaited<ReturnType<typeof loadTask>>>;
@@ -387,103 +396,119 @@ function valueMap(task: LoadedTask): Record<string, FieldValue> {
 export async function boardState(
   boardId: string,
   headers: Headers,
+  input: BoardQuery = {},
 ): Promise<BoardState> {
+  const query = boardQuerySchema.parse(input);
   const { user, settings } = await requireIdentity(headers);
-  return db().$transaction(async (tx) => {
-    const context = await access(tx, user.id, boardId);
-    const tasks = await tx.task.findMany({
-      where: { boardId },
-      include: taskInclude,
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    });
-    const policy = await readApprovalPolicy(tx, context.board);
-    const commentEvents = await tx.boardEvent.findMany({
-      where: {
-        boardId,
-        action: {
-          in: [
-            "Added task comment",
-            "Edited task comment",
-            "Removed task comment",
-            "Uploaded task attachment",
-            "Removed task attachment",
-          ],
+  return db().$transaction(
+    async (tx) => {
+      const context = await access(tx, user.id, boardId);
+      const policy = await readApprovalPolicy(tx, context.board);
+      const commentEvents = await tx.boardEvent.findMany({
+        where: {
+          boardId,
+          action: {
+            in: [
+              "Added task comment",
+              "Edited task comment",
+              "Removed task comment",
+              "Uploaded task attachment",
+              "Removed task attachment",
+            ],
+          },
         },
-      },
-      include: { actor: { select: { name: true } } },
-      orderBy: { createdAt: "desc" },
-      take: 100,
-    });
-    const visiblePending = await tx.boardProposal.findMany({
-      where: {
-        boardId,
-        status: "PENDING",
-        ...(context.canManage ||
-        [policy.primaryApproverId, policy.backupApproverId].includes(user.id)
-          ? {}
-          : { authorId: user.id }),
-      },
-      select: {
-        id: true,
-        taskId: true,
-        operation: true,
-        authorId: true,
-        author: { select: { name: true } },
-        task: { select: { name: true } },
-        createdAt: true,
-      },
-      orderBy: { createdAt: "asc" },
-    });
-    const savedViews = await tx.savedBoardView.findMany({
-      where: { boardId, OR: [{ ownerId: user.id }, { visibility: "SHARED" }] },
-      orderBy: [{ name: "asc" }, { id: "asc" }],
-    });
-    const selection = await tx.boardViewSelection.findUnique({
-      where: { boardId_userId: { boardId, userId: user.id } },
-    });
-    return {
-      calendarDate: new Intl.DateTimeFormat("en-CA", {
+        include: { actor: { select: { name: true } } },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      });
+      const visiblePending = await tx.boardProposal.findMany({
+        where: {
+          boardId,
+          status: "PENDING",
+          ...(context.canManage ||
+          [policy.primaryApproverId, policy.backupApproverId].includes(user.id)
+            ? {}
+            : { authorId: user.id }),
+        },
+        take: 100,
+        select: {
+          id: true,
+          taskId: true,
+          operation: true,
+          authorId: true,
+          author: { select: { name: true } },
+          task: { select: { name: true } },
+          createdAt: true,
+        },
+        orderBy: { createdAt: "asc" },
+      });
+      const savedViews = await tx.savedBoardView.findMany({
+        where: {
+          boardId,
+          OR: [{ ownerId: user.id }, { visibility: "SHARED" }],
+        },
+        orderBy: [{ name: "asc" }, { id: "asc" }],
+      });
+      const selection = await tx.boardViewSelection.findUnique({
+        where: { boardId_userId: { boardId, userId: user.id } },
+      });
+      const calendarDate = new Intl.DateTimeFormat("en-CA", {
         timeZone: settings.timezone,
         year: "numeric",
         month: "2-digit",
         day: "2-digit",
-      }).format(new Date()),
-      savedViews: savedViews.map((view) => savedViewSchema.parse(view)),
-      selectedViewId: savedViews.some((view) => view.id === selection?.viewId)
-        ? selection!.viewId
-        : null,
-      boardId,
-      approvalPolicy: policy,
-      pendingApprovals: visiblePending.map((proposal) => ({
-        id: proposal.id,
-        taskId: proposal.taskId,
-        operation: proposal.operation,
-        authorId: proposal.authorId,
-        authorName: proposal.author.name,
-        name: proposal.task?.name ?? "New task request",
-        createdAt: proposal.createdAt.toISOString(),
-      })),
-      canManage: context.canManage,
-      canManageManagers: isAdministrator(context.user.role),
-      managerIds: context.board.managers.map((manager) => manager.userId),
-      currentUserId: user.id,
-      groups: context.board.groups.map(({ id, name }) => ({ id, name })),
-      fields: context.board.columns.map((field) => ({
-        id: field.id,
-        version: digest(
-          JSON.stringify({
-            name: field.name,
-            type: field.type,
-            config: field.config,
-          }),
-        ),
-        key: field.key,
-        name: field.name,
-        type: field.type,
-        options: fieldOptions(field.config),
-      })),
-      people: await eligiblePeople(tx, context.board.workspaceId),
-      tasks: tasks.map((task) => ({
+      }).format(new Date());
+      const focused = query.taskId
+        ? await tx.task.findFirst({
+            where: { id: query.taskId, boardId },
+            include: taskInclude,
+          })
+        : null;
+      const selectedView = savedViews.find(
+        (view) => view.id === selection?.viewId,
+      );
+      const config =
+        query.config ??
+        (query.selectedView
+          ? {
+              ...(selectedView
+                ? savedViewSchema.parse(selectedView).config
+                : defaultViewConfig),
+              ...(focused ? { archived: Boolean(focused.archivedAt) } : {}),
+            }
+          : null);
+      const where = taskWhere(boardId, config, user.id, calendarDate);
+      const total = await tx.task.count({ where });
+      const pageCount = Math.max(1, Math.ceil(total / BOARD_PAGE_SIZE));
+      const page = Math.min(query.page, pageCount);
+      const tasks = await tx.task.findMany({
+        where,
+        include: taskInclude,
+        orderBy: taskOrder(config?.sort),
+        take: BOARD_PAGE_SIZE,
+        skip: (page - 1) * BOARD_PAGE_SIZE,
+      });
+      const counts = await tx.task.groupBy({
+        by: ["statusId"],
+        where,
+        _count: true,
+      });
+      const groupCounts = await tx.task.groupBy({
+        by: ["groupId"],
+        where: { boardId, groupId: { not: null } },
+        _count: true,
+      });
+      const pendingApprovalCount = await tx.boardProposal.count({
+        where: {
+          boardId,
+          status: "PENDING",
+          ...(context.canManage ||
+          [policy.primaryApproverId, policy.backupApproverId].includes(user.id)
+            ? {}
+            : { authorId: user.id }),
+        },
+      });
+      const presentTask = (task: LoadedTask): BoardTask => ({
         id: task.id,
         ...snapshot(task),
         createdById: task.createdById,
@@ -512,9 +537,64 @@ export async function boardState(
             actor: event.actor.name,
             createdAt: event.createdAt.toISOString(),
           })),
-      })),
-    };
-  });
+      });
+      return {
+        calendarDate,
+        groupTaskCounts: Object.fromEntries(
+          groupCounts.map((row) => [row.groupId!, row._count]),
+        ),
+        pagination: {
+          page,
+          pageCount,
+          pageSize: BOARD_PAGE_SIZE,
+          total,
+          statusCounts: Object.fromEntries(
+            counts.map((item) => [item.statusId ?? "__none__", item._count]),
+          ),
+          config,
+        },
+        focusedTask: focused ? presentTask(focused) : null,
+        pendingApprovalCount,
+        savedViews: savedViews.map((view) => savedViewSchema.parse(view)),
+        selectedViewId: savedViews.some((view) => view.id === selection?.viewId)
+          ? selection!.viewId
+          : null,
+        boardId,
+        approvalPolicy: policy,
+        pendingApprovals: visiblePending.map((proposal) => ({
+          id: proposal.id,
+          taskId: proposal.taskId,
+          operation: proposal.operation,
+          authorId: proposal.authorId,
+          authorName: proposal.author.name,
+          name: proposal.task?.name ?? "New task request",
+          createdAt: proposal.createdAt.toISOString(),
+        })),
+        canManage: context.canManage,
+        canManageManagers: isAdministrator(context.user.role),
+        managerIds: context.board.managers.map((manager) => manager.userId),
+        currentUserId: user.id,
+        groups: context.board.groups.map(({ id, name }) => ({ id, name })),
+        fields: context.board.columns.map((field) => ({
+          id: field.id,
+          version: digest(
+            JSON.stringify({
+              name: field.name,
+              type: field.type,
+              config: field.config,
+            }),
+          ),
+          key: field.key,
+          name: field.name,
+          type: field.type,
+          options: fieldOptions(field.config),
+        })),
+        people: await eligiblePeople(tx, context.board.workspaceId),
+        tasks: tasks.map(presentTask),
+      };
+    },
+    { isolationLevel: "RepeatableRead", timeout: 15000 },
+  );
 }
 export async function createTaskRecord(
   tx: DatabaseTransaction,
@@ -669,90 +749,124 @@ export async function applyTaskRecord(
 export async function createTask(
   input: unknown,
   headers: Headers,
+  importOptions?: { skipDuplicate: boolean; sourceId?: string },
+): Promise<TaskMutationResult> {
+  const { user } = await requireIdentity(headers);
+  return serial((tx) =>
+    createTaskInTransaction(tx, input, user.id, importOptions),
+  );
+}
+// Shared domain entry point; background jobs supply their persisted owner, never session cookies.
+export async function createTaskInTransaction(
+  tx: DatabaseTransaction,
+  input: unknown,
+  actorId: string,
+  importOptions?: { skipDuplicate: boolean; sourceId?: string },
 ): Promise<TaskMutationResult> {
   const body = createTaskSchema.parse(input);
-  const { user } = await requireIdentity(headers);
-  return serial(async (tx) => {
-    const context = await access(tx, user.id, body.boardId, true);
-    const inputDigest = digest(
-      JSON.stringify({
-        ...body,
-        fieldValues: Object.entries(body.fieldValues ?? {}).sort(([a], [b]) =>
-          a.localeCompare(b),
-        ),
-      }),
-    );
-    const existing = await tx.task.findUnique({
-      where: {
-        createdById_createKey: {
-          createdById: user.id,
-          createKey: body.createKey,
-        },
-      },
-    });
-    if (existing) {
-      if (
-        existing.boardId !== body.boardId ||
-        existing.createDigest !== inputDigest
-      )
-        throw new SetupError(
-          409,
-          "RETRY_CHANGED",
-          "This creation key already belongs to a different task request.",
-        );
-      return {
-        outcome: "APPLIED",
-        taskId: existing.id,
-        revision: existing.revision,
-      };
-    }
-    const cached = await existingProposal(
-      tx,
-      user.id,
-      body.createKey,
-      inputDigest,
-    );
-    if (cached) return cached;
-    const people = new Set(
-      (await eligiblePeople(tx, context.board.workspaceId)).map(
-        (person) => person.id,
-      ),
-    );
-    const initial = {
+  const context = await access(tx, actorId, body.boardId, true);
+  const inputDigest = digest(
+    JSON.stringify({
       ...body,
-      description: body.description ?? "",
-      checklist: body.checklist ?? [],
-      priority: body.priority ?? "NORMAL",
-      dueDate: body.dueDate ?? null,
-      assigneeIds: body.assigneeIds ?? [],
-      fieldValues: body.fieldValues ?? {},
-      statusId:
-        body.statusId === undefined
-          ? (options(context.board)[0]?.id ?? null)
-          : body.statusId,
-      groupId:
-        body.groupId === undefined
-          ? (context.board.groups[0]?.id ?? null)
-          : body.groupId,
-    };
-    validateCore(initial, context.board, people);
-    validateValues(initial.fieldValues, context.board, people);
-    const policy = await readApprovalPolicy(tx, context.board);
-    if (needsApproval(policy, "CREATE", initial, context.board.columns))
-      return submitProposal(tx, {
-        boardId: body.boardId,
-        authorId: user.id,
-        operation: "CREATE",
-        requestKey: body.createKey,
-        requestDigest: inputDigest,
-        changes: initial,
-        baseline: {},
-        policy,
-        eligible: people,
-      });
-    return createTaskRecord(tx, context, people, initial, user.id, inputDigest);
+      fieldValues: Object.entries(body.fieldValues ?? {}).sort(([a], [b]) =>
+        a.localeCompare(b),
+      ),
+    }),
+  );
+  const existing = await tx.task.findUnique({
+    where: {
+      createdById_createKey: {
+        createdById: actorId,
+        createKey: body.createKey,
+      },
+    },
   });
+  if (existing) {
+    if (
+      existing.boardId !== body.boardId ||
+      existing.createDigest !== inputDigest
+    )
+      throw new SetupError(
+        409,
+        "RETRY_CHANGED",
+        "This creation key already belongs to a different task request.",
+      );
+    return {
+      outcome: "APPLIED",
+      taskId: existing.id,
+      revision: existing.revision,
+    };
+  }
+  const cached = await existingProposal(
+    tx,
+    actorId,
+    body.createKey,
+    inputDigest,
+  );
+  if (cached) return cached;
+  if (importOptions?.skipDuplicate) {
+    const duplicate = await tx.task.findFirst({
+      where: {
+        boardId: body.boardId,
+        OR: [
+          { name: { equals: body.name, mode: "insensitive" } },
+          ...(importOptions.sourceId ? [{ id: importOptions.sourceId }] : []),
+        ],
+      },
+      select: { id: true },
+    });
+    const proposed = await tx.$queryRaw<{ id: string }[]>`
+        SELECT "id" FROM "BoardProposal"
+        WHERE "boardId" = ${body.boardId} AND "operation" = 'CREATE' AND "status" = 'PENDING'
+        AND lower("changes"->>'name') = lower(${body.name}) LIMIT 1
+      `;
+    if (duplicate || proposed.length)
+      throw new SetupError(
+        409,
+        "IMPORT_DUPLICATE",
+        "A matching task already exists. This row was skipped.",
+      );
+  }
+  const people = new Set(
+    (await eligiblePeople(tx, context.board.workspaceId)).map(
+      (person) => person.id,
+    ),
+  );
+  const initial = {
+    ...body,
+    description: body.description ?? "",
+    checklist: body.checklist ?? [],
+    priority: body.priority ?? "NORMAL",
+    dueDate: body.dueDate ?? null,
+    assigneeIds: body.assigneeIds ?? [],
+    fieldValues: body.fieldValues ?? {},
+    statusId:
+      body.statusId === undefined
+        ? (options(context.board)[0]?.id ?? null)
+        : body.statusId,
+    groupId:
+      body.groupId === undefined
+        ? (context.board.groups[0]?.id ?? null)
+        : body.groupId,
+  };
+  validateCore(initial, context.board, people);
+  validateValues(initial.fieldValues, context.board, people);
+  const policy = await readApprovalPolicy(tx, context.board);
+  if (needsApproval(policy, "CREATE", initial, context.board.columns))
+    return submitProposal(tx, {
+      boardId: body.boardId,
+      authorId: actorId,
+      operation: "CREATE",
+      requestKey: body.createKey,
+      requestDigest: inputDigest,
+      changes: initial,
+      baseline: {},
+      policy,
+      eligible: people,
+    });
+  return createTaskRecord(tx, context, people, initial, actorId, inputDigest);
 }
+
 export async function mutateTask(
   action: string,
   input: unknown,

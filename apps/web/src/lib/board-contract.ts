@@ -1,3 +1,4 @@
+import { boardPaginationSchema, type BoardPagination } from "./board-query";
 import { savedViewSchema, type SavedView } from "./saved-view-contract";
 import { z } from "zod";
 import { recordId, personId } from "./id-contract";
@@ -185,6 +186,10 @@ export type BoardTask = {
   activity: { id: string; action: string; actor: string; createdAt: string }[];
 };
 export type BoardState = {
+  pagination?: BoardPagination;
+  focusedTask?: BoardTask | null;
+  pendingApprovalCount?: number;
+  groupTaskCounts?: Record<string, number>;
   calendarDate?: string;
   savedViews?: SavedView[];
   selectedViewId?: string | null;
@@ -201,7 +206,7 @@ export type BoardState = {
   pendingApprovals: PendingApproval[];
 };
 
-export const boardStateSchema = z.object({
+const baseBoardStateSchema = z.object({
   calendarDate: dateOnly.optional(),
   savedViews: z.array(savedViewSchema).default([]),
   selectedViewId: recordId.nullable().default(null),
@@ -267,6 +272,15 @@ export const boardStateSchema = z.object({
       ),
     }),
   ),
+});
+
+export const boardStateSchema = baseBoardStateSchema.extend({
+  pagination: boardPaginationSchema.optional(),
+  groupTaskCounts: z
+    .record(z.string(), z.number().int().nonnegative())
+    .optional(),
+  focusedTask: baseBoardStateSchema.shape.tasks.element.nullable().optional(),
+  pendingApprovalCount: z.number().int().nonnegative().optional(),
 });
 
 export const configureFieldSchema = z
