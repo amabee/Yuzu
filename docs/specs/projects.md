@@ -1,6 +1,6 @@
 # Projects: spec
 
-Status: draft v2 for review, 2026-10-18. Nothing implemented yet.
+Status: draft v3, 2026-10-18. Decisions confirmed by the owner; nothing implemented yet.
 v2 changes: standalone boards, public/private projects, the full hierarchy, and
 views defined as a board property rather than a level.
 
@@ -70,11 +70,14 @@ automation run by someone outside it.
 | # | Question | Proposal |
 | - | -------- | -------- |
 | D1 | Who sees a **public** project? | Every member of its workspace, as boards work today. |
-| D2 | Who sees a **private** project? | Its project members, plus owners/admins. Admins can see private projects so the deployment's operators can always recover access. |
+| D2 | Who sees a **private** project? | Only its project members. Admins do **not** see its boards or data in normal use. Admins can see that it exists (name, managers) in Settings › Projects and can choose **"Join to recover access"**, which adds them as manager, writes an `AccessEvent`, and notifies the project's managers. (Confirmed.) |
 | D3 | Project roles | `MANAGER` (settings, members, create boards) and `MEMBER` (normal board work). The creator becomes manager. |
 | D4 | Must a board belong to a project? | No. `Board.projectId` is nullable; null means standalone. |
 | D5 | Existing boards after migration | They stay standalone. No data is moved. |
 | D6 | Who creates standalone boards? | Unchanged from today: admins and existing board managers in the workspace. |
+| D6b | Who creates projects? | Any workspace member. The creator becomes its manager. (Confirmed.) |
+| D6c | People outside the workspace | Can be **invited** to a project. Accepting makes them a project member only: they see that project's boards and nothing else in the workspace (no standalone boards, no other projects, no workspace overview). (Confirmed.) |
+| D6d | Private project names | Hidden from non-members everywhere: navigation, search, overview, notifications, assignee pickers, and error messages (a forbidden private board returns the same "not found" as a missing one). (Confirmed.) |
 | D7 | Who creates boards in a project? | Admins and that project's managers. |
 | D8 | Making a public project private | Allowed for managers. Before saving, the dialog lists how many current viewers will lose access. Their open task sheets close on the next sync, and their notifications from it are hidden. |
 | D9 | Removing someone from a private project | They lose access at once (server checks run on every read). Assignments stay for history but show "No longer has access". Pending approvals they must decide are rerouted to the backup approver, per the existing routing. |
@@ -126,9 +129,13 @@ model ProjectMember {
   @default(0)`, and `@@index([projectId, position])`. `workspaceId` stays and must
   equal `project.workspaceId` whenever `projectId` is set; the service enforces
   this and a check runs in tests.
-- A project member must also be a member of the workspace. Removing someone from
-  a workspace cascades out of its projects (service-level, in the same
-  transaction).
+- Project members may be workspace members or **project-only** people invited
+  from outside (D6c). Removing someone from a workspace removes their memberships
+  in that workspace's projects unless they were invited project-only.
+- `Invitation` gains an optional `projectId` and `projectRole`. With a
+  `projectId`, accepting creates a `ProjectMember` (and an account if needed) but
+  no `WorkspaceMember`. It uses the existing invitation emails, expiry, and
+  revocation.
 - `SavedBoardView`: add `layout` enum (see Views).
 - Migration: additive only (new tables, a nullable column, an enum, indexes). No
   data rewrite. Existing boards become standalone.
@@ -141,17 +148,19 @@ function in `server/team-access.ts`:
 
 ```ts
 // Boards this user may see.
-export const boardScope = (user) =>
-  isAdministrator(user)
+// Boards this user may see. Private projects are excluded even for admins (D2).
+export const boardScope = (user) => {
+  const inWorkspace = isAdministrator(user)
     ? {}
-    : {
-        workspace: { members: { some: { userId: user.id } } },
-        OR: [
-          { projectId: null },                                   // standalone
-          { project: { visibility: "PUBLIC", archivedAt: null } },
-          { project: { members: { some: { userId: user.id } } } },
-        ],
-      };
+    : { workspace: { members: { some: { userId: user.id } } } };
+  return {
+    OR: [
+      { ...inWorkspace, projectId: null },                                // standalone
+      { ...inWorkspace, project: { visibility: "PUBLIC" } },              // public project
+      { project: { members: { some: { userId: user.id } } } },            // any project they belong to,
+    ],                                                                    // incl. project-only invitees
+  };
+};
 ```
 
 The archived-project rule for navigation is applied separately. Every place
@@ -172,6 +181,15 @@ that reads boards or their children must use it. These are the ones found:
 A test matrix (below) proves each row for: admin, project manager, project
 member, workspace member outside the project, and non-member.
 
+### Admin recovery (D2)
+
+- Settings › Projects (admins only) lists every project, including private ones,
+  by name and managers only, never contents.
+- "Join to recover access" requires a typed confirmation, then adds the admin as
+  `MANAGER`, writes `AccessEvent { kind: "project.recovery" }`, and notifies all
+  current managers by in-app notification and email.
+- Project managers can see the recovery entry in the project's member history.
+
 ## API
 
 New `api/v1/projects/[action]` (same pattern as boards: zod contract in
@@ -181,11 +199,13 @@ payloads, revision checks):
 | Action | Who |
 | ------ | --- |
 | `list` (visible projects with boards; `?archived=1`) | members (scoped) |
-| `create` (name, color, visibility) | admins; workspace members if D-open-3 says so |
+| `create` (name, color, visibility) | any workspace member (D6b) |
 | `update` (name, color, visibility, `revision`) | admin, project manager |
 | `reorder` (permutation of project ids) | admin |
 | `archive` / `restore` | admin, project manager |
-| `member` (add, change role, remove) | admin, project manager; never removes the last manager unless an admin acts |
+| `member` (add workspace member, change role, remove) | project manager; never removes the last manager |
+| `invite` / `revoke-invite` (email, role) | project manager |
+| `recover` (admin joins as manager, audited) | admin |
 | `move-board` (to a project or standalone; same workspace) | admin, or manager of source and target |
 
 `manageBoard("create-board")` accepts `projectId` (optional) in addition to
@@ -242,7 +262,9 @@ then "Deadlines this week" and "Waiting on approval" for this project only.
   - "Private: only people you add"
 
   Button: "Create project".
-- **Members** sheet: search workspace members, add as Member or Manager, remove.
+- **Members** sheet: search workspace members to add, or "Invite by email" for
+  people outside the workspace (shown with a "Project only" badge). Choose Member
+  or Manager. Pending invites are listed with "Resend" and "Revoke".
   Removing shows: "Remove Lee? They'll lose access to this project's 3 boards
   right away."
 - **Make private** confirm: "Make Yuzu 1.0 private? 9 people who aren't project
@@ -292,13 +314,9 @@ Update `docs/DEVELOPMENT_CONTEXT.md` after each phase.
 - Boards can't be renamed or archived; workspaces can't be created after setup.
   These are small separate specs.
 
-## Open questions for review
+## Resolved questions
 
-1. D2: should owners/admins see private projects (proposed), or should private
-   projects be truly private even from admins?
-2. Can a project include people from other workspaces, or only that workspace's
-   members (proposed)?
-3. Who can create projects: only admins, or any workspace member (who then
-   manages it)?
-4. Should a private project's name be hidden from non-members everywhere
-   (proposed), or visible as "Private project" with no contents?
+1. Private projects are hidden from admins in normal use, with audited recovery (D2).
+2. People outside a workspace join a project by invitation, as project-only members (D6c).
+3. Any workspace member can create projects (D6b).
+4. Private project names are hidden from non-members everywhere (D6d).
