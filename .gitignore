@@ -16,4 +16,6 @@ artifacts/
 docs/
 .agents/
 .github/
-apps/src/app/design
+apps/src/app/design/*
+yuzu-error-pages/
+AGENTS.md
