@@ -83,16 +83,16 @@ function uniqueName(error: unknown): never {
 
 /* ---------- Reading ---------- */
 
-export async function listProjects(
-  headers: Headers,
-  input: unknown,
-): Promise<{ projects: ProjectSummary[] }> {
-  const { user } = await requireIdentity(headers);
-  const query = projectListSchema.parse(input);
+/** Projects the user can see, as summaries. Shared by the API and the
+ *  workspace layout's navigation so both apply the same scope. */
+export async function visibleProjects(
+  user: Principal,
+  where: { workspaceId: string | { in: string[] }; archived: boolean },
+): Promise<ProjectSummary[]> {
   const projects = await db().project.findMany({
     where: {
-      workspaceId: query.workspaceId,
-      archivedAt: query.archived === "true" ? { not: null } : null,
+      workspaceId: where.workspaceId,
+      archivedAt: where.archived ? { not: null } : null,
       ...projectScope(user),
     },
     orderBy: [{ position: "asc" }, { createdAt: "asc" }],
@@ -106,24 +106,36 @@ export async function listProjects(
       },
     },
   });
+  return projects.map((project) => {
+    const role = (project.members[0]?.role ?? null) as ProjectSummary["role"];
+    return {
+      id: project.id,
+      workspaceId: project.workspaceId,
+      name: project.name,
+      color: project.color as ProjectSummary["color"],
+      visibility: project.visibility as ProjectSummary["visibility"],
+      position: project.position,
+      archived: Boolean(project.archivedAt),
+      revision: project.revision,
+      role,
+      canManage:
+        role === "MANAGER" ||
+        (isAdministrator(user.role) && project.visibility === "PUBLIC"),
+      boards: project.boards,
+    };
+  });
+}
+
+export async function listProjects(
+  headers: Headers,
+  input: unknown,
+): Promise<{ projects: ProjectSummary[] }> {
+  const { user } = await requireIdentity(headers);
+  const query = projectListSchema.parse(input);
   return {
-    projects: projects.map((project) => {
-      const role = (project.members[0]?.role ?? null) as ProjectSummary["role"];
-      return {
-        id: project.id,
-        workspaceId: project.workspaceId,
-        name: project.name,
-        color: project.color as ProjectSummary["color"],
-        visibility: project.visibility as ProjectSummary["visibility"],
-        position: project.position,
-        archived: Boolean(project.archivedAt),
-        revision: project.revision,
-        role,
-        canManage:
-          role === "MANAGER" ||
-          (isAdministrator(user.role) && project.visibility === "PUBLIC"),
-        boards: project.boards,
-      };
+    projects: await visibleProjects(user, {
+      workspaceId: query.workspaceId,
+      archived: query.archived === "true",
     }),
   };
 }

@@ -22,7 +22,7 @@ import { taskSearchResultSchema } from "@/lib/task-search-contract";
 export type NavigationWorkspace = {
   id: string;
   name: string;
-  boards: { id: string; name: string }[];
+  boards: { id: string; name: string; projectId?: string | null }[];
 };
 export function WorkspaceSearch({
   workspaces,
