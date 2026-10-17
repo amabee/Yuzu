@@ -1,9 +1,10 @@
 import { CsvTransferRuntime } from "@/components/transfers/csv-transfer-runtime";
 import { workspaceContext } from "@/server/workspace-access";
-import { boardScope } from "@/server/team-access";
+import { boardScope, workspaceScope } from "@/server/team-access";
 import { getDatabase } from "@yuzu/database";
 import { cookies } from "next/headers";
 import { AppShell } from "@/components/app-shell";
+import { visibleProjects } from "@/server/project-service";
 
 export const dynamic = "force-dynamic";
 export default async function WorkspaceLayout({
@@ -21,15 +22,28 @@ export default async function WorkspaceLayout({
         { OR: [{ projectId: null }, { project: { archivedAt: null } }] },
       ],
     },
-    select: { id: true, name: true, workspaceId: true },
+    select: { id: true, name: true, workspaceId: true, projectId: true },
     orderBy: { createdAt: "asc" },
   });
+  const projects = await visibleProjects(user, {
+    workspaceId: { in: workspaces.map((item) => item.id) },
+    archived: false,
+  });
+  // Project-only invitees see a workspace but cannot start projects in it.
+  const fullWorkspaceIds = new Set(
+    (
+      await getDatabase().workspace.findMany({
+        where: workspaceScope(user),
+        select: { id: true },
+      })
+    ).map((item) => item.id),
+  );
   const navigationWorkspaces = workspaces.map((item) => ({
     id: item.id,
     name: item.name,
     boards: boards
       .filter((board) => board.workspaceId === item.id)
-      .map(({ id, name }) => ({ id, name })),
+      .map(({ id, name, projectId }) => ({ id, name, projectId })),
   }));
   const sidebarDefaultOpen =
     (await cookies()).get("sidebar_state")?.value !== "false";
@@ -43,6 +57,10 @@ export default async function WorkspaceLayout({
         ownerName={user.name}
         role={user.role}
         workspaces={navigationWorkspaces}
+        projects={projects}
+        creatableWorkspaces={workspaces
+          .filter((item) => fullWorkspaceIds.has(item.id))
+          .map(({ id, name }) => ({ id, name }))}
       >
         {children}
       </AppShell>

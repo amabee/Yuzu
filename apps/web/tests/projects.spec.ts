@@ -506,3 +506,161 @@ test("an outsider invited to a project sees that project and nothing else", asyn
     await miaSession.context.close();
   }
 });
+
+test("projects UI: create, add boards and people, move a board, archive from the sidebar", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(120_000);
+  const shots = process.env.YUZU_E2E_SHOTS;
+  const { mia, lee } = await team(page);
+  const miaSession = await signIn(browser, mia.email, "mia-password-123");
+  const leeSession = await signIn(browser, lee.email, "lee-password-123");
+  const mp = miaSession.page;
+  try {
+    await mp.setViewportSize({ width: 1280, height: 800 });
+    await mp.goto("/");
+    const projectsNav = mp.getByRole("navigation", { name: "Projects" });
+    await expect(projectsNav.getByText("No projects yet.")).toBeVisible();
+    // Standalone boards keep their own group.
+    await expect(
+      mp
+        .getByRole("navigation", { name: "Workspace boards" })
+        .getByRole("link", { name: "Team requests" }),
+    ).toBeVisible();
+
+    // Create a private project from the sidebar, keyboard only.
+    await mp.getByRole("button", { name: "New project" }).focus();
+    await mp.keyboard.press("Enter");
+    const sheet = mp.getByRole("dialog", { name: "Create project" });
+    await sheet.getByLabel("Project name").fill("Yuzu 1.0");
+    await sheet.getByRole("radio", { name: "Citrus" }).click();
+    await sheet.getByRole("radio", { name: /Private/ }).check();
+    if (shots) await mp.screenshot({ path: `${shots}/create-project.png` });
+    await sheet.getByRole("button", { name: "Create project" }).click();
+    await expect(mp).toHaveURL(/\/projects\/[0-9a-f-]+$/);
+    const projectUrl = mp.url();
+    await expect(mp.getByRole("heading", { name: "Yuzu 1.0" })).toBeVisible();
+    await expect(mp.getByText("Private, 1 member")).toBeVisible();
+    await expect(mp.getByText("No boards in this project yet")).toBeVisible();
+    await expect(
+      projectsNav.getByRole("link", { name: /Yuzu 1\.0/ }),
+    ).toBeVisible();
+    await expect(projectsNav.getByLabel("Private project")).toBeVisible();
+
+    // New board inside the project, with a Project › Board breadcrumb.
+    await mp.getByRole("button", { name: "New board" }).click();
+    await mp.getByLabel("Board name").fill("Q4 Launch");
+    await mp
+      .getByRole("dialog")
+      .getByRole("button", { name: "Create board" })
+      .click();
+    await expect(mp).toHaveURL(/\/boards\//);
+    const crumbs = mp.getByRole("navigation", { name: "Breadcrumb" });
+    await expect(crumbs.getByRole("link", { name: "Yuzu 1.0" })).toBeVisible();
+    await expect(crumbs.getByText("Q4 Launch")).toBeVisible();
+    await expect(
+      projectsNav.getByRole("link", { name: "Q4 Launch" }),
+    ).toBeVisible();
+
+    // Lee can't see it yet.
+    await leeSession.page.goto("/");
+    await expect(
+      leeSession.page
+        .getByRole("navigation", { name: "Projects" })
+        .getByText("Yuzu 1.0"),
+    ).toHaveCount(0);
+
+    // Add Lee from the members sheet.
+    await mp.goto(projectUrl);
+    await mp.getByRole("button", { name: "Members" }).click();
+    const members = mp.getByRole("dialog", { name: "Members" });
+    await members
+      .getByLabel("Person to add")
+      .selectOption({ label: "Lee (lee@example.test)" });
+    await members.getByRole("button", { name: "Add to project" }).click();
+    await expect(
+      members
+        .getByRole("list", { name: "Project members" })
+        .getByText("Lee", { exact: true }),
+    ).toBeVisible();
+    if (shots) await mp.screenshot({ path: `${shots}/members.png` });
+    await mp.keyboard.press("Escape");
+    await expect(mp).not.toHaveURL(/panel=/);
+    await leeSession.page.reload();
+    await expect(
+      leeSession.page
+        .getByRole("navigation", { name: "Projects" })
+        .getByRole("link", { name: /Yuzu 1\.0/ }),
+    ).toBeVisible();
+
+    // Move the standalone board in; the private warning shows first.
+    await mp.goto("/");
+    await mp
+      .getByRole("navigation", { name: "Workspace boards" })
+      .getByRole("link", { name: "Team requests" })
+      .click();
+    await expect(
+      mp.getByRole("heading", { name: "Team requests" }),
+    ).toBeVisible();
+    // Mia isn't a manager of the standalone board, so she can't move it.
+    await expect(mp.getByRole("button", { name: "Move to…" })).toHaveCount(0);
+    await page.goto("/");
+    await page
+      .getByRole("navigation", { name: "Workspace boards" })
+      .getByRole("link", { name: "Team requests" })
+      .click();
+    await expect(page.getByRole("button", { name: "Move to…" })).toHaveCount(0);
+
+    // Mia moves her project board out to standalone and back.
+    await mp.goto(projectUrl);
+    await mp.getByRole("button", { name: "Move to…" }).click();
+    const move = mp.getByRole("dialog", { name: "Move Q4 Launch" });
+    await move.getByRole("radio", { name: /No project/ }).check();
+    await move.getByRole("button", { name: "Move board" }).click();
+    await expect(mp.getByText("No boards in this project yet")).toBeVisible();
+    await expect(
+      mp
+        .getByRole("navigation", { name: "Workspace boards" })
+        .getByRole("link", { name: "Q4 Launch" }),
+    ).toBeVisible();
+    await mp
+      .getByRole("navigation", { name: "Workspace boards" })
+      .getByRole("link", { name: "Q4 Launch" })
+      .click();
+    await mp.getByRole("button", { name: "Move to…" }).click();
+    const back = mp.getByRole("dialog", { name: "Move Q4 Launch" });
+    await back.getByRole("radio", { name: /Yuzu 1\.0/ }).check();
+    await expect(back.getByText(/is private\. Only its members/)).toBeVisible();
+    await back.getByRole("button", { name: "Move board" }).click();
+    await expect(crumbs.getByRole("link", { name: "Yuzu 1.0" })).toBeVisible();
+    await mp.goto(projectUrl);
+    await expect(
+      mp.getByRole("progressbar", { name: "Q4 Launch progress" }),
+    ).toBeVisible();
+    if (shots) await mp.screenshot({ path: `${shots}/project-page.png` });
+
+    // Rename via the edit panel opened from the sidebar menu.
+    await projectsNav.getByRole("button", { name: "Yuzu 1.0 options" }).click();
+    await mp.getByRole("menuitem", { name: /Rename/ }).click();
+    const edit = mp.getByRole("dialog", { name: "Edit project" });
+    await edit.getByLabel("Project name").fill("Yuzu 1.1");
+    await edit.getByRole("button", { name: "Save changes" }).click();
+    await expect(mp.getByRole("heading", { name: "Yuzu 1.1" })).toBeVisible();
+
+    // Archive from the sidebar menu; restore from the toast.
+    await projectsNav.getByRole("button", { name: "Yuzu 1.1 options" }).click();
+    await mp.getByRole("menuitem", { name: "Archive" }).click();
+    await mp.getByRole("button", { name: "Archive project" }).click();
+    await expect(mp).toHaveURL(/\/$/);
+    await expect(projectsNav.getByText("Yuzu 1.1")).toHaveCount(0);
+    await mp.getByRole("button", { name: "Restore" }).click();
+    await expect(
+      projectsNav.getByRole("link", { name: /Yuzu 1\.1/ }),
+    ).toBeVisible();
+    if (shots) await mp.screenshot({ path: `${shots}/sidebar.png` });
+  } finally {
+    await miaSession.context.close();
+    await leeSession.context.close();
+  }
+});
