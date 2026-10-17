@@ -1,271 +1,304 @@
 # Projects: spec
 
-Status: draft for review, 2026-10-18. Nothing implemented yet.
+Status: draft v2 for review, 2026-10-18. Nothing implemented yet.
+v2 changes: standalone boards, public/private projects, the full hierarchy, and
+views defined as a board property rather than a level.
 
-Adds a level between workspaces and boards:
+## Hierarchy
 
 ```
-Workspace  →  Project  →  Board  →  Task
+Organization   the business using Yuzu (one per deployment)
+└─ Workspace   a team, department, or major area of work
+   ├─ Project  a specific initiative, goal, or body of work (public or private)
+   │  └─ Board
+   └─ Board    standalone boards live directly in a workspace
+      └─ Groups → Items → Subitems
 ```
 
-A workspace is a team's space (who can see what). A project groups the boards
-for one piece of work, such as "Yuzu 1.0" or "Marketing site". Projects are an
-organizing level, not a new permission boundary in this first version.
+- **Organization** is the installation. Yuzu is deployed per client (single
+  tenant), so there is exactly one, and `InstallationSettings` already holds its
+  name. No new table now. The name "Organization" is reserved for it in the UI and
+  code (e.g. `organizationName`) so later features such as a page or site builder
+  for the client's public front page attach to it without a migration.
+- **Workspace**: unchanged.
+- **Project**: new. Optional; groups boards and can be **private**.
+- **Board**: either in a project or standalone in its workspace.
+- **Groups → Items → Subitems**: today these are BoardGroup → Task → checklist.
+  Real subitems (child tasks with their own fields) are a separate spec. This one
+  only makes sure nothing blocks them.
+
+### Views are not a level
+
+Kanban, Table, Calendar, and Timeline are different ways to look at the same
+board. They are never separate boards, and never a sidebar level.
+
+- A board owns its tasks once. A view only chooses layout, filters, sort, and
+  grouping. `SavedBoardView` gains `layout: TABLE | KANBAN | CALENDAR | TIMELINE`.
+  Calendar and Timeline layouts are follow-up work; the enum lands now so saved
+  views don't need another migration.
+- URL: `/boards/[id]?view=<savedViewId>` or `?layout=kanban`. The board id stays
+  the same across views.
+
+### Cross-cutting features span levels
+
+Dashboards, automations, and later CRM records query across projects and boards.
+They never live "inside" one level. They all use the same access filter
+(`boardScope`, below), so a private project's data never leaks into a dashboard or
+automation run by someone outside it.
 
 ## Goals
 
-- Group boards by project in the sidebar, search, overview, and board header.
-- Create, rename, recolor, reorder, archive, and restore projects.
-- Move a board between projects in the same workspace.
-- Keep every existing board working: no data loss, no broken links.
+- Create public and private projects; add/remove project members and managers.
+- Boards can be created in a project or standalone; move boards between a
+  project and standalone (same workspace).
+- Private project boards, tasks, comments, files, notifications, search results,
+  dashboard numbers, approvals, and realtime events are invisible to non-members.
+- Rename, recolor, reorder, archive, and restore projects.
+- Existing data keeps working with no broken links.
 
 ## Not in this version
 
-- Per-project read access. Access stays workspace-wide (see Decisions).
+- A database table for Organization (see above).
+- Private standalone boards. Privacy is a project property; put a board in a
+  private project to make it private.
 - Moving boards across workspaces.
-- Project templates, project-level fields, statuses, or approval policies.
-- Board archive/rename/reorder beyond what moving needs. These are noted in
-  "Related gaps" and can follow separately.
+- Calendar and Timeline layouts (only the `layout` field lands).
+- Subitems, automations, CRM.
 
 ## Decisions (proposed; confirm in review)
 
-| # | Question | Proposal | Why |
-| - | -------- | -------- | --- |
-| D1 | Does a project restrict who can see its boards? | No. Workspace membership still decides access. | `workspaceScope` drives boards, search, overview, notifications, and realtime. Changing it is a large security change; grouping alone gives most of the value now. |
-| D2 | Who can create and manage projects? | Owners/admins, plus **project managers**. Creating a project makes you its manager. | Mirrors board managers; lets a team lead organize without being an admin. |
-| D3 | Who can create a board in a project? | Owners/admins and that project's managers. | Today any board manager in the workspace can create boards. Scoping this to the project is the natural tightening. Existing board managers get project-manager rights on the migrated default project, so nobody loses ability. |
-| D4 | Must every board belong to a project? | Yes, `Board.projectId` is required. | No "loose boards" state to design, query, or explain. |
-| D5 | What happens to existing boards? | Each workspace gets one project, "General", holding all its boards. | Safe, reversible grouping; owners can rename and split it later. |
-| D6 | Archiving a project | Archives the project only. Its boards stay intact but are hidden from navigation and lists, and are read-only while archived. Restore brings everything back. | No cascading writes to tasks; one flag to check. |
-| D7 | Deleting a project | Not offered. Archive only. | Matches the app's archive-first approach to records. |
+| # | Question | Proposal |
+| - | -------- | -------- |
+| D1 | Who sees a **public** project? | Every member of its workspace, as boards work today. |
+| D2 | Who sees a **private** project? | Its project members, plus owners/admins. Admins can see private projects so the deployment's operators can always recover access. |
+| D3 | Project roles | `MANAGER` (settings, members, create boards) and `MEMBER` (normal board work). The creator becomes manager. |
+| D4 | Must a board belong to a project? | No. `Board.projectId` is nullable; null means standalone. |
+| D5 | Existing boards after migration | They stay standalone. No data is moved. |
+| D6 | Who creates standalone boards? | Unchanged from today: admins and existing board managers in the workspace. |
+| D7 | Who creates boards in a project? | Admins and that project's managers. |
+| D8 | Making a public project private | Allowed for managers. Before saving, the dialog lists how many current viewers will lose access. Their open task sheets close on the next sync, and their notifications from it are hidden. |
+| D9 | Removing someone from a private project | They lose access at once (server checks run on every read). Assignments stay for history but show "No longer has access". Pending approvals they must decide are rerouted to the backup approver, per the existing routing. |
+| D10 | Archive project | Hides the project and makes its boards read-only. Restore brings everything back. No delete. |
+| D11 | Board managers vs project managers | Independent. A board manager still manages one board's fields, statuses, and policies. A project manager manages the project. Neither grants the other. |
 
-## Data model (packages/database)
-
-New table:
+## Data model
 
 ```prisma
-model Project {
-  id          String    @id @default(uuid(7)) @db.Uuid
-  workspaceId String    @db.Uuid
-  name        String                       // 1–80 chars, trimmed
-  color       String                       // token key from a fixed palette, not raw hex
-  position    Int                          // order within the workspace
-  archivedAt  DateTime?
-  createdById String    @db.Uuid
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  revision    Int       @default(1)        // optimistic concurrency, like tasks
+enum ProjectVisibility { PUBLIC PRIVATE }
+enum ProjectRole { MANAGER MEMBER }
 
-  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  createdBy User             @relation(fields: [createdById], references: [id], onDelete: Restrict)
+model Project {
+  id          String            @id @default(uuid(7)) @db.Uuid
+  workspaceId String            @db.Uuid
+  name        String            // 1–80 chars, trimmed
+  color       String            // palette token key, never raw hex
+  visibility  ProjectVisibility @default(PUBLIC)
+  position    Int
+  archivedAt  DateTime?
+  revision    Int               @default(1)
+  createdById String            @db.Uuid
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  createdBy User            @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  members   ProjectMember[]
   boards    Board[]
-  managers  ProjectManager[]
 
   @@unique([workspaceId, name])
   @@index([workspaceId, archivedAt, position])
 }
 
-model ProjectManager {
-  projectId   String   @db.Uuid
-  userId      String   @db.Uuid
-  grantedById String   @db.Uuid
-  createdAt   DateTime @default(now())
+model ProjectMember {
+  projectId   String      @db.Uuid
+  userId      String      @db.Uuid
+  role        ProjectRole @default(MEMBER)
+  grantedById String      @db.Uuid
+  createdAt   DateTime    @default(now())
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   @@id([projectId, userId])
+  @@index([userId])
 }
 ```
 
-`Board` gains:
+- `Board`: add `projectId String? @db.Uuid` (onDelete Restrict), `position Int
+  @default(0)`, and `@@index([projectId, position])`. `workspaceId` stays and must
+  equal `project.workspaceId` whenever `projectId` is set; the service enforces
+  this and a check runs in tests.
+- A project member must also be a member of the workspace. Removing someone from
+  a workspace cascades out of its projects (service-level, in the same
+  transaction).
+- `SavedBoardView`: add `layout` enum (see Views).
+- Migration: additive only (new tables, a nullable column, an enum, indexes). No
+  data rewrite. Existing boards become standalone.
 
-```prisma
-  projectId String @db.Uuid
-  position  Int    @default(0)               // order inside the project
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  @@index([projectId, position])
+## Access: one scope for every board read
+
+Today every feature filters boards with `board.workspace: workspaceScope(user)`.
+Private projects make that insufficient, so it is replaced everywhere by one
+function in `server/team-access.ts`:
+
+```ts
+// Boards this user may see.
+export const boardScope = (user) =>
+  isAdministrator(user)
+    ? {}
+    : {
+        workspace: { members: { some: { userId: user.id } } },
+        OR: [
+          { projectId: null },                                   // standalone
+          { project: { visibility: "PUBLIC", archivedAt: null } },
+          { project: { members: { some: { userId: user.id } } } },
+        ],
+      };
 ```
 
-- IDs from `createRecordId()` as usual.
-- `Board.workspaceId` stays, denormalized, so the many queries using it keep
-  working. An invariant check (and the move service) keeps it equal to
-  `project.workspaceId`.
-- `InstallationSettings` gains `initialProjectId` alongside the existing initial
-  workspace/board ids.
+The archived-project rule for navigation is applied separately. Every place
+that reads boards or their children must use it. These are the ones found:
 
-### Migration (one migration, three steps, in a transaction)
+| Area | File | Change |
+| ---- | ---- | ------ |
+| Board access/writes | `board-service.ts` `access()` | Load board through `boardScope`; reject writes on archived projects. |
+| Assignees / People fields | `board-service.ts` `eligiblePeople` | Private project → project members + admins only. |
+| Search | `task-search-service.ts` | `board: boardScope(user)`; return `projectName`. |
+| Overview | `dashboard-service.ts` | `boardScope` + optional `projectId` filter. |
+| Notifications | `notification-service.ts` | Filter by `boardScope` on read, so revoked users stop seeing old ones. |
+| Approvals | approval queue/service | Filter by `boardScope`; the approver must still have access when deciding. |
+| Realtime | `realtime.ts` | Board tickets require `boardScope` access. Fan-out for private-project boards goes to project members + admins, not the whole workspace. |
+| CSV import/export | board routes | Go through `access()`, so covered. |
+| Sidebar/layout | `(workspace)/layout.tsx` | Load visible projects and standalone boards. |
 
-1. Create `Project` and `ProjectManager`. Add `Board.projectId` (nullable) and
-   `Board.position`.
-2. For each workspace: insert a "General" project (UUIDv7 generated in SQL via the
-   existing helper, or a TS data step like `upgrade-ids.ts`). Set every board's
-   `projectId` to it, and set `position` from `createdAt` order. Copy every
-   distinct `BoardManager.userId` in that workspace into `ProjectManager`.
-3. Make `Board.projectId` NOT NULL and add the FK and indexes.
-
-Rehearse on a copy of the dev database. Never reset the development database.
-
-## Permissions (apps/web/src/server)
-
-- `workspaceScope(user)` is unchanged (D1).
-- New `projectScope(user)`: `{ workspace: workspaceScope(user) }` plus
-  `archivedAt: null` for navigation. Archived projects load only on the
-  "Archived" view or for admins and managers.
-- New `projectAccess(tx, userId, projectId, write)`, modelled on board `access()`:
-  loads through `projectScope` and returns `canManage = admin || ProjectManager`.
-- Board `access()` additionally rejects writes when the board's project is
-  archived (D6) with the existing forbidden error shape.
-- `manageBoard("create-board")` takes `projectId` instead of `workspaceId`
-  and requires `projectAccess(..., write).canManage` (D3).
-- Every check runs on the server. Hidden UI is never the guard.
+A test matrix (below) proves each row for: admin, project manager, project
+member, workspace member outside the project, and non-member.
 
 ## API
 
-New `app/api/v1/projects/[action]/route.ts`, following the boards route pattern
-(validated body, `requireIdentity`, serializable transaction, bounded payloads):
+New `api/v1/projects/[action]` (same pattern as boards: zod contract in
+`lib/project-contract.ts`, `requireIdentity`, serializable transaction, bounded
+payloads, revision checks):
 
-| Action | Method | Who | Notes |
-| ------ | ------ | --- | ----- |
-| `list` | GET | members | Projects with their boards (id, name, color, position), ≤ 200 projects. `?archived=1` for the archive view. |
-| `create` | POST | admin, or manager of any project in the workspace | Name and color; appended to the end. The creator becomes manager. |
-| `update` | POST | admin, project manager | Rename or recolor; `revision` required, conflict on mismatch. |
-| `reorder` | POST | admin | Full ordered id list for one workspace; validated as a permutation. |
-| `archive` / `restore` | POST | admin, project manager | Sets/clears `archivedAt`. |
-| `manager` | POST | admin, project manager | Grant or revoke. Never removes the last manager, unless an admin acts. |
-| `move-board` | POST | admin, or managers of both projects | Same workspace only. Updates `projectId` and `position`; writes a `BoardEvent`. |
+| Action | Who |
+| ------ | --- |
+| `list` (visible projects with boards; `?archived=1`) | members (scoped) |
+| `create` (name, color, visibility) | admins; workspace members if D-open-3 says so |
+| `update` (name, color, visibility, `revision`) | admin, project manager |
+| `reorder` (permutation of project ids) | admin |
+| `archive` / `restore` | admin, project manager |
+| `member` (add, change role, remove) | admin, project manager; never removes the last manager unless an admin acts |
+| `move-board` (to a project or standalone; same workspace) | admin, or manager of source and target |
 
-Contracts live in `lib/project-contract.ts` (zod), like the board contracts.
+`manageBoard("create-board")` accepts `projectId` (optional) in addition to
+`workspaceId`, and applies D6/D7.
 
-## Cross-cutting changes
+Realtime hints for project changes reuse per-user fan-out. Clients invalidate
+`["principal", id, "projects", workspaceId]`. Dashboard keys add `projectId`.
 
-- **Layout and sidebar data** (`(workspace)/layout.tsx`): load projects with
-  their boards ordered by position: `workspaces → projects → boards`.
-- **Search** (`task-search-service.ts`): return `projectName` next to
-  `workspaceName`. The filter is unchanged.
-- **Overview** (`dashboard-service.ts`): optional `projectId` filter next to
-  `workspaceId`. Board report rows include the project. The query key becomes
-  `["principal", id, "dashboard", workspaceId, projectId, page]`.
-- **Notifications:** include the project name in the context line. Scoping is
-  unchanged.
-- **Realtime:** project create/update/archive/move publishes a workspace-level hint
-  to members using the existing per-user fan-out (as overview hints do). Clients
-  invalidate a new `["principal", id, "projects", workspaceId]` key. No new rooms.
-- **Setup** (`completeSetup`): create workspace → project → board in the same
-  transaction and set `initialProjectId`. The wizard step "Workspace & board"
-  becomes "Workspace, project & board" with a project name field (default
-  "First project").
-- **CSV import/export:** unaffected. Both are board-scoped.
+## Setup
 
-## UI
+`completeSetup` keeps creating the workspace and first board, which is
+standalone. The wizard is unchanged, so it stays short. Projects are introduced
+in the app once there is something to group.
 
-Built in the redesign shell (see `docs/mockups/app-redesign-board.html`), using
-the shadcn `Sidebar` already in the app and new shadcn Dialog, DropdownMenu, and
-Popover components.
+## UI (shadcn Sidebar, redesign shell)
 
-### Sidebar, "Projects" group
+### Sidebar
 
 ```
-Projects                         [+]
+Overview / Approvals / Inbox
+
+Projects                              [+]
  ▾ [Y] Yuzu 1.0
-     • Q4 Launch          ← active board
+     • Q4 Launch
      • Design system
-     • Bug triage
-     + New board
- ▸ [P] People ops
- ▸ [M] Marketing site
+ ▸ [P] People ops               🔒
+Boards                                [+]
+ • Team requests
+ • Hiring pipeline
 ```
 
-- `SidebarGroup` labelled "Projects", plus a `SidebarGroupAction` (+) for managers.
-- Each project is a `Collapsible` `SidebarMenuItem`. The badge is the project
-  initial on its color, from the theme palette tokens, never hardcoded hex.
-  Open/closed state is remembered per user in localStorage, and the active
-  board's project always opens.
-- Boards are `SidebarMenuSub` items with their color dot. "New board" appears
-  only for people who can create boards there.
-- Item menu (`SidebarMenuAction`, shown on hover and focus): Rename, Change color,
-  Move up/down (admins), Archive. Every action works by keyboard, with no
-  drag-only reordering.
-- Icon-collapsed sidebar: projects show their badge with a tooltip, and clicking
-  opens a popover listing the boards.
+- "Projects": a `SidebarGroup` whose collapsible items have boards as
+  `SidebarMenuSub`. The project badge is its initial on a palette-token color.
+  Private projects show a lock icon, with the accessible label "Private project".
+- "Boards": a second `SidebarGroup` for standalone boards.
+- Item menu (`SidebarMenuAction`, available on hover and keyboard focus): Rename,
+  Change color, Members, Make private/public, Archive. Reorder uses "Move up/down"
+  so it doesn't depend on drag.
+- Collapsed (icon) sidebar: the badge with a tooltip; clicking opens a popover of
+  boards.
 
 ### Project page `/projects/[id]`
 
-```
-Yuzu 1.0                                   [Manage ▾] [+ New board]
-3 boards, 41 open tasks, 3 overdue
-┌──────────────────────────────────────────────────────────────┐
-│ Q4 Launch       ███████░░░  46% done   22 tasks   JP SC MR   │
-│ Design system   █████████░  62% done   14 tasks   SC AN      │
-│ Bug triage      ████░░░░░░  30% done   31 tasks   LK JP      │
-└──────────────────────────────────────────────────────────────┘
-Deadlines this week                    Waiting on approval
-```
-
-- One list of boards, not a card grid. Board rows reuse the Overview's
-  progress-bar treatment so the two pages feel related.
-- The summary line uses the dashboard service with the `projectId` filter, so
-  the numbers match the Overview.
-- The board header breadcrumb becomes Project › Board, and the project is a link.
+Header: name, a visibility pill ("Private, 6 members" or "Visible to the
+workspace"), member avatars, "Members", and "New board". Below it, the
+project's boards as rows with progress bars (same treatment as the Overview),
+then "Deadlines this week" and "Waiting on approval" for this project only.
 
 ### Flows and copy
 
-- **Create project:** Dialog with "Project name" and a color picker (8 palette
-  swatches, each with a visible name for accessibility). Button: "Create project".
-  Toast: "Project created". Lands on the new, empty project page.
-- **Empty project:** citrus artwork, "No boards in this project yet", and the
-  primary button "New board" (or, for non-managers, "Ask a project manager to
-  add a board.").
-- **Move board:** in the board's ⋯ menu, "Move to project…" opens a searchable
-  list of projects in the same workspace. Button: "Move board". Toast: "Moved to
-  Yuzu 1.0". The board URL does not change, so links keep working.
-- **Archive project:** a confirm dialog with the real consequence: "Archive Yuzu
-  1.0? Its 3 boards will be hidden and read-only until you restore it. Nothing is
-  deleted." Button: "Archive project". Toast: "Project archived" with a "Restore"
-  action.
-- **Archived view:** Settings › Projects lists archived projects with "Restore".
+- **Create project** dialog: "Project name", color swatches (each named for
+  screen readers), and visibility as two clear choices:
+  - "Workspace: everyone in Acme Studio can see it"
+  - "Private: only people you add"
 
-### Accessibility and motion
+  Button: "Create project".
+- **Members** sheet: search workspace members, add as Member or Manager, remove.
+  Removing shows: "Remove Lee? They'll lose access to this project's 3 boards
+  right away."
+- **Make private** confirm: "Make Yuzu 1.0 private? 9 people who aren't project
+  members will lose access." Button: "Make private".
+- **Move board**: "Move to…" lists projects (with privacy shown) plus "No
+  project (standalone)". When moving into a private project, the dialog states
+  who will lose access before you confirm.
+- **Archive**: "Archive Yuzu 1.0? Its boards will be hidden and read-only until
+  you restore it. Nothing is deleted." Toast: "Project archived" with "Restore".
+- **Empty project**: citrus artwork, "No boards in this project yet", and
+  "New board".
 
-- Collapsibles use the Radix `Collapsible` with correct `aria-expanded`.
-- Dialogs trap and return focus. Toasts follow the existing dismissal rules.
-- Only motion that answers an action: collapsible height and the toast. No GSAP
-  needed here. Reduced motion is respected.
+Board header breadcrumb: `Project › Board`, or just `Board` when standalone. View
+tabs (Kanban, Table, and later Calendar, Timeline) sit under the board title and
+never appear in the sidebar.
 
 ## Testing
 
-- **Unit:** `project-contract` validation; reorder permutation check;
-  `projectAccess` matrix (admin / manager / member / non-member / archived);
-  move-board same-workspace rule.
-- **Migration:** run against a snapshot with several workspaces and boards. Every
-  board gets a project, manager rows are copied, counts are unchanged.
-- **E2E (`installation.spec.ts` + new `projects.spec.ts`):** setup creates
-  workspace, project, and board. Then create a project, create a board in it,
-  move a board, archive (board becomes read-only) and restore, and keyboard-only
-  sidebar navigation.
+- **Unit:** contracts; `boardScope` for each role × visibility × archived; the
+  last-manager rule; `move-board` workspace rule; eligiblePeople for private
+  projects.
+- **Integration:** for each row of the access table, a private-project board is
+  invisible to a workspace member outside it (search, overview, notifications,
+  approvals, realtime ticket, task/comment/file reads, CSV export).
+- **Leak regression:** remove a member from a private project, then verify that
+  their open task, cached search, notification link, and realtime ticket all
+  stop working.
+- **E2E (`projects.spec.ts`):** create a public project with a board; create a
+  private project, add a member, check that a second user can't see it, then
+  add them and check that they can; move a board; archive/restore; keyboard-only
+  sidebar.
 
-## Rollout
+## Rollout (separate branches, in order)
 
-Separate branches, in order:
-
-1. `feat/projects-data`: schema, migration, `projectAccess`, contracts, API,
-   setup change, unit tests. The UI still shows the old sidebar, using project
-   data underneath.
-2. `feat/projects-ui`: sidebar group, project page, dialogs, breadcrumb, search
-   and overview labels, e2e.
-3. Then the app redesign phases, which build on this.
+1. `feat/projects-data`: schema, migration, `boardScope` swap across every
+   service in the access table, project API, unit and integration tests. The UI is
+   unchanged; existing boards are standalone, so behavior is identical.
+2. `feat/projects-ui`: sidebar groups, project page, dialogs, member management,
+   breadcrumb, search/overview labels, e2e.
+3. `SavedBoardView.layout` plus view tabs (Calendar/Timeline later).
+4. The app redesign phases.
 
 Update `docs/DEVELOPMENT_CONTEXT.md` after each phase.
 
-## Related gaps found while writing this
+## Related gaps
 
-- Boards cannot be renamed or archived today. Rename/archive board is a small,
-  separate follow-up that would pair well with phase 2.
-- Workspaces can't be created after setup. Out of scope here; worth its own spec.
+- Boards can't be renamed or archived; workspaces can't be created after setup.
+  These are small separate specs.
 
 ## Open questions for review
 
-1. D1: is workspace-wide access acceptable for now, or do you need private
-   projects soon? Private projects change scoping across search, overview,
-   notifications, and realtime, and would need their own spec.
-2. D3: is it right that creating a board requires being a project manager, given
-   that today any board manager in the workspace can?
-3. D5: is "General" the right name for the migrated project?
+1. D2: should owners/admins see private projects (proposed), or should private
+   projects be truly private even from admins?
+2. Can a project include people from other workspaces, or only that workspace's
+   members (proposed)?
+3. Who can create projects: only admins, or any workspace member (who then
+   manages it)?
+4. Should a private project's name be hidden from non-members everywhere
+   (proposed), or visible as "Private project" with no contents?
