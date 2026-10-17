@@ -116,9 +116,15 @@ export const fieldSchema = z
 export const groupSchema = z
   .object({ boardId: recordId, name: z.string().trim().min(1).max(80) })
   .strict();
-export const boardCreateSchema = z
-  .object({ workspaceId: recordId, name: z.string().trim().min(1).max(100) })
-  .strict();
+// A board is created either standalone in a workspace or inside a project.
+export const boardCreateSchema = z.union([
+  z
+    .object({ workspaceId: recordId, name: z.string().trim().min(1).max(100) })
+    .strict(),
+  z
+    .object({ projectId: recordId, name: z.string().trim().min(1).max(100) })
+    .strict(),
+]);
 export const statusIcons = [
   "circle",
   "circle-dot",

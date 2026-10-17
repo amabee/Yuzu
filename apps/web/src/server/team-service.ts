@@ -17,6 +17,10 @@ import { requireAdministrator } from "./team-access";
 import { getAuth } from "./auth";
 import { allowInvitationAttempt } from "./auth-rate-limit";
 import { sendVerifiedEmail } from "./email";
+import {
+  acceptProjectInvitation,
+  previewProjectInvitation,
+} from "./project-service";
 
 const db = () => getDatabase();
 async function serial<T>(
@@ -261,6 +265,11 @@ export async function removeMember(input: unknown, headers: Headers) {
         "Owners and administrators have installation-wide access and cannot be removed through workspace membership.",
       );
     await tx.workspaceMember.deleteMany({ where: { workspaceId, userId } });
+    // Leaving the workspace also leaves its projects, except projects they were
+    // invited to directly (project-only access stands on its own).
+    await tx.projectMember.deleteMany({
+      where: { userId, projectOnly: false, project: { workspaceId } },
+    });
     // Also revoke outstanding invitations so removal cannot be undone by an old link.
     await tx.invitation.updateMany({
       where: { workspaceId, email: target.email, acceptedAt: null },
@@ -280,6 +289,9 @@ export async function removeMember(input: unknown, headers: Headers) {
 
 export async function previewInvitation(input: unknown, headers: Headers) {
   const { token } = invitationTokenSchema.parse(input);
+  // One /invite link for both kinds: project invitations are checked first.
+  const project = await previewProjectInvitation(digest(token), headers);
+  if (project) return project;
   const invite = await db().invitation.findUnique({
     where: { tokenDigest: digest(token) },
     include: { workspace: true },
@@ -300,6 +312,8 @@ export async function previewInvitation(input: unknown, headers: Headers) {
 }
 
 export async function acceptInvitation(input: unknown, headers: Headers) {
+  const project = await acceptProjectInvitation(input, headers);
+  if (project) return project;
   const { token, name, password } = acceptInvitationSchema.parse(input);
   const tokenDigest = digest(token);
   const invite = await db().invitation.findUnique({ where: { tokenDigest } });

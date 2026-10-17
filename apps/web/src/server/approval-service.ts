@@ -32,11 +32,7 @@ import {
   validateValues,
 } from "./board-service";
 import { readApprovalPolicy } from "./approval-policy";
-import {
-  requireIdentity,
-  isAdministrator,
-  workspaceScope,
-} from "./team-access";
+import { requireIdentity, isAdministrator, boardScope } from "./team-access";
 import { SetupError } from "./setup/security";
 import { createNotifications } from "./notification-events";
 const missing = () =>
@@ -64,9 +60,7 @@ export async function configureApprovals(input: unknown, headers: Headers) {
         "Approval settings changed. Reopen board details before saving.",
       );
     const eligible = new Set(
-      (await eligiblePeople(tx, context.board.workspaceId)).map(
-        (person) => person.id,
-      ),
+      (await eligiblePeople(tx, context.board)).map((person) => person.id),
     );
     if (
       [body.primaryApproverId, body.backupApproverId].some(
@@ -205,9 +199,7 @@ export async function decideApproval(input: unknown, headers: Headers) {
     const context = await access(tx, user.id, proposal.boardId, true);
     const policy = await readApprovalPolicy(tx, context.board);
     const people = new Set(
-      (await eligiblePeople(tx, context.board.workspaceId)).map(
-        (person) => person.id,
-      ),
+      (await eligiblePeople(tx, context.board)).map((person) => person.id),
     );
     const reviewerId = eligibleReviewer(policy, proposal.authorId, people);
     if (
@@ -410,7 +402,7 @@ export async function approvalQueue(
     const rows = await tx.boardProposal.findMany({
       where: {
         ...(requestId ? { id: recordId.parse(requestId) } : {}),
-        board: { workspace: workspaceScope(user) },
+        board: boardScope(user),
         ...(isAdministrator(user.role)
           ? {}
           : {
@@ -458,7 +450,7 @@ export async function approvalQueue(
       if (!data) {
         data = {
           policy: await readApprovalPolicy(tx, proposal.board),
-          people: await eligiblePeople(tx, proposal.board.workspaceId),
+          people: await eligiblePeople(tx, proposal.board),
         };
         contexts.set(proposal.boardId, data);
       }

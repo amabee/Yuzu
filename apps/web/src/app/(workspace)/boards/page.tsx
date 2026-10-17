@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getDatabase } from "@yuzu/database";
 import { workspaceContext } from "@/server/workspace-access";
-import { workspaceScope } from "@/server/team-access";
+import { boardScope } from "@/server/team-access";
 import { CreateBoard } from "@/components/boards/create-board";
 import { isAdministrator } from "@/server/team-access";
 import { ArrowRight, Columns3 } from "lucide-react";
@@ -10,7 +10,7 @@ export const metadata = { title: "Boards" };
 export default async function BoardsPage() {
   const { user, workspaces } = await workspaceContext();
   const boards = await getDatabase().board.findMany({
-    where: { workspace: workspaceScope(user) },
+    where: boardScope(user),
     select: {
       managers: { select: { userId: true } },
       createdById: true,

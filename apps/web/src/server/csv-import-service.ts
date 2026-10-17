@@ -103,7 +103,7 @@ export async function previewCsvImport(
   return getDatabase().$transaction(
     async (tx) => {
       const context = await access(tx, user.id, body.boardId, true);
-      const people = await eligiblePeople(tx, context.board.workspaceId);
+      const people = await eligiblePeople(tx, context.board);
       const eligible = new Set(people.map((person) => person.id));
       const model = {
         fields: context.board.columns.map((field) => ({

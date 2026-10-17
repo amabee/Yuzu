@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { getDatabase } from "@yuzu/database";
 import { workspaceContext } from "@/server/workspace-access";
-import { workspaceScope } from "@/server/team-access";
+import { boardScope } from "@/server/team-access";
 import { BoardSurface } from "@/components/boards/board-surface";
 import Link from "next/link";
 import { Rocket, ChevronRight } from "lucide-react";
@@ -20,7 +20,7 @@ export default async function BoardPage({
   const board = await getDatabase().board.findFirst({
     where: {
       id: (await params).id,
-      workspace: workspaceScope(user),
+      ...boardScope(user),
     },
     include: {
       columns: { orderBy: { position: "asc" } },
