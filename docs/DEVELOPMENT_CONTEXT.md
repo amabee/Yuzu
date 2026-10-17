@@ -171,10 +171,12 @@ level. Spec: `docs/specs/projects.md` on branch `docs/projects-spec` (no PR yet)
   audited `recover`. Outsiders join a project by invitation (`projectOnly`).
   Gotcha: Prisma matches nothing for `{}` inside `OR`, so the scopes return
   `{}` directly for admins.
-- Next: `feat/projects-ui`, stacked on `feat/projects-data`: sidebar Projects and
-  Boards groups, `/projects/[id]`, create/members/move/archive flows. Deferred
-  from the data PR: realtime project-list hints, `projectName` in search and
-  notifications, the dashboard project filter, and saved-view `layout`.
+- `feat/projects-ui`, PR #11 (https://github.com/amabee/Yuzu/pull/11), stacked
+  on #10 (merge #10 first). Sidebar Projects/Boards groups, `/projects/[id]`,
+  create/members/edit/move/archive flows. Still open from the spec: project-page
+  deadlines and approvals sections, admin recovery screen, collapsed-sidebar
+  board popover, realtime project-list hints, `projectName` in search and
+  notifications, and the dashboard project filter.
 - After that: saved-view layouts, then the app redesign (mockups in
   `docs/mockups/app-redesign-*`).
 
