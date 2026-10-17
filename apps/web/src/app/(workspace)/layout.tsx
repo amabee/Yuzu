@@ -1,5 +1,6 @@
 import { CsvTransferRuntime } from "@/components/transfers/csv-transfer-runtime";
 import { workspaceContext } from "@/server/workspace-access";
+import { boardScope } from "@/server/team-access";
 import { getDatabase } from "@yuzu/database";
 import { cookies } from "next/headers";
 import { AppShell } from "@/components/app-shell";
@@ -12,7 +13,14 @@ export default async function WorkspaceLayout({
 }) {
   const { settings, user, workspace, workspaces } = await workspaceContext();
   const boards = await getDatabase().board.findMany({
-    where: { workspaceId: { in: workspaces.map((item) => item.id) } },
+    where: {
+      workspaceId: { in: workspaces.map((item) => item.id) },
+      // Boards of archived projects stay readable by link but leave navigation.
+      AND: [
+        boardScope(user),
+        { OR: [{ projectId: null }, { project: { archivedAt: null } }] },
+      ],
+    },
     select: { id: true, name: true, workspaceId: true },
     orderBy: { createdAt: "asc" },
   });

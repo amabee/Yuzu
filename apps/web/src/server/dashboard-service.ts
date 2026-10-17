@@ -7,7 +7,7 @@ import {
   dashboardQuerySchema,
   type Dashboard,
 } from "@/lib/dashboard-contract";
-import { requireIdentity, workspaceScope } from "./team-access";
+import { boardScope, requireIdentity } from "./team-access";
 
 export async function workspaceDashboard(
   headers: Headers,
@@ -22,11 +22,14 @@ export async function workspaceDashboard(
     day: "2-digit",
   }).format(new Date());
   const { start, end } = calendarWindow(calendarDate);
-  const boardScope: Prisma.BoardWhereInput = {
-    workspace: workspaceScope(user),
+  const visibleBoards: Prisma.BoardWhereInput = {
+    ...boardScope(user),
     ...(query.workspaceId ? { workspaceId: query.workspaceId } : {}),
   };
-  const active: Prisma.TaskWhereInput = { board: boardScope, archivedAt: null };
+  const active: Prisma.TaskWhereInput = {
+    board: visibleBoards,
+    archivedAt: null,
+  };
   const open: Prisma.TaskWhereInput = {
     ...active,
     OR: [{ statusId: null }, { statusId: { not: COMPLETED_STATUS_ID } }],
@@ -35,14 +38,14 @@ export async function workspaceDashboard(
   const upcoming = { ...open, dueDate: { gte: start, lte: end } };
   return getDatabase().$transaction(
     async (tx) => {
-      const boardCount = await tx.board.count({ where: boardScope });
+      const boardCount = await tx.board.count({ where: visibleBoards });
       const pageCount = Math.max(
         1,
         Math.ceil(boardCount / DASHBOARD_BOARD_PAGE_SIZE),
       );
       const page = Math.min(query.page, pageCount);
       const boards = await tx.board.findMany({
-        where: boardScope,
+        where: visibleBoards,
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         take: DASHBOARD_BOARD_PAGE_SIZE,
         skip: (page - 1) * DASHBOARD_BOARD_PAGE_SIZE,

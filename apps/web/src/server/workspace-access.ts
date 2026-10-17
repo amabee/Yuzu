@@ -3,7 +3,7 @@ import { cookies, headers } from "next/headers";
 import { redirect, unauthorized } from "next/navigation";
 import { getDatabase } from "@yuzu/database";
 import { getAuth } from "./auth";
-import { isAdministrator, workspaceScope } from "./team-access";
+import { isAdministrator, visibleWorkspaceScope } from "./team-access";
 
 // React cache is request-scoped; never share a session through a module singleton.
 export const workspaceContext = cache(async () => {
@@ -27,7 +27,7 @@ export const workspaceContext = cache(async () => {
   if (settings.maintenanceMode && !isAdministrator(user.role))
     redirect("/maintenance");
   const workspaces = await getDatabase().workspace.findMany({
-    where: workspaceScope(user),
+    where: visibleWorkspaceScope(user),
     orderBy: { createdAt: "asc" },
   });
   const workspace =

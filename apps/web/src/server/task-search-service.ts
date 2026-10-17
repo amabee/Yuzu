@@ -5,7 +5,7 @@ import {
   type TaskSearchResult,
 } from "@/lib/task-search-contract";
 import { escapeLike } from "@/lib/board-query";
-import { requireIdentity, workspaceScope } from "./team-access";
+import { boardScope, requireIdentity } from "./team-access";
 
 export async function searchTasks(
   headers: Headers,
@@ -14,7 +14,7 @@ export async function searchTasks(
   const query = taskSearchQuerySchema.parse(input);
   const { user } = await requireIdentity(headers);
   const where: Prisma.TaskWhereInput = {
-    board: { workspace: workspaceScope(user) },
+    board: boardScope(user),
     archivedAt: query.archived === "true" ? { not: null } : null,
     OR: [
       { name: { contains: escapeLike(query.q), mode: "insensitive" } },

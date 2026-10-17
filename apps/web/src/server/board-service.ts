@@ -54,8 +54,10 @@ import {
   requireIdentity,
   isAdministrator,
   workspaceScope,
+  boardScope,
 } from "./team-access";
 import { digest, SetupError } from "./setup/security";
+import { projectAccess } from "./project-access";
 
 const db = getDatabase;
 const notFound = () =>
@@ -99,14 +101,21 @@ export async function access(
   const user = await tx.user.findUnique({ where: { id: userId } });
   if (!user) throw notFound();
   const board = await tx.board.findFirst({
-    where: { id: boardId, workspace: workspaceScope(user) },
+    where: { id: boardId, ...boardScope(user) },
     include: {
       managers: true,
+      project: { select: { archivedAt: true } },
       columns: { where: { archivedAt: null }, orderBy: { position: "asc" } },
       groups: { orderBy: { position: "asc" } },
     },
   });
   if (!board) throw notFound();
+  if (write && board.project?.archivedAt)
+    throw new SetupError(
+      403,
+      "PROJECT_ARCHIVED",
+      "This board's project is archived. Restore the project to make changes.",
+    );
   if (
     write &&
     (
@@ -128,16 +137,32 @@ export async function access(
       board.managers.some((manager) => manager.userId === user.id),
   };
 }
+/** People who can be assigned, mentioned, or chosen on this board: whoever can
+ *  see it. Private projects: their members only. Public projects and standalone
+ *  boards: workspace members and admins, plus members of a public project. */
 export async function eligiblePeople(
   tx: DatabaseTransaction,
-  workspaceId: string,
+  board: { workspaceId: string; projectId: string | null },
 ) {
+  const project = board.projectId
+    ? await tx.project.findUnique({
+        where: { id: board.projectId },
+        select: { visibility: true },
+      })
+    : null;
+  const projectMembers = board.projectId
+    ? [{ projectMemberships: { some: { projectId: board.projectId } } }]
+    : [];
   return tx.user.findMany({
     where: {
-      OR: [
-        { role: { in: ["OWNER", "ADMIN"] } },
-        { memberships: { some: { workspaceId } } },
-      ],
+      OR:
+        project?.visibility === "PRIVATE"
+          ? projectMembers
+          : [
+              { role: { in: ["OWNER", "ADMIN"] } },
+              { memberships: { some: { workspaceId: board.workspaceId } } },
+              ...projectMembers,
+            ],
     },
     select: { id: true, name: true, image: true },
     orderBy: { name: "asc" },
@@ -589,7 +614,7 @@ export async function boardState(
           type: field.type,
           options: fieldOptions(field.config),
         })),
-        people: await eligiblePeople(tx, context.board.workspaceId),
+        people: await eligiblePeople(tx, context.board),
         tasks: tasks.map(presentTask),
       };
     },
@@ -828,9 +853,7 @@ export async function createTaskInTransaction(
       );
   }
   const people = new Set(
-    (await eligiblePeople(tx, context.board.workspaceId)).map(
-      (person) => person.id,
-    ),
+    (await eligiblePeople(tx, context.board)).map((person) => person.id),
   );
   const initial = {
     ...body,
@@ -910,9 +933,7 @@ export async function mutateTask(
       );
     if (task.revision !== body.revision) throw conflict();
     const people = new Set(
-      (await eligiblePeople(tx, context.board.workspaceId)).map(
-        (person) => person.id,
-      ),
+      (await eligiblePeople(tx, context.board)).map((person) => person.id),
     );
     const changes = patch?.changes;
     if (changes) {
@@ -964,26 +985,43 @@ export async function manageBoard(
     const body = boardCreateSchema.parse(input);
     return serial(async (tx) => {
       const current = await tx.user.findUnique({ where: { id: user.id } });
-      const workspace =
-        current &&
-        (await tx.workspace.findFirst({
+      if (!current) throw notFound();
+      let workspaceId: string;
+      let projectId: string | null = null;
+      let position = 0;
+      if ("projectId" in body) {
+        // Inside a project: its managers (or admins of a public one) create boards.
+        const project = await projectAccess(tx, current, body.projectId);
+        if (!project.canManage)
+          throw new SetupError(
+            403,
+            "FORBIDDEN",
+            "A project manager must add boards to this project.",
+          );
+        workspaceId = project.project.workspaceId;
+        projectId = project.project.id;
+        position = await tx.board.count({ where: { projectId } });
+      } else {
+        const workspace = await tx.workspace.findFirst({
           where: { id: body.workspaceId, ...workspaceScope(current) },
-        }));
-      if (!current || !workspace) throw notFound();
-      if (
-        !isAdministrator(current.role) &&
-        !(await tx.board.count({
-          where: {
-            managers: { some: { userId: user.id } },
-            workspace: workspaceScope(current),
-          },
-        }))
-      )
-        throw new SetupError(
-          403,
-          "FORBIDDEN",
-          "A board manager or administrator must create boards.",
-        );
+        });
+        if (!workspace) throw notFound();
+        if (
+          !isAdministrator(current.role) &&
+          !(await tx.board.count({
+            where: {
+              managers: { some: { userId: user.id } },
+              workspace: workspaceScope(current),
+            },
+          }))
+        )
+          throw new SetupError(
+            403,
+            "FORBIDDEN",
+            "A board manager or administrator must create boards.",
+          );
+        workspaceId = workspace.id;
+      }
       if (
         (
           await tx.installationSettings.findUnique({
@@ -1023,7 +1061,9 @@ export async function manageBoard(
       ];
       return tx.board.create({
         data: {
-          workspaceId: workspace.id,
+          workspaceId,
+          projectId,
+          position,
           name: body.name,
           createdById: user.id,
           managers: { create: { userId: user.id, grantedById: user.id } },
@@ -1048,7 +1088,7 @@ export async function manageBoard(
         ensurePeople(
           [body.userId],
           new Set(
-            (await eligiblePeople(tx, context.board.workspaceId)).map(
+            (await eligiblePeople(tx, context.board)).map(
               (person) => person.id,
             ),
           ),
@@ -1464,7 +1504,7 @@ export async function createComment(input: unknown, headers: Headers) {
     }
     const mentions = await validateCommentMentions(
       tx,
-      context.board.workspaceId,
+      context.board,
       body.body,
       body.mentionIds,
     );
@@ -1512,11 +1552,11 @@ export async function createComment(input: unknown, headers: Headers) {
 
 async function validateCommentMentions(
   tx: DatabaseTransaction,
-  workspaceId: string,
+  board: { workspaceId: string; projectId: string | null },
   body: string,
   mentionIds: string[],
 ) {
-  const people = await eligiblePeople(tx, workspaceId);
+  const people = await eligiblePeople(tx, board);
   return mentionIds.map((id) => {
     const person = people.find((person) => person.id === id);
     if (!person || !mentionPresent(body, person.name))
@@ -1564,7 +1604,7 @@ export async function changeComment(input: unknown, headers: Headers) {
       body.action === "edit"
         ? await validateCommentMentions(
             tx,
-            context.board.workspaceId,
+            context.board,
             body.body,
             body.mentionIds,
           )
