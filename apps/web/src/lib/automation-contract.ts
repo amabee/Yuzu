@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { personId, recordId } from "./board-contract";
+import { scheduleSchema } from "./automation-schedule";
 
 /** Status, priority and option ids are short stable strings, not UUIDs. */
 const optionId = z.string().trim().min(1).max(100);
@@ -23,6 +24,15 @@ export const automationTriggerSchema = z.discriminatedUnion("kind", [
     .strict(),
   z.object({ kind: z.literal("due.arrived") }).strict(),
   z.object({ kind: z.literal("due.overdue") }).strict(),
+  z.object({ kind: z.literal("schedule"), schedule: scheduleSchema }).strict(),
+  z
+    .object({
+      kind: z.literal("comment.added"),
+      /** Only when the comment mentions someone. */
+      mentionsOnly: z.boolean().default(false),
+    })
+    .strict(),
+  z.object({ kind: z.literal("checklist.completed") }).strict(),
   z
     .object({
       kind: z.literal("field.changed"),
@@ -98,13 +108,48 @@ export const automationActionSchema = z.discriminatedUnion("kind", [
       kind: z.literal("notify"),
       to: z.enum(["assignees", "creator", "people"]),
       userIds: z.array(personId).max(20).optional(),
+      /** Custom text; {task}, {status}, {due} and friends fill in when it runs. */
+      message: z.string().trim().max(280).optional(),
+      /** Send this instead of Yuzu's own assignment or mention notice. */
+      replaceDefault: z.boolean().optional(),
     })
     .strict()
     .refine(
       (value) => value.to !== "people" || Boolean(value.userIds?.length),
       "Choose who to notify.",
     ),
+  z
+    .object({
+      kind: z.literal("create.task"),
+      /** Another board the rule's creator manages; null means this board. */
+      boardId: recordId.nullable(),
+      /** {task} is the triggering task's name, {date} the day it runs. */
+      name: z.string().trim().min(1).max(200),
+      statusId: optionId.nullable().optional(),
+      groupId: recordId.nullable().optional(),
+      assigneeIds: z.array(personId).max(20).default([]),
+      /** Due date in days from the run; null leaves it empty. */
+      dueInDays: z.number().int().min(-365).max(365).nullable().default(null),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("webhook"),
+      url: z
+        .string()
+        .trim()
+        .max(2000)
+        .url("Enter a full URL, starting with https://.")
+        .refine(
+          (value) => /^https?:\/\//i.test(value),
+          "Webhooks must use http or https.",
+        ),
+    })
+    .strict(),
 ]);
+
+/** Actions that don't need a task, the only ones scheduled rules may use. */
+export const tasklessActions = ["create.task", "webhook", "notify"] as const;
 
 export const automationRuleInputSchema = z
   .object({
@@ -115,10 +160,23 @@ export const automationRuleInputSchema = z
     name: z.string().trim().min(1).max(80),
     enabled: z.boolean().default(true),
     trigger: automationTriggerSchema,
+    /** Whether every condition must match, or any one. */
+    match: z.enum(["all", "any"]).default("all"),
     conditions: z.array(automationConditionSchema).max(10).default([]),
     actions: z.array(automationActionSchema).min(1).max(10),
   })
-  .strict();
+  .strict()
+  .refine(
+    (rule) =>
+      rule.trigger.kind !== "schedule" ||
+      (rule.conditions.length === 0 &&
+        rule.actions.every((action) =>
+          action.kind !== "notify"
+            ? (tasklessActions as readonly string[]).includes(action.kind)
+            : action.to === "people",
+        )),
+    "Scheduled rules have no task, so they can only create tasks, send webhooks or notify chosen people.",
+  );
 
 export const automationToggleSchema = z
   .object({
@@ -149,6 +207,7 @@ export const automationRuleSchema = z.object({
   name: z.string(),
   enabled: z.boolean(),
   trigger: automationTriggerSchema,
+  match: z.enum(["all", "any"]),
   conditions: z.array(automationConditionSchema),
   actions: z.array(automationActionSchema),
   createdById: personId,
@@ -158,13 +217,29 @@ export const automationRuleSchema = z.object({
   lastRunAt: z.string().nullable(),
   runCount: z.number().int().nonnegative(),
   failureCount: z.number().int().nonnegative(),
+  /** For scheduled rules: when it runs next, as an ISO time. */
+  nextRunAt: z.string().nullable(),
 });
 export type AutomationRule = z.infer<typeof automationRuleSchema>;
 
 export const automationRunSchema = z.object({
   id: recordId,
-  taskId: recordId,
-  taskName: z.string(),
+  /** Null for scheduled runs, which aren't about a task. */
+  taskId: recordId.nullable(),
+  taskName: z.string().nullable(),
+  createdTask: z
+    .object({ id: recordId, name: z.string(), boardId: recordId })
+    .nullable(),
+  deliveries: z.array(
+    z.object({
+      status: z.enum(["PENDING", "DELIVERED", "FAILED"]),
+      responseCode: z.number().int().nullable(),
+      durationMs: z.number().int().nullable(),
+      attempts: z.number().int(),
+      error: z.string().nullable(),
+    }),
+  ),
+  missed: z.boolean(),
   trigger: z.string(),
   outcome: z.enum(automationOutcomes),
   detail: z.string().nullable(),

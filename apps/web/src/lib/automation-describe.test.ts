@@ -50,3 +50,53 @@ describe("rule sentences", () => {
     ).toEqual(["overdue", "assign Mia"]);
   });
 });
+
+describe("slice 2 sentences", () => {
+  it("reads schedules, any-matching and created tasks", () => {
+    expect(
+      text(
+        describeRule(
+          {
+            trigger: {
+              kind: "schedule",
+              schedule: { every: "week", days: [1, 5], time: "09:00" },
+            },
+            conditions: [],
+            actions: [
+              {
+                kind: "create.task",
+                boardId: null,
+                name: "Weekly report",
+                assigneeIds: [],
+                dueInDays: 4,
+              },
+            ],
+          },
+          labels,
+        ),
+      ),
+    ).toBe(
+      "When it's every week on Monday and Friday at 09:00, then create “Weekly report”.",
+    );
+    expect(
+      text(
+        describeRule(
+          {
+            trigger: { kind: "checklist.completed" },
+            match: "any",
+            conditions: [
+              { subject: "priority", op: "is", value: "HIGH" },
+              { subject: "priority", op: "is", value: "URGENT" },
+            ],
+            actions: [
+              { kind: "webhook", url: "https://hooks.example.com/yuzu" },
+            ],
+          },
+          labels,
+        ),
+      ),
+    ).toBe(
+      "When the checklist is completed, if priority is High or priority is Urgent, then send a webhook to hooks.example.com.",
+    );
+  });
+});

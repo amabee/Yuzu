@@ -517,3 +517,428 @@ test("managers build, edit, switch off, inspect and remove rules from the board"
     .toBe(0);
   await expect(sheet).toBeVisible();
 });
+
+test("slice 2: hand-offs to other boards, comments, checklists and any-matching", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const { boardId } = await ownerBoard(page);
+  const db = getDatabase();
+  const board = await db.board.findUniqueOrThrow({ where: { id: boardId } });
+  const qa = await post(page, "/api/v1/boards/create-board", {
+    workspaceId: board.workspaceId,
+    name: "QA",
+  });
+  const qaId = (await qa.json()).data.id as string;
+  const save = (rule: Record<string, unknown>) =>
+    post(page, "/api/v1/automations/save", { boardId, ...rule });
+  // Done tasks of high or urgent priority get a QA task on the other board.
+  const handoff = await save({
+    name: "Hand off to QA",
+    trigger: { kind: "status.changed", from: null, to: "done" },
+    match: "any",
+    conditions: [
+      { subject: "priority", op: "is", value: "HIGH" },
+      { subject: "priority", op: "is", value: "URGENT" },
+    ],
+    actions: [
+      {
+        kind: "create.task",
+        boardId: qaId,
+        name: "QA: {task}",
+        statusId: "todo",
+        dueInDays: 2,
+      },
+    ],
+  });
+  expect(handoff.status()).toBe(200);
+  expect(
+    (
+      await save({
+        name: "Comment bumps priority",
+        trigger: { kind: "comment.added", mentionsOnly: false },
+        actions: [{ kind: "set.priority", value: "HIGH" }],
+      })
+    ).status(),
+  ).toBe(200);
+  expect(
+    (
+      await save({
+        name: "Checklist done means done",
+        trigger: { kind: "checklist.completed" },
+        actions: [{ kind: "set.status", value: "done" }],
+      })
+    ).status(),
+  ).toBe(200);
+
+  const created = await post(page, "/api/v1/boards/create-task", {
+    boardId,
+    createKey: crypto.randomUUID(),
+    name: "Checkout redesign",
+    statusId: "in_progress",
+    checklist: [{ id: crypto.randomUUID(), text: "Build it", done: false }],
+  });
+  const taskId = (await created.json()).data.taskId as string;
+  // A comment raises priority; finishing the checklist then completes the
+  // task, which hands it off to QA.
+  expect(
+    (
+      await post(page, "/api/v1/boards/comment", {
+        taskId,
+        createKey: crypto.randomUUID(),
+        body: "Ready for a look",
+      })
+    ).status(),
+  ).toBe(200);
+  await expect
+    .poll(
+      async () =>
+        (await db.task.findUniqueOrThrow({ where: { id: taskId } })).priority,
+      { timeout: 20_000 },
+    )
+    .toBe("HIGH");
+  const current = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+  const checklist = current.checklist as {
+    id: string;
+    text: string;
+    done: boolean;
+  }[];
+  expect(
+    (
+      await post(page, "/api/v1/boards/update", {
+        taskId,
+        revision: current.revision,
+        requestKey: crypto.randomUUID(),
+        changes: {
+          checklist: checklist.map((item) => ({ ...item, done: true })),
+        },
+      })
+    ).status(),
+  ).toBe(200);
+  await expect
+    .poll(
+      async () =>
+        (
+          await db.task.findMany({
+            where: { boardId: qaId },
+            select: { name: true, statusId: true },
+          })
+        ).map((task) => `${task.name} (${task.statusId})`),
+      { timeout: 20_000 },
+    )
+    .toEqual(["QA: Checkout redesign (todo)"]);
+  expect(
+    (await db.task.findUniqueOrThrow({ where: { id: taskId } })).statusId,
+  ).toBe("done");
+  const runs = await (
+    await page.request.get(
+      `/api/v1/automations/runs?ruleId=${(await handoff.json()).data.id}`,
+    )
+  ).json();
+  expect(runs.data.runs[0].createdTask.name).toBe("QA: Checkout redesign");
+  expect(runs.data.runs[0].createdTask.boardId).toBe(qaId);
+});
+
+test("slice 2: schedules run once, missed runs catch up once, and webhooks are signed", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const { boardId } = await ownerBoard(page);
+  const db = getDatabase();
+  const settings = await db.installationSettings.findUniqueOrThrow({
+    where: { id: "installation" },
+  });
+  const local = (date: Date) =>
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: settings.timezone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).format(date);
+
+  // A local receiver that records what it was sent.
+  const received: { body: string; signature: string }[] = [];
+  const { createServer } = await import("node:http");
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => (body += chunk));
+    request.on("end", () => {
+      received.push({
+        body,
+        signature: String(request.headers["x-yuzu-signature"]),
+      });
+      response.writeHead(204).end();
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as { port: number }).port;
+  try {
+    const save = (rule: Record<string, unknown>) =>
+      post(page, "/api/v1/automations/save", { boardId, ...rule });
+    const schedule = {
+      kind: "schedule",
+      schedule: {
+        every: "day",
+        time: local(new Date(Date.now() - 3 * 3_600_000)),
+      },
+    };
+    // Local addresses are refused until an admin allows them.
+    const refused = await save({
+      name: "Report",
+      trigger: schedule,
+      actions: [{ kind: "webhook", url: `http://127.0.0.1:${port}/hook` }],
+    });
+    expect(refused.status()).toBe(422);
+    expect((await refused.json()).error.code).toBe("PRIVATE_WEBHOOK");
+    await db.installationSettings.update({
+      where: { id: "installation" },
+      data: { allowPrivateWebhooks: true },
+    });
+    // Scheduled rules have no task to change.
+    expect(
+      (
+        await save({
+          name: "Broken",
+          trigger: schedule,
+          actions: [{ kind: "set.priority", value: "HIGH" }],
+        })
+      ).status(),
+    ).toBe(422);
+    const report = await save({
+      name: "Daily report",
+      trigger: schedule,
+      actions: [
+        {
+          kind: "create.task",
+          boardId: null,
+          name: "Report for {date}",
+          assigneeIds: [],
+        },
+        { kind: "webhook", url: `http://127.0.0.1:${port}/hook` },
+      ],
+    });
+    expect(report.status()).toBe(200);
+    const saved = (await report.json()).data;
+    expect(saved.webhookSecret).toMatch(/^whsec_/);
+    // Pretend Yuzu was off at the scheduled time: it runs once on return.
+    await db.automationRule.update({
+      where: { id: saved.id },
+      data: { lastScheduledAt: new Date(Date.now() - 2 * 86_400_000) },
+    });
+    await expect
+      .poll(
+        () =>
+          db.task.count({
+            where: { boardId, name: { startsWith: "Report for " } },
+          }),
+        { timeout: 20_000 },
+      )
+      .toBe(1);
+    await expect.poll(() => received.length, { timeout: 20_000 }).toBe(1);
+    // The signature verifies with the secret shown on save.
+    const { createHmac } = await import("node:crypto");
+    const [t, v1] = received[0]!.signature
+      .split(",")
+      .map((part) => part.split("=")[1]);
+    expect(
+      createHmac("sha256", saved.webhookSecret)
+        .update(`${t}.${received[0]!.body}`)
+        .digest("hex"),
+    ).toBe(v1);
+    expect(JSON.parse(received[0]!.body)).toMatchObject({
+      event: "schedule",
+      rule: { name: "Daily report" },
+    });
+    const runs = await (
+      await page.request.get(`/api/v1/automations/runs?ruleId=${saved.id}`)
+    ).json();
+    expect(runs.data.runs).toHaveLength(1);
+    expect(runs.data.runs[0]).toMatchObject({
+      taskId: null,
+      missed: true,
+      outcome: "APPLIED",
+    });
+    await expect
+      .poll(async () => {
+        const fresh = await (
+          await page.request.get(`/api/v1/automations/runs?ruleId=${saved.id}`)
+        ).json();
+        return fresh.data.runs[0].deliveries[0]?.status;
+      })
+      .toBe("DELIVERED");
+    // More worker ticks do not run it again.
+    await page.waitForTimeout(5_000);
+    expect(
+      await db.task.count({
+        where: { boardId, name: { startsWith: "Report for " } },
+      }),
+    ).toBe(1);
+    expect(received).toHaveLength(1);
+  } finally {
+    server.close();
+  }
+});
+
+test("slice 2 builder: schedules, custom messages, the webhook switch and its secret", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const { boardId } = await ownerBoard(page);
+  const db = getDatabase();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`/boards/${boardId}`);
+  await page.getByRole("button", { name: "Automations", exact: true }).click();
+  const sheet = page.getByRole("dialog", { name: "Automations" });
+
+  // A recurring task from the template, with a next-run preview.
+  await sheet
+    .getByRole("button", { name: "Weekly report", exact: true })
+    .click();
+  const builder = page.getByRole("dialog", { name: "New rule" });
+  await expect(builder.getByLabel("Trigger", { exact: true })).toHaveValue(
+    "schedule",
+  );
+  await expect(
+    builder.getByRole("button", { name: "Monday", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await builder.getByRole("button", { name: "Friday", exact: true }).click();
+  await expect(builder.locator(".automation-next")).toContainText("Next run:");
+  await expect(builder.locator(".automation-preview")).toContainText(
+    "every week on Monday and Friday at 09:00",
+  );
+  await page.screenshot({ path: "../../artifacts/automation/schedule.png" });
+  await builder.getByRole("button", { name: "Save rule" }).click();
+  await expect(builder).toHaveCount(0);
+  await expect(sheet.locator(".automation-rule")).toContainText("Next ");
+
+  // A custom notification message with placeholders.
+  await sheet
+    .getByRole("button", { name: "Notify on completion", exact: true })
+    .click();
+  const notify = page.getByRole("dialog", { name: "New rule" });
+  await notify
+    .getByLabel("Action 1 message", { exact: true })
+    .fill("{task} just shipped 🎉 It's now ${status}");
+  await notify.getByRole("button", { name: "Save rule" }).click();
+  await expect(notify).toHaveCount(0);
+  const created = await post(page, "/api/v1/boards/create-task", {
+    boardId,
+    createKey: crypto.randomUUID(),
+    name: "Launch post",
+    statusId: "todo",
+  });
+  const taskId = (await created.json()).data.taskId as string;
+  await post(page, "/api/v1/boards/update", {
+    taskId,
+    revision: 1,
+    requestKey: crypto.randomUUID(),
+    changes: { statusId: "done" },
+  });
+  await expect
+    .poll(
+      async () =>
+        (
+          await db.notification.findFirst({
+            where: { kind: "AUTOMATION", taskId },
+          })
+        )?.message,
+      { timeout: 20_000 },
+    )
+    .toBe("Launch post just shipped 🎉 It's now Done");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: /^Notifications/ }).click();
+  await expect(page.locator(".notification-menu-sentence")).toHaveText(
+    "Launch post just shipped 🎉 It's now Done",
+  );
+  await page.screenshot({ path: "../../artifacts/automation/message.png" });
+  await page.keyboard.press("Escape");
+
+  // Admins allow local-network webhooks, then get a secret once.
+  await page.goto("/settings");
+  await page
+    .getByRole("switch", { name: "Allow local-network webhooks" })
+    .click();
+  await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
+  expect(
+    (
+      await db.installationSettings.findUniqueOrThrow({
+        where: { id: "installation" },
+      })
+    ).allowPrivateWebhooks,
+  ).toBe(true);
+  await page.goto(`/boards/${boardId}`);
+  await page.getByRole("button", { name: "Automations", exact: true }).click();
+  await sheet.getByRole("button", { name: "New rule", exact: true }).click();
+  const hook = page.getByRole("dialog", { name: "New rule" });
+  await hook.getByLabel("Rule name").fill("Tell the dashboard");
+  await hook.getByLabel("Action 1", { exact: true }).selectOption("webhook");
+  await hook
+    .getByLabel("Action 1 webhook URL", { exact: true })
+    .fill("http://127.0.0.1:9/yuzu");
+  await hook.getByRole("button", { name: "Save rule" }).click();
+  const secret = page.getByRole("dialog", { name: "Webhook signing secret" });
+  await expect(secret.getByLabel("Webhook signing secret")).toHaveText(
+    /^whsec_/,
+  );
+  await page.screenshot({ path: "../../artifacts/automation/secret.png" });
+  await secret.getByRole("button", { name: "I've saved it" }).click();
+  await expect(secret).toHaveCount(0);
+});
+
+test("a rule message can replace the built-in assignment notice", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const { boardId } = await ownerBoard(page);
+  const db = getDatabase();
+  const board = await db.board.findUniqueOrThrow({ where: { id: boardId } });
+  const member = await db.user.create({
+    data: {
+      name: "Yska Member",
+      email: "yska@example.test",
+      emailVerified: true,
+    },
+  });
+  await db.workspaceMember.create({
+    data: { workspaceId: board.workspaceId, userId: member.id },
+  });
+  expect(
+    (
+      await post(page, "/api/v1/automations/save", {
+        boardId,
+        name: "Welcome the assignee",
+        trigger: { kind: "task.created" },
+        actions: [
+          {
+            kind: "notify",
+            to: "assignees",
+            message: "The task “{task}” is yours now, from {creator} 🎉",
+            replaceDefault: true,
+          },
+        ],
+      })
+    ).status(),
+  ).toBe(200);
+  const created = await post(page, "/api/v1/boards/create-task", {
+    boardId,
+    createKey: crypto.randomUUID(),
+    name: "Sample task",
+    assigneeIds: [member.id],
+  });
+  const taskId = (await created.json()).data.taskId as string;
+  // Only the rule's message is left for the member.
+  await expect
+    .poll(
+      async () =>
+        (
+          await db.notification.findMany({
+            where: { recipientId: member.id, taskId },
+            select: { kind: true, message: true },
+          })
+        ).map((note) => `${note.kind}: ${note.message}`),
+      { timeout: 20_000 },
+    )
+    .toEqual([
+      "AUTOMATION: The task “Sample task” is yours now, from Team Owner 🎉",
+    ]);
+});

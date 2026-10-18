@@ -98,6 +98,8 @@ services:
       YUZU_S3_SECRET_ACCESS_KEY: ${YUZU_S3_SECRET_ACCESS_KEY:?Run pnpm setup:keys first}
       REALTIME_SECRET: ${REALTIME_SECRET:?Run pnpm setup:keys first}
       REALTIME_INTERNAL_URL: http://realtime:3001
+      # Automation webhooks read signing secrets encrypted by the web app.
+      SETTINGS_ENCRYPTION_KEY: ${SETTINGS_ENCRYPTION_KEY:?Run pnpm setup:keys first}
     depends_on:
       postgres:
         condition: service_healthy

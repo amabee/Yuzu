@@ -19,6 +19,8 @@ function visibility(user: { id: string; role: string }) {
           OR: [
             { kind: "ASSIGNMENT" as const },
             { kind: "MENTION" as const },
+            // Rules notify the people they name, whatever their role.
+            { kind: "AUTOMATION" as const },
             { proposal: { is: { authorId: user.id } } },
             { board: { managers: { some: { userId: user.id } } } },
             {

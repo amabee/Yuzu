@@ -27,3 +27,34 @@ export async function updateCalendarSettings(input: unknown, headers: Headers) {
     );
   return { weekStartsOn: body.weekStartsOn, revision: body.revision + 1 };
 }
+
+export const automationSettingsSchema = z.strictObject({
+  revision: z.number().int().positive(),
+  allowPrivateWebhooks: z.boolean(),
+});
+
+/** Whether automation webhooks may reach local or private-network addresses. */
+export async function updateAutomationSettings(
+  input: unknown,
+  headers: Headers,
+) {
+  await requireAdministrator(headers);
+  const body = automationSettingsSchema.parse(input);
+  const updated = await getDatabase().installationSettings.updateMany({
+    where: { id: "installation", revision: body.revision },
+    data: {
+      allowPrivateWebhooks: body.allowPrivateWebhooks,
+      revision: { increment: 1 },
+    },
+  });
+  if (updated.count === 0)
+    throw new SetupError(
+      409,
+      "SETTINGS_CHANGED",
+      "Settings changed since you opened them. Reload and try again.",
+    );
+  return {
+    allowPrivateWebhooks: body.allowPrivateWebhooks,
+    revision: body.revision + 1,
+  };
+}

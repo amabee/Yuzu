@@ -14,12 +14,19 @@ export type RuleTask = {
   startDate: string | null;
   dueDate: string | null;
   fieldValues: Record<string, FieldValue>;
+  /** Checklist progress, when the event recorded it. */
+  checklist?: { done: number; total: number };
 };
 
 export type RuleEvent =
   | { kind: "task.created"; after: RuleTask }
   | { kind: "task.changed"; before: RuleTask; after: RuleTask }
-  | { kind: "due.arrived" | "due.overdue" };
+  | { kind: "comment.added"; after: RuleTask; mentions: string[] }
+  | { kind: "due.arrived" | "due.overdue" | "schedule" };
+
+const complete = (task: RuleTask) =>
+  Boolean(task.checklist?.total) &&
+  task.checklist!.done === task.checklist!.total;
 
 const has = (value: FieldValue | undefined, option: string) =>
   Array.isArray(value) ? value.includes(option) : value === option;
@@ -30,7 +37,19 @@ export function triggerMatches(trigger: AutomationTrigger, event: RuleEvent) {
     case "task.created":
     case "due.arrived":
     case "due.overdue":
+    case "schedule":
       return event.kind === trigger.kind;
+    case "comment.added":
+      return (
+        event.kind === "comment.added" &&
+        (!trigger.mentionsOnly || event.mentions.length > 0)
+      );
+    case "checklist.completed":
+      return (
+        event.kind === "task.changed" &&
+        complete(event.after) &&
+        !complete(event.before)
+      );
     case "status.changed":
       return (
         event.kind === "task.changed" &&
@@ -72,8 +91,10 @@ export function triggerMatches(trigger: AutomationTrigger, event: RuleEvent) {
 export function conditionsMatch(
   conditions: AutomationCondition[],
   task: RuleTask,
+  match: "all" | "any" = "all",
 ) {
-  return conditions.every((condition) => {
+  if (!conditions.length) return true;
+  return conditions[match === "all" ? "every" : "some"]((condition) => {
     switch (condition.subject) {
       case "status":
       case "priority":
@@ -115,6 +136,8 @@ export type PlannedChanges = {
 };
 
 export type PlannedNotice = {
+  message?: string;
+  replaceDefault?: boolean;
   to: "assignees" | "creator" | "people";
   userIds: string[];
 };
@@ -134,6 +157,8 @@ export function planActions(
     fieldValues: { ...task.fieldValues },
   };
   const notices: PlannedNotice[] = [];
+  const creations: Extract<AutomationAction, { kind: "create.task" }>[] = [];
+  const webhooks: string[] = [];
   for (const action of actions) {
     switch (action.kind) {
       case "set.status":
@@ -165,7 +190,18 @@ export function planActions(
         break;
       }
       case "notify":
-        notices.push({ to: action.to, userIds: action.userIds ?? [] });
+        notices.push({
+          to: action.to,
+          userIds: action.userIds ?? [],
+          ...(action.message ? { message: action.message } : {}),
+          ...(action.replaceDefault ? { replaceDefault: true } : {}),
+        });
+        break;
+      case "create.task":
+        creations.push(action);
+        break;
+      case "webhook":
+        webhooks.push(action.url);
         break;
     }
   }
@@ -192,7 +228,7 @@ export function planActions(
     ),
   );
   if (Object.keys(fieldValues).length) changes.fieldValues = fieldValues;
-  return { changes, notices };
+  return { changes, notices, creations, webhooks };
 }
 
 export function addDays(day: string, days: number) {

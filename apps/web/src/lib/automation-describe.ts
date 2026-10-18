@@ -3,6 +3,7 @@ import type {
   AutomationCondition,
   AutomationTrigger,
 } from "./automation-contract";
+import type { Schedule } from "./automation-schedule";
 
 /** Names the board knows things by, for turning a rule into a sentence. */
 export type RuleLabels = {
@@ -12,7 +13,36 @@ export type RuleLabels = {
   person: (id: string) => string;
   field: (id: string) => string;
   option: (fieldId: string, id: string) => string;
+  /** Another board's name, for actions that create tasks there. */
+  board?: (id: string) => string;
 };
+
+const dayNames = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+const ordinal = (n: number) =>
+  `${n}${n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th"}`;
+
+/** "every weekday at 09:00", "every week on Monday and Friday at 09:00" … */
+export function describeSchedule(schedule: Schedule) {
+  const at = ` at ${schedule.time}`;
+  if (schedule.every === "day") return `every day${at}`;
+  if (schedule.every === "weekday") return `every weekday${at}`;
+  if (schedule.every === "month")
+    return `every month on the ${ordinal(schedule.date ?? 1)}${at}`;
+  const days = (schedule.days ?? []).map((day) => dayNames[day]!);
+  const list =
+    days.length > 1
+      ? `${days.slice(0, -1).join(", ")} and ${days.at(-1)}`
+      : (days[0] ?? "");
+  return `every week on ${list}${at}`;
+}
 
 /** A sentence part; `strong` parts are the values the rule picked. */
 export type Part = { text: string; strong?: boolean };
@@ -43,6 +73,14 @@ export function describeTrigger(
       return [t("a task is "), b("due today")];
     case "due.overdue":
       return [t("a task becomes "), b("overdue")];
+    case "schedule":
+      return [t("it's "), b(describeSchedule(trigger.schedule))];
+    case "comment.added":
+      return trigger.mentionsOnly
+        ? [t("a comment "), b("mentions someone")]
+        : [t("a "), b("comment is added")];
+    case "checklist.completed":
+      return [t("the "), b("checklist is completed")];
     case "field.changed":
       return trigger.field === "priority"
         ? [t("priority changes to "), b(labels.priority(trigger.value))]
@@ -161,7 +199,21 @@ export function describeAction(
               ? "notify the creator"
               : `notify ${(action.userIds ?? []).map(labels.person).join(", ")}`,
         ),
+        ...(action.message ? [t(`: “${action.message}”`)] : []),
       ];
+    case "create.task":
+      return [
+        b(
+          `create “${action.name}”${action.boardId ? ` on ${labels.board?.(action.boardId) ?? "another board"}` : ""}`,
+        ),
+      ];
+    case "webhook": {
+      let host = action.url;
+      try {
+        host = new URL(action.url).host;
+      } catch {}
+      return [b(`send a webhook to ${host}`)];
+    }
   }
 }
 
@@ -169,14 +221,15 @@ export function describeAction(
 export function describeRule(
   rule: {
     trigger: AutomationTrigger;
+    match?: "all" | "any";
     conditions: AutomationCondition[];
     actions: AutomationAction[];
   },
   labels: RuleLabels,
 ): Part[] {
-  const join = (groups: Part[][]) =>
+  const join = (groups: Part[][], last = " and ") =>
     groups.flatMap((group, index) => [
-      ...(index === 0 ? [] : [t(index === groups.length - 1 ? " and " : ", ")]),
+      ...(index === 0 ? [] : [t(index === groups.length - 1 ? last : ", ")]),
       ...group,
     ]);
   return [
@@ -189,6 +242,7 @@ export function describeRule(
             rule.conditions.map((condition) =>
               describeCondition(condition, labels),
             ),
+            rule.match === "any" ? " or " : " and ",
           ),
         ]
       : []),

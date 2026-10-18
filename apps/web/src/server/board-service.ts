@@ -856,6 +856,7 @@ export async function createTaskRecord(
   inputDigest: string,
   actorId = authorId,
   activityAction = "Created task",
+  automation?: AutomationContext,
 ) {
   validateCore(body, context.board, people);
   validateValues(body.fieldValues, context.board, people);
@@ -911,6 +912,7 @@ export async function createTaskRecord(
     kind: "task.created",
     after: created,
     actorId,
+    automation,
   });
   return {
     outcome: "APPLIED" as const,
@@ -1046,6 +1048,8 @@ export async function createTaskInTransaction(
   input: unknown,
   actorId: string,
   importOptions?: { skipDuplicate: boolean; sourceId?: string },
+  /** Set when a rule creates the task, so chains stay bounded. */
+  automation?: AutomationContext,
 ): Promise<TaskMutationResult> {
   const body = createTaskSchema.parse(input);
   const context = await access(tx, actorId, body.boardId, true);
@@ -1147,7 +1151,17 @@ export async function createTaskInTransaction(
       policy,
       eligible: people,
     });
-  return createTaskRecord(tx, context, people, initial, actorId, inputDigest);
+  return createTaskRecord(
+    tx,
+    context,
+    people,
+    initial,
+    actorId,
+    inputDigest,
+    actorId,
+    automation ? "Created by automation" : "Created task",
+    automation,
+  );
 }
 
 const POSITION_STEP = 1024;
@@ -1882,6 +1896,16 @@ export async function createComment(input: unknown, headers: Headers) {
       message: "mentioned you in a comment",
       eventKey: `comment:${comment.id}:mentions:1`,
     });
+    const commented = await loadTask(tx, body.taskId);
+    if (commented && !commented.archivedAt)
+      await recordAutomationEvent(tx, {
+        boardId: task.boardId,
+        taskId: body.taskId,
+        kind: "comment.added",
+        after: snapshot(commented),
+        mentions: mentionIds,
+        actorId: user.id,
+      });
     await tx.boardEvent.create({
       data: {
         boardId: task.boardId,

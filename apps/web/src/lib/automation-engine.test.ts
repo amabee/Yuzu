@@ -156,3 +156,86 @@ describe("automation actions", () => {
     ).toBe(false);
   });
 });
+
+describe("slice 2 triggers and matching", () => {
+  it("fires when the checklist becomes complete, not when it stays complete", () => {
+    const trigger = { kind: "checklist.completed" as const };
+    expect(
+      triggerMatches(
+        trigger,
+        changed(
+          { checklist: { done: 1, total: 2 } },
+          { checklist: { done: 2, total: 2 } },
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      triggerMatches(
+        trigger,
+        changed(
+          { checklist: { done: 2, total: 2 } },
+          { checklist: { done: 2, total: 2 }, priority: "HIGH" },
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      triggerMatches(
+        trigger,
+        changed({ checklist: { done: 0, total: 0 } }, {}),
+      ),
+    ).toBe(false);
+  });
+
+  it("can require a mention for comment triggers", () => {
+    const comment = (mentions: string[]) => ({
+      kind: "comment.added" as const,
+      after: task(),
+      mentions,
+    });
+    expect(
+      triggerMatches(
+        { kind: "comment.added", mentionsOnly: true },
+        comment([]),
+      ),
+    ).toBe(false);
+    expect(
+      triggerMatches(
+        { kind: "comment.added", mentionsOnly: true },
+        comment(["mia"]),
+      ),
+    ).toBe(true);
+  });
+
+  it("matches any one condition when asked", () => {
+    const conditions = [
+      { subject: "priority" as const, op: "is" as const, value: "HIGH" },
+      { subject: "priority" as const, op: "is" as const, value: "URGENT" },
+    ];
+    expect(conditionsMatch(conditions, task({ priority: "URGENT" }))).toBe(
+      false,
+    );
+    expect(
+      conditionsMatch(conditions, task({ priority: "URGENT" }), "any"),
+    ).toBe(true);
+  });
+
+  it("hands task creations and webhooks to the runner", () => {
+    const plan = planActions(
+      [
+        {
+          kind: "create.task",
+          boardId: null,
+          name: "QA: {task}",
+          assigneeIds: [],
+          dueInDays: null,
+        },
+        { kind: "webhook", url: "https://hooks.example.com/yuzu" },
+      ],
+      task(),
+      "2026-10-30",
+    );
+    expect(plan.changes).toEqual({});
+    expect(plan.creations).toHaveLength(1);
+    expect(plan.webhooks).toEqual(["https://hooks.example.com/yuzu"]);
+  });
+});
