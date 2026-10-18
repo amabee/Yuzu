@@ -1918,3 +1918,248 @@ body:has(:is(.task-sheet-panel, .export-sheet-panel)[data-state="open"])
     transition: none;
   }
 }
+
+/* ---------- Projects ---------- */
+/* Project colors are palette keys stored on the record, never raw hex. The
+   fills are categorical and mixed toward the active theme's card color so they
+   sit inside custom themes; initials stay white for contrast. */
+:root {
+  --project-teal: #0f7d84;
+  --project-blue: #2f5fb3;
+  --project-sky: #2b86b8;
+  --project-citrus: #b7791f;
+  --project-green: #3d8a4f;
+  --project-coral: #c4553f;
+  --project-rose: #b8456f;
+  --project-slate: #56677a;
+}
+.project-badge {
+  --project-fill: var(--project-teal);
+  display: inline-grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--project-fill);
+  color: #fff;
+  font-family: var(--font-display, inherit);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+.project-badge[data-size="lg"] {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  font-size: 26px;
+}
+.project-badge[data-color="blue"] {
+  --project-fill: var(--project-blue);
+}
+.project-badge[data-color="sky"] {
+  --project-fill: var(--project-sky);
+}
+.project-badge[data-color="citrus"] {
+  --project-fill: var(--project-citrus);
+}
+.project-badge[data-color="green"] {
+  --project-fill: var(--project-green);
+}
+.project-badge[data-color="coral"] {
+  --project-fill: var(--project-coral);
+}
+.project-badge[data-color="rose"] {
+  --project-fill: var(--project-rose);
+}
+.project-badge[data-color="slate"] {
+  --project-fill: var(--project-slate);
+}
+
+.project-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.project-swatch {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  border: 2px solid transparent;
+  outline-offset: 2px;
+}
+.project-swatch[aria-checked="true"] {
+  border-color: var(--background);
+  outline: 2px solid var(--foreground);
+}
+.project-choice {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  align-items: start;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) / 1.2);
+  cursor: pointer;
+}
+.project-choice:has(input:checked) {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 7%, transparent);
+}
+.project-choice:has(input:focus-visible) {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.project-choice small {
+  grid-column: 2;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+/* Project page: the badge anchors the title; the boards read as a ledger. */
+.project-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 28px;
+}
+.project-hero h1 {
+  font-family: var(--font-display, inherit);
+  font-size: clamp(1.9rem, 3.4vw, 2.6rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+.project-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.project-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+.project-avatars {
+  display: flex;
+  align-items: center;
+}
+.project-avatars > span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin-left: -6px;
+  border: 2px solid var(--background);
+  border-radius: 999px;
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+  font-size: 11px;
+  font-weight: 600;
+}
+.project-avatars > span:first-child {
+  margin-left: 0;
+}
+.project-boards {
+  border-top: 1px solid var(--border);
+}
+.project-board-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 220px) auto;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.project-board-row a {
+  font-weight: 600;
+}
+.project-board-row a:hover {
+  color: var(--primary);
+}
+.project-board-row small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.project-progress {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--muted);
+}
+.project-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+}
+.project-empty {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  padding: 40px 4px;
+  border-top: 1px solid var(--border);
+}
+@media (max-width: 640px) {
+  .project-board-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .project-board-row .project-progress-cell {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .project-hero-actions {
+    margin-left: 0;
+  }
+}
+.task-select.project-role-select {
+  flex: none;
+  width: 7.5rem;
+}
+.project-panels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 28px;
+  margin-top: 36px;
+}
+.project-panels h2 {
+  margin-bottom: 10px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.project-panels ul {
+  border-top: 1px solid var(--border);
+}
+.project-panels li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+.project-panels li a {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-panels li a:hover {
+  color: var(--primary);
+}
+.project-panels small,
+.project-panel-empty {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.project-panels small {
+  flex-shrink: 0;
+}

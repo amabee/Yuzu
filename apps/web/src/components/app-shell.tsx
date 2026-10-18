@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import {
   CheckCheck,
   FolderOpen,
-  Columns3,
   Palette,
   Home,
   LayoutGrid,
@@ -38,6 +37,9 @@ import {
   type NavigationWorkspace,
 } from "@/components/workspace-search";
 import { SignOut } from "@/components/sign-out";
+import { useNavigationLiveSync } from "@/components/projects/use-navigation-live-sync";
+import { ProjectNavigation } from "@/components/projects/project-navigation";
+import type { ProjectSummary } from "@/lib/project-contract";
 import { NotificationBell } from "@/components/notifications/notification-inbox";
 
 const navigation = [
@@ -51,18 +53,28 @@ function WorkspaceSidebar({
   installationName = "Yuzu",
   workspaceName = "Your team's space",
   workspaces,
+  projects,
+  creatableWorkspaces,
   role,
 }: {
   installationName?: string;
   workspaceName?: string;
   workspaces: NavigationWorkspace[];
+  projects: ProjectSummary[];
+  creatableWorkspaces: { id: string; name: string }[];
   role?: string;
 }) {
   const pathname = usePathname();
   const { isMobile, setOpenMobile } = useSidebar();
   const close = () => setOpenMobile(false);
-  const activeWorkspace = workspaces.find((item) =>
-    item.boards.some((board) => pathname === `/boards/${board.id}`),
+  const activeWorkspace = workspaces.find(
+    (item) =>
+      item.boards.some((board) => pathname === `/boards/${board.id}`) ||
+      projects.some(
+        (project) =>
+          project.workspaceId === item.id &&
+          pathname === `/projects/${project.id}`,
+      ),
   );
   return (
     <Sidebar collapsible="icon" className="border-sidebar-border">
@@ -145,47 +157,12 @@ function WorkspaceSidebar({
             </nav>
           </SidebarGroupContent>
         </SidebarGroup>
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-sidebar-foreground/65">
-            Workspaces
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <nav aria-label="Workspace boards">
-              <SidebarMenu>
-                {workspaces.map((workspace) => (
-                  <SidebarMenuItem key={workspace.id}>
-                    <div className="workspace-nav-label group-data-[collapsible=icon]:hidden">
-                      <FolderOpen size={14} />
-                      {workspace.name}
-                    </div>
-                    {workspace.boards.map((board) => (
-                      <SidebarMenuButton
-                        key={board.id}
-                        asChild
-                        tooltip={board.name}
-                        isActive={pathname === `/boards/${board.id}`}
-                        className="h-9"
-                      >
-                        <Link
-                          href={`/boards/${board.id}`}
-                          onClick={close}
-                          aria-current={
-                            pathname === `/boards/${board.id}`
-                              ? "page"
-                              : undefined
-                          }
-                        >
-                          <Columns3 size={16} />
-                          <span>{board.name}</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    ))}
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </nav>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        <ProjectNavigation
+          projects={projects}
+          workspaces={workspaces}
+          creatableWorkspaces={creatableWorkspaces}
+          isAdmin={role === "OWNER" || role === "ADMIN"}
+        />
         {(role === "OWNER" || role === "ADMIN") && (
           <SidebarGroup>
             <SidebarGroupLabel className="text-sidebar-foreground/65">
@@ -234,6 +211,8 @@ export function AppShell({
   ownerName,
   sidebarDefaultOpen = true,
   workspaces = [],
+  projects = [],
+  creatableWorkspaces = [],
   role,
 }: {
   principalId: string;
@@ -243,9 +222,12 @@ export function AppShell({
   ownerName?: string;
   sidebarDefaultOpen?: boolean;
   workspaces?: NavigationWorkspace[];
+  projects?: ProjectSummary[];
+  creatableWorkspaces?: { id: string; name: string }[];
   role?: string;
 }) {
   const pathname = usePathname();
+  useNavigationLiveSync(principalId);
   const title =
     navigation.find(
       (item) =>
@@ -273,6 +255,8 @@ export function AppShell({
         installationName={installationName}
         workspaceName={workspaceName}
         workspaces={workspaces}
+        projects={projects}
+        creatableWorkspaces={creatableWorkspaces}
         role={role}
       />
       <SidebarInset className="min-w-0 bg-transparent">

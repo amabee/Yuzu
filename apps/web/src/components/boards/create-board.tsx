@@ -13,19 +13,26 @@ import {
 import { apiRequest } from "@/lib/api-client";
 export function CreateBoard({
   workspaces,
+  project,
 }: {
   workspaces: { id: string; name: string }[];
+  /** Create inside this project; its workspace is implied. */
+  project?: { id: string; name: string };
 }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [workspaceId, setWorkspaceId] = useState(workspaces[0]?.id ?? "");
   const router = useRouter();
+  const selectedWorkspace =
+    workspaces.find((item) => item.id === workspaceId) ?? workspaces[0];
   const mutation = useMutation({
     mutationFn: async () =>
       (
         await apiRequest<{ id: string }>("/api/v1/boards/create-board", {
           method: "POST",
-          json: { workspaceId, name },
+          json: project
+            ? { projectId: project.id, name }
+            : { workspaceId: selectedWorkspace?.id, name },
         })
       ).data,
     onSuccess: (board) => {
@@ -36,8 +43,11 @@ export function CreateBoard({
   });
   return (
     <>
-      <Button disabled={!workspaces.length} onClick={() => setOpen(true)}>
-        Create board
+      <Button
+        disabled={!project && !workspaces.length}
+        onClick={() => setOpen(true)}
+      >
+        {project ? "New board" : "Create board"}
       </Button>
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent className="board-details-panel">
@@ -63,21 +73,25 @@ export function CreateBoard({
                 onChange={(event) => setName(event.target.value)}
               />
             </label>
-            <label className="task-field-label">
-              Workspace
-              <select
-                aria-label="Board workspace"
-                className="task-select"
-                value={workspaceId}
-                onChange={(event) => setWorkspaceId(event.target.value)}
-              >
-                {workspaces.map((workspace) => (
-                  <option key={workspace.id} value={workspace.id}>
-                    {workspace.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {project ? (
+              <p className="text-sm text-muted-foreground">In {project.name}</p>
+            ) : (
+              <label className="task-field-label">
+                Workspace
+                <select
+                  aria-label="Board workspace"
+                  className="task-select"
+                  value={selectedWorkspace?.id ?? ""}
+                  onChange={(event) => setWorkspaceId(event.target.value)}
+                >
+                  {workspaces.map((workspace) => (
+                    <option key={workspace.id} value={workspace.id}>
+                      {workspace.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             {mutation.error && (
               <p role="alert" className="text-sm text-destructive">
                 {mutation.error.message}

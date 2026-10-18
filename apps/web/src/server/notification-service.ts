@@ -67,7 +67,7 @@ export async function notificationInbox(
       take: 31,
       include: {
         actor: { select: { name: true } },
-        board: { select: { name: true } },
+        board: { select: { name: true, project: { select: { name: true } } } },
         task: { select: { name: true } },
         proposal: { select: { changes: true } },
       },
@@ -89,6 +89,7 @@ export async function notificationInbox(
               ?.name ?? "Task request",
           ),
         boardName: row.board.name,
+        projectName: row.board.project?.name ?? null,
         createdAt: row.createdAt.toISOString(),
         readAt: row.readAt?.toISOString() ?? null,
       })),

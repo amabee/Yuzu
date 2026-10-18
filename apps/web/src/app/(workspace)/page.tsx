@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { workspaceContext } from "@/server/workspace-access";
 import { workspaceDashboard } from "@/server/dashboard-service";
 import { WorkspaceDashboard } from "@/components/dashboard/workspace-dashboard";
+import { visibleProjects } from "@/server/project-service";
 export default async function OverviewPage() {
   const { user, workspace, workspaces } = await workspaceContext();
   const data = await workspaceDashboard(await headers());
@@ -33,6 +34,12 @@ export default async function OverviewPage() {
         principalId={user.id}
         initialData={data}
         workspaces={workspaces.map(({ id, name }) => ({ id, name }))}
+        projects={(
+          await visibleProjects(user, {
+            workspaceId: { in: workspaces.map((item) => item.id) },
+            archived: false,
+          })
+        ).map(({ id, name, workspaceId }) => ({ id, name, workspaceId }))}
       />
       <div className="workspace-quick-links">
         <Link href="/approvals">

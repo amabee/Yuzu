@@ -42,6 +42,7 @@ export async function searchTasks(
               id: true,
               name: true,
               workspace: { select: { name: true } },
+              project: { select: { name: true } },
             },
           },
         },
@@ -60,6 +61,7 @@ export async function searchTasks(
           boardId: task.board.id,
           boardName: task.board.name,
           workspaceName: task.board.workspace.name,
+          projectName: task.board.project?.name ?? null,
         })),
       };
     },

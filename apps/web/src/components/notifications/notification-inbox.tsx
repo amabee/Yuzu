@@ -291,6 +291,7 @@ export function NotificationInboxView({
                     {item.name}
                   </span>
                   <span className="mt-1.5 block text-xs text-muted-foreground">
+                    {item.projectName ? `${item.projectName} / ` : ""}
                     {item.boardName}
                   </span>
                   <time

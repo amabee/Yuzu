@@ -22,7 +22,7 @@ import { taskSearchResultSchema } from "@/lib/task-search-contract";
 export type NavigationWorkspace = {
   id: string;
   name: string;
-  boards: { id: string; name: string }[];
+  boards: { id: string; name: string; projectId?: string | null }[];
 };
 export function WorkspaceSearch({
   workspaces,
@@ -164,7 +164,9 @@ export function WorkspaceSearch({
                           {task.name}
                         </p>
                         <p className="mt-1 text-xs text-muted-foreground">
-                          {task.workspaceName} / {task.boardName}
+                          {task.workspaceName} /{" "}
+                          {task.projectName ? `${task.projectName} / ` : ""}
+                          {task.boardName}
                           {task.archived ? " / Archived" : ""}
                         </p>
                         {task.description && (

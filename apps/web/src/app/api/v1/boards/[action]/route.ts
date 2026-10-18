@@ -1,6 +1,6 @@
 import { mutateSavedView } from "@/server/saved-view-service";
 import { z } from "zod";
-import { notifyBoardMutation } from "@/server/realtime";
+import { notifyBoardMutation, notifyNavigationChange } from "@/server/realtime";
 import { recordId } from "@/lib/board-contract";
 import {
   boardState,
@@ -65,6 +65,12 @@ async function handle(request: Request, action: string) {
         { ...(body as object), ...(data as object) },
         data,
       );
+      // A new board appears in other people's sidebars.
+      if (action === "create-board") {
+        const created = data as { id?: unknown };
+        if (typeof created?.id === "string")
+          void notifyNavigationChange({ boardId: created.id });
+      }
     } else throw new SetupError(404, "NOT_FOUND", "Board action not found.");
     return Response.json(
       { data, requestId },
