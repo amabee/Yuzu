@@ -75,12 +75,18 @@ export function BoardSurface({
   initialState,
   initialTaskId,
   initialCommentsTab,
+  initialViewId,
+  initialLayout,
   group,
   info,
 }: {
   initialState: BoardState;
   initialTaskId?: string;
   initialCommentsTab?: boolean;
+  /** From `?view=`: open this saved view instead of the remembered one. */
+  initialViewId?: string;
+  /** From `?layout=`: show this layout for this visit. */
+  initialLayout?: ViewConfig["layout"];
   name: string;
   fields: { id: string; name: string; type?: string }[];
   statuses: string[];
@@ -121,15 +127,23 @@ export function BoardSurface({
   const notify = (message: string, kind: BoardNotice["kind"]) =>
     setNotice({ id: crypto.randomUUID(), message, kind });
   const queryClient = useQueryClient();
+  const linkedView = initialState.savedViews?.find(
+    (view) => view.id === initialViewId,
+  );
   const initialView =
+    linkedView ??
     initialState.savedViews?.find(
       (view) => view.id === initialState.selectedViewId,
-    ) ?? null;
+    ) ??
+    null;
   const [activeView, setActiveView] = useState<SavedView | null>(initialView);
   const [viewConfig, setViewConfig] = useState<ViewConfig>({
-    ...(initialState.pagination?.config ??
+    // A linked view replaces the server's first page config; the query then
+    // refetches with the linked filters.
+    ...((linkedView ? linkedView.config : initialState.pagination?.config) ??
       initialView?.config ??
       defaultViewConfig),
+    ...(initialLayout ? { layout: initialLayout } : {}),
     ...(initialTaskId
       ? {
           archived: Boolean(
@@ -492,8 +506,18 @@ export function BoardSurface({
         : String(value);
   };
   const view = viewConfig.layout;
-  const setView = (value: ViewConfig["layout"]) =>
+  // Keep the URL shareable: the board id stays the same across layouts.
+  const linkView = (changes: { layout?: string; view?: string | null }) => {
+    const url = new URL(window.location.href);
+    if (changes.layout) url.searchParams.set("layout", changes.layout);
+    if (changes.view === null) url.searchParams.delete("view");
+    else if (changes.view) url.searchParams.set("view", changes.view);
+    window.history.replaceState(null, "", url.pathname + url.search);
+  };
+  const setView = (value: ViewConfig["layout"]) => {
     configureView("layout", value);
+    linkView({ layout: value === "board" ? "kanban" : value });
+  };
   const [filterOpen, setFilterOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const visibleStatuses = (statuses.length ? statuses : [group]).filter(
@@ -520,6 +544,10 @@ export function BoardSurface({
         onApply={(view, config) => {
           setActiveView(view);
           setViewConfig(config);
+          linkView({
+            view: view?.id ?? null,
+            layout: config.layout === "board" ? "kanban" : config.layout,
+          });
         }}
         onRefresh={() => query.refetch()}
         notify={notify}
@@ -538,7 +566,7 @@ export function BoardSurface({
           onClick={() => setView("board")}
         >
           <Columns3 size={16} />
-          Board
+          Kanban
         </Button>
         <Button
           variant="ghost"

@@ -12,12 +12,23 @@ import { boardState } from "@/server/board-service";
 import { z } from "zod";
 import { ProjectBadge } from "@/components/projects/project-badge";
 
+// "kanban" in URLs; saved view configs keep their original "board" value.
+const urlLayouts = new Map<string, "board" | "table">([
+  ["kanban", "board"],
+  ["table", "table"],
+]);
+
 export default async function BoardPage({
   params,
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ task?: string; tab?: string }>;
+  searchParams: Promise<{
+    task?: string;
+    tab?: string;
+    view?: string;
+    layout?: string;
+  }>;
 }) {
   const { user } = await workspaceContext();
   const board = await getDatabase().board.findFirst({
@@ -133,6 +144,13 @@ export default async function BoardPage({
             .safeParse((await searchParams).task).data
         }
         initialState={initialState}
+        initialViewId={
+          z
+            .string()
+            .uuid()
+            .safeParse((await searchParams).view).data
+        }
+        initialLayout={urlLayouts.get((await searchParams).layout ?? "")}
         name={board.name}
         fields={board.columns}
         statuses={
