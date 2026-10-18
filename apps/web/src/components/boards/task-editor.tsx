@@ -8,12 +8,10 @@ import { createStore } from "zustand/vanilla";
 import { useStore } from "zustand";
 import {
   Archive,
-  CalendarDays,
-  Flag,
+  ArrowRight,
+  ChevronDown,
   ListChecks,
   FileText,
-  SlidersHorizontal,
-  Users,
   Check,
   History,
   Plus,
@@ -27,7 +25,6 @@ import {
   AssigneeAvatars,
   StatusIcon,
   optionBadgeStyle,
-  formatDueDate,
   priorityOptions,
 } from "./board-presentation";
 import { Button } from "@/components/ui/button";
@@ -223,69 +220,62 @@ export function TaskEditor({
   return (
     <>
       <header className="task-sheet-header">
-        {task && (
-          <div className="task-sheet-heading-meta">
-            <span
-              className="task-meta-chip"
-              style={optionBadgeStyle(selectedStatus)}
+        <div className="task-sheet-heading-meta">
+          <label
+            className="task-status-pill"
+            style={optionBadgeStyle(selectedStatus)}
+          >
+            <StatusIcon icon={selectedStatus?.icon} />
+            <select
+              aria-label="Task status"
+              form="task-editor-form"
+              disabled={!editable || pending}
+              value={draft.statusId}
+              onChange={(event) => editDraft({ statusId: event.target.value })}
             >
-              <StatusIcon icon={selectedStatus?.icon} />
-              {selectedStatus?.label ?? "No status"}
-            </span>
+              <option value="">No status</option>
+              {statusOptions.map((option) => (
+                <option value={option.id} key={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={14} aria-hidden="true" />
+          </label>
+          {task && (
             <span className="task-reference">
               #{task.id.slice(-6).toUpperCase()}
             </span>
-          </div>
-        )}
-        <SheetTitle className="task-sheet-title">
+          )}
+        </div>
+        <SheetTitle className="sr-only">
           {task ? draft.name : "Create task"}
         </SheetTitle>
-        {task && (
-          <>
-            <div className="task-header-tags">
-              {state.fields
-                .filter((field) => field.type === "TAGS")
-                .flatMap((field) => {
-                  const value = draft.fieldValues[field.id];
-                  return (Array.isArray(value) ? value : []).map((id) => {
-                    const option = field.options.find((item) => item.id === id);
-                    return (
-                      <span
-                        className="task-meta-chip"
-                        style={optionBadgeStyle(option)}
-                        key={`${field.id}-${id}`}
-                      >
-                        {option?.label ?? id}
-                      </span>
-                    );
-                  });
-                })}
-            </div>
-            <div className="task-sheet-metadata">
-              <AssigneeAvatars ids={draft.assigneeIds} people={state.people} />
-              {draft.dueDate && (
-                <span className="task-meta-chip">
-                  <CalendarDays size={14} />
-                  {formatDueDate(draft.dueDate, true)}
-                </span>
-              )}
-              <span
-                className="task-meta-chip"
-                style={optionBadgeStyle(selectedPriority)}
-              >
-                <Flag size={14} />
-                {selectedPriority?.label ?? draft.priority}
-              </span>
-            </div>
-          </>
-        )}
+        <textarea
+          aria-label="Task name"
+          form="task-editor-form"
+          className="task-title-input"
+          placeholder="Name this task"
+          required
+          rows={1}
+          maxLength={200}
+          disabled={!editable || pending}
+          autoFocus={!task}
+          value={draft.name}
+          onChange={(event) =>
+            editDraft({ name: event.target.value.replace(/\n/g, " ") })
+          }
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.preventDefault();
+          }}
+        />
       </header>
       <SheetDescription className="task-sheet-description">
         {task?.archivedAt
           ? "Archived task · read-only"
-          : editable
-            ? "Keep the task, people, and next steps together."
-            : "You can view this task. Editing requires creator, assignee, or editor access."}
+          : task
+            ? `Created by ${task.createdByName}${editable ? "" : " · view only. Editing requires creator, assignee, or editor access."}`
+            : "Click any property to set it."}
       </SheetDescription>
       {task && (
         <div
@@ -448,19 +438,288 @@ export function TaskEditor({
           }}
         >
           <fieldset disabled={!editable || pending} className="space-y-5">
-            <details className="task-title-edit" open={!task}>
-              <summary>{task ? "Rename task" : "Task title"}</summary>
-              <label className="task-field-label">
-                Task name
-                <Input
-                  aria-label="Task name"
-                  required
-                  maxLength={200}
-                  value={draft.name}
-                  onChange={(event) => editDraft({ name: event.target.value })}
-                />
-              </label>
-            </details>
+            <div
+              className="task-props"
+              role="group"
+              aria-label="Task properties"
+            >
+              <div className="task-prop">
+                <span className="task-prop-label">Assignees</span>
+                <details className="task-prop-value task-prop-people">
+                  <summary>
+                    {draft.assigneeIds.length ? (
+                      <>
+                        <AssigneeAvatars
+                          ids={draft.assigneeIds}
+                          people={state.people}
+                        />
+                        <span className="truncate">
+                          {draft.assigneeIds
+                            .map(
+                              (id) =>
+                                state.people
+                                  .find((person) => person.id === id)
+                                  ?.name.split(" ")[0] ?? "Former member",
+                            )
+                            .join(", ")}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="task-prop-empty">Add people</span>
+                    )}
+                  </summary>
+                  <div className="task-people-options">
+                    {state.people.map((person) => (
+                      <label key={person.id}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Assign ${person.name}`}
+                          checked={draft.assigneeIds.includes(person.id)}
+                          onChange={(event) =>
+                            editDraft({
+                              assigneeIds: event.target.checked
+                                ? [...draft.assigneeIds, person.id]
+                                : draft.assigneeIds.filter(
+                                    (id) => id !== person.id,
+                                  ),
+                            })
+                          }
+                        />
+                        <AssigneeAvatars
+                          ids={[person.id]}
+                          people={state.people}
+                        />
+                        {person.name}
+                      </label>
+                    ))}
+                  </div>
+                </details>
+              </div>
+              <div className="task-prop">
+                <span className="task-prop-label">Dates</span>
+                <div className="task-prop-value task-prop-dates">
+                  <input
+                    aria-label="Task start date"
+                    type="date"
+                    value={draft.startDate}
+                    max={draft.dueDate || undefined}
+                    aria-invalid={dateOrderInvalid || undefined}
+                    aria-describedby={
+                      dateOrderInvalid ? "task-date-order" : undefined
+                    }
+                    onChange={(event) =>
+                      editDraft({ startDate: event.target.value })
+                    }
+                  />
+                  <ArrowRight size={14} aria-hidden="true" />
+                  <input
+                    aria-label="Task due date"
+                    type="date"
+                    value={draft.dueDate}
+                    min={draft.startDate || undefined}
+                    onChange={(event) =>
+                      editDraft({ dueDate: event.target.value })
+                    }
+                  />
+                </div>
+              </div>
+              {dateOrderInvalid && (
+                <p
+                  id="task-date-order"
+                  role="alert"
+                  className="text-sm text-destructive"
+                >
+                  The start date must be on or before the due date.
+                </p>
+              )}
+              <div className="task-prop">
+                <span className="task-prop-label">Priority</span>
+                <label className="task-prop-value">
+                  <span
+                    className="task-prop-dot"
+                    style={{ background: selectedPriority?.color ?? undefined }}
+                    aria-hidden="true"
+                  />
+                  <select
+                    aria-label="Task priority"
+                    value={draft.priority}
+                    onChange={(event) =>
+                      editDraft({ priority: event.target.value })
+                    }
+                  >
+                    {priorityChoices.map(({ id: priority, label }) => (
+                      <option key={priority} value={priority}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="task-prop">
+                <span className="task-prop-label">Group</span>
+                <label className="task-prop-value">
+                  <select
+                    aria-label="Task group"
+                    value={draft.groupId}
+                    onChange={(event) =>
+                      editDraft({ groupId: event.target.value })
+                    }
+                  >
+                    <option value="">No group</option>
+                    {state.groups.map((group) => (
+                      <option value={group.id} key={group.id}>
+                        {group.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              {customFields.map((field) => {
+                const value = draft.fieldValues[field.id];
+                const label = field.name;
+                return (
+                  <div key={field.id} className="task-prop">
+                    <span className="task-prop-label">{label}</span>
+                    <div className="task-prop-value">
+                      {field.type === "CHECKBOX" ? (
+                        <input
+                          aria-label={label}
+                          type="checkbox"
+                          checked={value === true}
+                          onChange={(event) =>
+                            changeValue(field.id, event.target.checked)
+                          }
+                        />
+                      ) : field.type === "TAGS" ? (
+                        <div
+                          role="group"
+                          aria-label={label}
+                          className="flex flex-wrap gap-2 pt-1"
+                        >
+                          {field.options.map((option) => {
+                            const values = Array.isArray(value) ? value : [];
+                            const chosen = values.includes(option.id);
+                            return (
+                              <Button
+                                key={option.id}
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="rounded-full aria-pressed:border-primary aria-pressed:bg-primary aria-pressed:text-primary-foreground"
+                                aria-pressed={chosen}
+                                style={
+                                  chosen
+                                    ? optionBadgeStyle(option)
+                                    : option.color
+                                      ? { borderColor: option.color }
+                                      : undefined
+                                }
+                                onClick={() =>
+                                  changeValue(
+                                    field.id,
+                                    chosen
+                                      ? values.filter((id) => id !== option.id)
+                                      : [...values, option.id],
+                                  )
+                                }
+                              >
+                                {option.label}
+                              </Button>
+                            );
+                          })}
+                        </div>
+                      ) : field.type === "PEOPLE" ? (
+                        <select
+                          aria-label={label}
+                          multiple
+                          className="task-select min-h-20"
+                          value={Array.isArray(value) ? value : []}
+                          onChange={(event) =>
+                            changeValue(
+                              field.id,
+                              Array.from(
+                                event.target.selectedOptions,
+                                (option) => option.value,
+                              ),
+                            )
+                          }
+                        >
+                          {(field.type === "PEOPLE"
+                            ? state.people.map((person) => ({
+                                id: person.id,
+                                label: person.name,
+                              }))
+                            : field.options
+                          ).map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : ["STATUS", "SINGLE_SELECT"].includes(field.type) ? (
+                        <select
+                          aria-label={label}
+                          className="task-select"
+                          value={typeof value === "string" ? value : ""}
+                          onChange={(event) =>
+                            changeValue(field.id, event.target.value || null)
+                          }
+                        >
+                          <option value="">None</option>
+                          {field.options.map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : field.type === "LONG_TEXT" ? (
+                        <textarea
+                          aria-label={label}
+                          className="task-textarea"
+                          rows={3}
+                          value={typeof value === "string" ? value : ""}
+                          onChange={(event) =>
+                            changeValue(field.id, event.target.value || null)
+                          }
+                        />
+                      ) : (
+                        <Input
+                          aria-label={label}
+                          type={
+                            field.type === "NUMBER"
+                              ? "number"
+                              : field.type === "DATE"
+                                ? "date"
+                                : field.type === "EMAIL"
+                                  ? "email"
+                                  : field.type === "URL"
+                                    ? "url"
+                                    : "text"
+                          }
+                          step={field.type === "NUMBER" ? "any" : undefined}
+                          value={
+                            typeof value === "string" ||
+                            typeof value === "number"
+                              ? value
+                              : ""
+                          }
+                          onChange={(event) =>
+                            changeValue(
+                              field.id,
+                              !event.target.value
+                                ? null
+                                : field.type === "NUMBER"
+                                  ? Number(event.target.value)
+                                  : event.target.value,
+                            )
+                          }
+                        />
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
             <label className="task-field-label">
               <span className="task-section-heading">
                 <FileText size={15} /> Description
@@ -653,279 +912,6 @@ export function TaskEditor({
                 </section>
               );
             })}
-            <h3 className="task-section-heading border-t pt-4">
-              <SlidersHorizontal size={15} />
-              Custom fields
-            </h3>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="task-field-label">
-                Status
-                <select
-                  aria-label="Task status"
-                  className="task-select"
-                  value={draft.statusId}
-                  onChange={(event) =>
-                    editDraft({ statusId: event.target.value })
-                  }
-                >
-                  <option value="">No status</option>
-                  {statusOptions.map((option) => (
-                    <option value={option.id} key={option.id}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="task-field-label">
-                Priority
-                <select
-                  aria-label="Task priority"
-                  className="task-select"
-                  value={draft.priority}
-                  onChange={(event) =>
-                    editDraft({ priority: event.target.value })
-                  }
-                >
-                  {priorityChoices.map(({ id: priority, label }) => (
-                    <option key={priority} value={priority}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="task-field-label">
-                Start date
-                <Input
-                  aria-label="Task start date"
-                  type="date"
-                  value={draft.startDate}
-                  max={draft.dueDate || undefined}
-                  aria-invalid={dateOrderInvalid || undefined}
-                  aria-describedby={
-                    dateOrderInvalid ? "task-date-order" : undefined
-                  }
-                  onChange={(event) =>
-                    editDraft({ startDate: event.target.value })
-                  }
-                />
-              </label>
-              <label className="task-field-label">
-                Due date
-                <Input
-                  aria-label="Task due date"
-                  type="date"
-                  value={draft.dueDate}
-                  min={draft.startDate || undefined}
-                  onChange={(event) =>
-                    editDraft({ dueDate: event.target.value })
-                  }
-                />
-              </label>
-              {dateOrderInvalid && (
-                <p
-                  id="task-date-order"
-                  role="alert"
-                  className="text-sm text-destructive sm:col-span-2"
-                >
-                  The start date must be on or before the due date.
-                </p>
-              )}
-              <label className="task-field-label">
-                Group
-                <select
-                  aria-label="Task group"
-                  className="task-select"
-                  value={draft.groupId}
-                  onChange={(event) =>
-                    editDraft({ groupId: event.target.value })
-                  }
-                >
-                  <option value="">No group</option>
-                  {state.groups.map((group) => (
-                    <option value={group.id} key={group.id}>
-                      {group.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            {customFields.map((field) => {
-              const value = draft.fieldValues[field.id];
-              const label = field.name;
-              return (
-                <div key={field.id}>
-                  <div className="task-field-label">
-                    <span>{label}</span>
-                    {field.type === "CHECKBOX" ? (
-                      <input
-                        aria-label={label}
-                        type="checkbox"
-                        checked={value === true}
-                        onChange={(event) =>
-                          changeValue(field.id, event.target.checked)
-                        }
-                      />
-                    ) : field.type === "TAGS" ? (
-                      <div
-                        role="group"
-                        aria-label={label}
-                        className="flex flex-wrap gap-2 pt-1"
-                      >
-                        {field.options.map((option) => {
-                          const values = Array.isArray(value) ? value : [];
-                          const chosen = values.includes(option.id);
-                          return (
-                            <Button
-                              key={option.id}
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              className="rounded-full aria-pressed:border-primary aria-pressed:bg-primary aria-pressed:text-primary-foreground"
-                              aria-pressed={chosen}
-                              style={
-                                chosen
-                                  ? optionBadgeStyle(option)
-                                  : option.color
-                                    ? { borderColor: option.color }
-                                    : undefined
-                              }
-                              onClick={() =>
-                                changeValue(
-                                  field.id,
-                                  chosen
-                                    ? values.filter((id) => id !== option.id)
-                                    : [...values, option.id],
-                                )
-                              }
-                            >
-                              {option.label}
-                            </Button>
-                          );
-                        })}
-                      </div>
-                    ) : field.type === "PEOPLE" ? (
-                      <select
-                        aria-label={label}
-                        multiple
-                        className="task-select min-h-20"
-                        value={Array.isArray(value) ? value : []}
-                        onChange={(event) =>
-                          changeValue(
-                            field.id,
-                            Array.from(
-                              event.target.selectedOptions,
-                              (option) => option.value,
-                            ),
-                          )
-                        }
-                      >
-                        {(field.type === "PEOPLE"
-                          ? state.people.map((person) => ({
-                              id: person.id,
-                              label: person.name,
-                            }))
-                          : field.options
-                        ).map((option) => (
-                          <option key={option.id} value={option.id}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    ) : ["STATUS", "SINGLE_SELECT"].includes(field.type) ? (
-                      <select
-                        aria-label={label}
-                        className="task-select"
-                        value={typeof value === "string" ? value : ""}
-                        onChange={(event) =>
-                          changeValue(field.id, event.target.value || null)
-                        }
-                      >
-                        <option value="">None</option>
-                        {field.options.map((option) => (
-                          <option key={option.id} value={option.id}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    ) : field.type === "LONG_TEXT" ? (
-                      <textarea
-                        aria-label={label}
-                        className="task-textarea"
-                        rows={3}
-                        value={typeof value === "string" ? value : ""}
-                        onChange={(event) =>
-                          changeValue(field.id, event.target.value || null)
-                        }
-                      />
-                    ) : (
-                      <Input
-                        aria-label={label}
-                        type={
-                          field.type === "NUMBER"
-                            ? "number"
-                            : field.type === "DATE"
-                              ? "date"
-                              : field.type === "EMAIL"
-                                ? "email"
-                                : field.type === "URL"
-                                  ? "url"
-                                  : "text"
-                        }
-                        step={field.type === "NUMBER" ? "any" : undefined}
-                        value={
-                          typeof value === "string" || typeof value === "number"
-                            ? value
-                            : ""
-                        }
-                        onChange={(event) =>
-                          changeValue(
-                            field.id,
-                            !event.target.value
-                              ? null
-                              : field.type === "NUMBER"
-                                ? Number(event.target.value)
-                                : event.target.value,
-                          )
-                        }
-                      />
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-            <section className="border-t pt-4">
-              <h3 className="task-section-heading mb-3">
-                <Users size={15} />
-                Assignees
-              </h3>
-              <div>
-                <div className="task-people-options">
-                  {state.people.map((person) => (
-                    <label key={person.id}>
-                      <input
-                        type="checkbox"
-                        aria-label={`Assign ${person.name}`}
-                        checked={draft.assigneeIds.includes(person.id)}
-                        onChange={(event) =>
-                          editDraft({
-                            assigneeIds: event.target.checked
-                              ? [...draft.assigneeIds, person.id]
-                              : draft.assigneeIds.filter(
-                                  (id) => id !== person.id,
-                                ),
-                          })
-                        }
-                      />
-                      <AssigneeAvatars
-                        ids={[person.id]}
-                        people={state.people}
-                      />
-                      {person.name}
-                    </label>
-                  ))}
-                </div>
-              </div>
-            </section>
           </fieldset>
           {error && (
             <p role="alert" className="text-sm text-destructive">

@@ -4059,3 +4059,172 @@ body:has(.task-panel[data-state="open"]) .yuzu-toast-viewport {
     border-radius: 0;
   }
 }
+
+/* Task panel: the properties list edits in place. */
+.task-status-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--muted) 70%, transparent);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.task-status-pill select {
+  appearance: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  border: 0;
+  outline: 0;
+  cursor: inherit;
+}
+.task-status-pill:focus-within {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.task-title-input {
+  display: block;
+  width: 100%;
+  margin-top: 0.75rem;
+  padding: 0.15rem 0.35rem;
+  margin-inline: -0.35rem;
+  resize: none;
+  field-sizing: content;
+  border: 1px solid transparent;
+  border-radius: 0.6rem;
+  background: transparent;
+  color: var(--foreground);
+  font-family: var(--font-display, inherit);
+  font-size: clamp(1.5rem, 3.4vw, 2rem);
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+.task-title-input:hover:not(:disabled) {
+  border-color: var(--border);
+}
+.task-title-input:focus {
+  outline: 0;
+  border-color: var(--ring);
+  background: color-mix(in oklab, var(--background) 60%, transparent);
+}
+.task-title-input:disabled {
+  opacity: 1;
+}
+.task-props {
+  display: grid;
+  gap: 0.15rem;
+}
+.task-prop {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  align-items: start;
+  gap: 0.75rem;
+}
+.task-prop-label {
+  padding-top: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--muted-foreground);
+}
+.task-prop-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.25rem;
+  padding: 0.25rem 0.5rem;
+  margin-left: -0.5rem;
+  border-radius: 0.6rem;
+  font-size: 0.9rem;
+  transition: background-color 120ms;
+}
+.task-prop-value:hover,
+.task-prop-value:focus-within {
+  background: color-mix(in oklab, var(--muted) 80%, transparent);
+}
+fieldset:disabled .task-prop-value:hover {
+  background: transparent;
+}
+.task-prop-value :is(select, input:not([type="checkbox"]), textarea) {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 500;
+  outline: 0;
+  cursor: pointer;
+}
+.task-prop-value select {
+  appearance: none;
+  flex: 1;
+}
+.task-prop-value
+  :is(
+    input[type="text"],
+    input[type="number"],
+    input[type="email"],
+    input[type="url"],
+    textarea
+  ) {
+  flex: 1;
+  cursor: text;
+}
+.task-prop-value select option {
+  background: var(--popover);
+  color: var(--popover-foreground);
+}
+.task-prop-value [data-slot="input"] {
+  height: auto;
+  padding: 0;
+  box-shadow: none;
+}
+.task-prop-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  flex: none;
+  border-radius: 999px;
+  background: var(--muted-foreground);
+}
+.task-prop-dates input {
+  flex: 0 1 auto;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.45rem;
+  background: color-mix(in oklab, var(--muted) 70%, transparent);
+  color-scheme: inherit;
+}
+.task-prop-dates svg {
+  color: var(--muted-foreground);
+}
+.task-prop-people {
+  display: block;
+}
+.task-prop-people summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 1.75rem;
+  list-style: none;
+  cursor: pointer;
+}
+.task-prop-people summary::-webkit-details-marker {
+  display: none;
+}
+.task-prop-people[open] .task-people-options {
+  margin-top: 0.5rem;
+}
+.task-prop-empty {
+  color: var(--muted-foreground);
+}
+@media (max-width: 480px) {
+  .task-prop {
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+    gap: 0.5rem;
+  }
+}

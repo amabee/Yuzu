@@ -818,7 +818,9 @@ test("password recovery works from email and revokes every existing session", as
       .getByRole("button", { name: "Sign in", exact: true })
       .click();
     await expect(
-      recoveryPage.getByRole("heading", { name: /^Good (morning|afternoon|evening), / }),
+      recoveryPage.getByRole("heading", {
+        name: /^Good (morning|afternoon|evening), /,
+      }),
     ).toBeVisible();
     expect(
       (await db.user.findUniqueOrThrow({ where: { id: owner.id } })).role,
@@ -3188,9 +3190,7 @@ test("task reference sheet persists option appearance, formats dates and shows r
   await expect(
     page.getByRole("tab", { name: "Details", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  await expect(page.locator(".task-sheet-header")).toContainText(
-    "Apr 16, 2026",
-  );
+  await expect(page.getByLabel("Task due date")).toHaveValue("2026-04-16");
   await expect(page.locator(".task-sheet-header .lucide-clock")).toHaveCount(1);
   await expect(
     page.getByRole("progressbar", { name: "Checklist progress" }),
@@ -4054,7 +4054,9 @@ test("maintenance routes members to recovery, blocks API access, and keeps admin
     await team.author.page.getByRole("link", { name: "Check again" }).click();
     await expect(team.author.page).toHaveURL("http://127.0.0.1:3100/");
     await expect(
-      team.author.page.getByRole("heading", { name: /^Good (morning|afternoon|evening), / }),
+      team.author.page.getByRole("heading", {
+        name: /^Good (morning|afternoon|evening), /,
+      }),
     ).toBeVisible();
   } finally {
     await db.installationSettings.update({
@@ -5198,13 +5200,14 @@ test("task sheet avoids automatic avatar tooltips and table shows live task chec
       .click();
     await expect(page.getByRole("dialog")).toBeFocused();
     await expect(page.getByRole("tooltip")).toHaveCount(0);
+    // The first stop is the status pill, not an avatar tooltip.
     await page.keyboard.press("Tab");
-    await expect(page.getByRole("tooltip")).toContainText("Request Author");
-    await page.keyboard.press("Escape");
+    await expect(page.getByLabel("Task status")).toBeFocused();
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
     // Hover tooltips still work after deliberately moving onto the avatar.
     await page
       .getByRole("dialog")
-      .locator('.task-sheet-metadata [role="img"][aria-label="Request Author"]')
+      .locator('.task-props summary [role="img"][aria-label="Request Author"]')
       .hover();
     await expect(page.getByRole("tooltip")).toContainText("Request Author");
     await page.mouse.move(0, 0);
