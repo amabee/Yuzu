@@ -904,6 +904,18 @@ async function runRule(rule: StoredRule, event: StoredEvent) {
                 : notice.userIds,
           ),
         ].filter((id) => people.has(id));
+        // Replacing: drop Yuzu's own unread assignment or mention notice for
+        // the same people and task, raised by the event this rule answers.
+        if (to.length && notice.replaceDefault && subjectId)
+          await tx.notification.deleteMany({
+            where: {
+              recipientId: { in: to },
+              taskId: subjectId,
+              kind: { in: ["ASSIGNMENT", "MENTION"] },
+              readAt: null,
+              createdAt: { gte: new Date(event.createdAt.getTime() - 5_000) },
+            },
+          });
         if (to.length)
           await createNotifications(tx, {
             recipientIds: to,

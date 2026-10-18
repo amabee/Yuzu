@@ -110,6 +110,8 @@ export const automationActionSchema = z.discriminatedUnion("kind", [
       userIds: z.array(personId).max(20).optional(),
       /** Custom text; {task}, {status}, {due} and friends fill in when it runs. */
       message: z.string().trim().max(280).optional(),
+      /** Send this instead of Yuzu's own assignment or mention notice. */
+      replaceDefault: z.boolean().optional(),
     })
     .strict()
     .refine(

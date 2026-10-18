@@ -137,6 +137,7 @@ export type PlannedChanges = {
 
 export type PlannedNotice = {
   message?: string;
+  replaceDefault?: boolean;
   to: "assignees" | "creator" | "people";
   userIds: string[];
 };
@@ -193,6 +194,7 @@ export function planActions(
           to: action.to,
           userIds: action.userIds ?? [],
           ...(action.message ? { message: action.message } : {}),
+          ...(action.replaceDefault ? { replaceDefault: true } : {}),
         });
         break;
       case "create.task":

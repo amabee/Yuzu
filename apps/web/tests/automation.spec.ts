@@ -884,3 +884,61 @@ test("slice 2 builder: schedules, custom messages, the webhook switch and its se
   await secret.getByRole("button", { name: "I've saved it" }).click();
   await expect(secret).toHaveCount(0);
 });
+
+test("a rule message can replace the built-in assignment notice", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const { boardId } = await ownerBoard(page);
+  const db = getDatabase();
+  const board = await db.board.findUniqueOrThrow({ where: { id: boardId } });
+  const member = await db.user.create({
+    data: {
+      name: "Yska Member",
+      email: "yska@example.test",
+      emailVerified: true,
+    },
+  });
+  await db.workspaceMember.create({
+    data: { workspaceId: board.workspaceId, userId: member.id },
+  });
+  expect(
+    (
+      await post(page, "/api/v1/automations/save", {
+        boardId,
+        name: "Welcome the assignee",
+        trigger: { kind: "task.created" },
+        actions: [
+          {
+            kind: "notify",
+            to: "assignees",
+            message: "The task “{task}” is yours now, from {creator} 🎉",
+            replaceDefault: true,
+          },
+        ],
+      })
+    ).status(),
+  ).toBe(200);
+  const created = await post(page, "/api/v1/boards/create-task", {
+    boardId,
+    createKey: crypto.randomUUID(),
+    name: "Sample task",
+    assigneeIds: [member.id],
+  });
+  const taskId = (await created.json()).data.taskId as string;
+  // Only the rule's message is left for the member.
+  await expect
+    .poll(
+      async () =>
+        (
+          await db.notification.findMany({
+            where: { recipientId: member.id, taskId },
+            select: { kind: true, message: true },
+          })
+        ).map((note) => `${note.kind}: ${note.message}`),
+      { timeout: 20_000 },
+    )
+    .toEqual([
+      "AUTOMATION: The task “Sample task” is yours now, from Team Owner 🎉",
+    ]);
+});

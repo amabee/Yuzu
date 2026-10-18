@@ -1403,11 +1403,13 @@ function RuleBuilder({
                             to: "people",
                             userIds: [value.slice(7)],
                             message: action.message,
+                            replaceDefault: action.replaceDefault,
                           }
                         : {
                             kind: "notify",
                             to: value as "assignees" | "creator",
                             message: action.message,
+                            replaceDefault: action.replaceDefault,
                           },
                     )
                   }
@@ -1435,6 +1437,26 @@ function RuleBuilder({
                     })
                   }
                 />
+                {!scheduled && (
+                  <label className="automation-replace">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(action.replaceDefault)}
+                      onChange={(event) =>
+                        setAction(index, {
+                          ...action,
+                          replaceDefault: event.target.checked || undefined,
+                        })
+                      }
+                    />
+                    Replace Yuzu&apos;s own notification
+                    <small>
+                      People get only this message instead of the usual
+                      &ldquo;assigned you&rdquo; or &ldquo;mentioned you&rdquo;
+                      notice.
+                    </small>
+                  </label>
+                )}
               </>
             )}
             {(action.kind === "set.status" ||
