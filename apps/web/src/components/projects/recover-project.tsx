@@ -4,12 +4,10 @@ import { useRouter } from "nextjs-toploader/app";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  PauseButton,
+  PauseClose,
+  PauseDialog,
+} from "@/components/pause/pause-dialog";
 import { useProjectAction } from "./use-project-action";
 
 export function RecoverProject({
@@ -37,48 +35,59 @@ export function RecoverProject({
       >
         Recover access
       </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogTitle>Recover access to {project.name}?</DialogTitle>
-          <DialogDescription>
-            You&apos;ll become a manager and see all of its boards. Its current
-            managers get an email, and the recovery is recorded in the access
-            log. Type the project name to confirm.
-          </DialogDescription>
-          <form
-            className="grid gap-4"
-            onSubmit={(event) => {
-              event.preventDefault();
+      <PauseDialog
+        open={open}
+        onOpenChange={setOpen}
+        intent="danger"
+        title={`Recover access to ${project.name}?`}
+        description="You'll become a manager and see all of its boards. Its current managers get an email, and the recovery is recorded in the access log."
+        actions={
+          <>
+            <PauseClose asChild>
+              <PauseButton>Cancel</PauseButton>
+            </PauseClose>
+            <PauseButton
+              tone="primary"
+              type="submit"
+              form={`recover-${project.id}`}
+              disabled={confirmName !== project.name || recover.isPending}
+            >
+              {recover.isPending ? "Recovering…" : "Recover access"}
+            </PauseButton>
+          </>
+        }
+      >
+        <form
+          id={`recover-${project.id}`}
+          className="grid gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (confirmName === project.name)
               recover.mutate({ projectId: project.id, confirmName });
-            }}
-          >
-            <Input
-              aria-label="Project name to confirm"
-              autoComplete="off"
-              value={confirmName}
-              onChange={(event) => setConfirmName(event.target.value)}
-            />
-            {recover.error && (
-              <p role="alert" className="text-sm text-destructive">
-                {recover.error.message}
-              </p>
-            )}
-            <div className="flex justify-end gap-2">
-              <DialogClose asChild>
-                <Button type="button" variant="ghost">
-                  Cancel
-                </Button>
-              </DialogClose>
-              <Button
-                variant="destructive"
-                disabled={confirmName !== project.name || recover.isPending}
-              >
-                {recover.isPending ? "Recovering…" : "Recover access"}
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
+          }}
+        >
+          <label className="pause-field" htmlFor={`recover-name-${project.id}`}>
+            <span>
+              Type <b className="text-[var(--tint)]">{project.name}</b> to
+              confirm
+            </span>
+          </label>
+          <Input
+            id={`recover-name-${project.id}`}
+            aria-label="Project name to confirm"
+            autoComplete="off"
+            data-autofocus
+            placeholder={project.name}
+            value={confirmName}
+            onChange={(event) => setConfirmName(event.target.value)}
+          />
+          {recover.error && (
+            <p role="alert" className="text-sm text-destructive">
+              {recover.error.message}
+            </p>
+          )}
+        </form>
+      </PauseDialog>
     </>
   );
 }

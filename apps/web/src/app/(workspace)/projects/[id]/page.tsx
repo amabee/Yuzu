@@ -11,6 +11,7 @@ import { ProjectBadge } from "@/components/projects/project-badge";
 import { ProjectActions } from "@/components/projects/project-actions";
 import { MoveBoard } from "@/components/projects/move-board";
 import { RestoreProject } from "@/components/projects/restore-project";
+import { PauseAlert } from "@/components/pause/pause-alert";
 import { visibleProjects } from "@/server/project-service";
 
 export default async function ProjectPage({
@@ -167,13 +168,16 @@ export default async function ProjectPage({
         ]}
       />
       {project.archivedAt && (
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted px-4 py-3 text-sm">
-          <span>
-            This project is archived. Its boards are read-only and hidden from
-            navigation.
-          </span>
-          {canManage && <RestoreProject projectId={project.id} />}
-        </div>
+        <PauseAlert
+          intent="warning"
+          className="mb-6"
+          action={
+            canManage ? <RestoreProject projectId={project.id} /> : undefined
+          }
+        >
+          This project is archived. Its boards are read-only and hidden from
+          navigation.
+        </PauseAlert>
       )}
       <header className="project-hero">
         <ProjectBadge name={project.name} color={project.color} size="lg" />

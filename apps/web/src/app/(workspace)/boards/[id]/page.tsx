@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { PageCrumbs } from "@/components/page-crumbs";
+import { PauseAlert } from "@/components/pause/pause-alert";
 import { getDatabase } from "@yuzu/database";
 import { workspaceContext } from "@/server/workspace-access";
 import { boardScope, isAdministrator } from "@/server/team-access";
@@ -114,9 +115,9 @@ export default async function BoardPage({
         ]}
       />
       {board.project?.archivedAt && (
-        <p className="mb-4 inline-flex rounded-full bg-muted px-3 py-1 text-xs">
-          Archived project, read-only
-        </p>
+        <PauseAlert intent="warning" className="mb-4">
+          Archived project, read-only. Restore the project to make edits.
+        </PauseAlert>
       )}
       <div className="board-heading">
         <div className="min-w-0 flex-1">

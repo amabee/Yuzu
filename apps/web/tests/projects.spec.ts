@@ -532,7 +532,7 @@ test("projects UI: create, add boards and people, move a board, archive from the
     // Create a private project from the sidebar, keyboard only.
     await mp.getByRole("button", { name: "New project" }).focus();
     await mp.keyboard.press("Enter");
-    const sheet = mp.getByRole("dialog", { name: "Create project" });
+    const sheet = mp.getByRole("dialog", { name: "Create a project" });
     await sheet.getByLabel("Project name").fill("Yuzu 1.0");
     await sheet.getByRole("radio", { name: "Citrus" }).click();
     await sheet.getByRole("radio", { name: /Private/ }).check();
