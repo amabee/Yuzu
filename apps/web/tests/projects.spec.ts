@@ -771,3 +771,50 @@ test("project page sections, search, dashboard filter and admin recovery", async
     await miaSession.context.close();
   }
 });
+
+test("board layouts and saved views open from shareable links", async ({
+  page,
+}) => {
+  const { standalone } = await team(page);
+  const pressed = (name: string) =>
+    page.getByRole("button", { name, exact: true });
+  await page.goto(`/boards/${standalone.id}?layout=table`);
+  await expect(pressed("Table")).toHaveAttribute("aria-pressed", "true");
+  await pressed("Kanban").click();
+  await expect(pressed("Kanban")).toHaveAttribute("aria-pressed", "true");
+  await expect(page).toHaveURL(/layout=kanban/);
+  // Unknown layouts fall back to the remembered view.
+  await page.goto(`/boards/${standalone.id}?layout=constructor`);
+  await expect(pressed("Kanban")).toHaveAttribute("aria-pressed", "true");
+
+  const viewId = createRecordId();
+  expect(
+    (
+      await post(page, "/api/v1/boards/save-view", {
+        boardId: standalone.id,
+        id: viewId,
+        revision: 0,
+        name: "Table for review",
+        visibility: "SHARED",
+        config: {
+          layout: "table",
+          search: "",
+          groupId: null,
+          statusId: null,
+          sort: "name",
+          archived: false,
+          assignee: "all",
+          priority: "all",
+          due: "all",
+        },
+      })
+    ).status(),
+  ).toBe(200);
+  await page.goto(`/boards/${standalone.id}?view=${viewId}`);
+  await expect(pressed("Table")).toHaveAttribute("aria-pressed", "true");
+  // The linked view is the one selected in the saved-view picker.
+  await expect(page.locator(`option[value="${viewId}"]`)).toHaveJSProperty(
+    "selected",
+    true,
+  );
+});
