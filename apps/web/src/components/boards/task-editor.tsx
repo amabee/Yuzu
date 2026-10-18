@@ -8,14 +8,20 @@ import { createStore } from "zustand/vanilla";
 import { useStore } from "zustand";
 import {
   Archive,
+  ArchiveRestore,
   ArrowRight,
   ChevronDown,
+  Ellipsis,
+  Hourglass,
+  Link2,
   ListChecks,
+  Lock,
   FileText,
   Check,
   History,
   Plus,
   Trash2,
+  UserCog,
 } from "lucide-react";
 import { TaskComments } from "./task-comments";
 import { TaskFiles } from "./task-files";
@@ -32,6 +38,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  PauseButton,
+  PauseClose,
+  PauseModal,
+} from "@/components/pause/pause-dialog";
+import {
   coreKeys,
   type BoardState,
   type BoardTask,
@@ -45,7 +62,7 @@ export function TaskEditor({
   error,
   onSubmit,
   onAction,
-  initialTab = "details",
+  boardName,
   onNotice,
   onTransferNotice,
   uploads,
@@ -61,7 +78,8 @@ export function TaskEditor({
   error?: string;
   onSubmit: (input: unknown) => void;
   onAction: (action: string, input: unknown) => void;
-  initialTab?: "details" | "comments";
+  /** Shown in the panel's breadcrumb. */
+  boardName?: string;
   onNotice: (message: string, kind: "success" | "error") => void;
   onTransferNotice: TransferNoticeHandler;
   uploads: TaskUploads;
@@ -151,14 +169,29 @@ export function TaskEditor({
     });
   };
   const [createKey, setCreateKey] = useState(() => crypto.randomUUID());
-  const [tab, setTab] = useState<"details" | "comments" | "activity" | "files">(
-    task ? initialTab : "details",
-  );
+  const [tab, setTab] = useState<"comments" | "activity" | "files">("comments");
+  const [composerSlot, setComposerSlot] = useState<HTMLDivElement | null>(null);
+  const [editorsOpen, setEditorsOpen] = useState(false);
   const [accessPerson, setAccessPerson] = useState("");
   const [newChecklistItem, setNewChecklistItem] = useState("");
   const editable = !task || task.canEdit;
+  const currentGroup = state.groups.find((group) => group.id === draft.groupId);
+  const pendingRequest = task
+    ? state.pendingApprovals.find((proposal) => proposal.taskId === task.id)
+    : undefined;
+  const canManageEditors = Boolean(task && state.canManage && !task.archivedAt);
+  const showSave =
+    editable &&
+    (!task ||
+      conflicts.length > 0 ||
+      Object.keys(merged?.changes ?? {}).length > 0);
   const statusOptions =
     state.fields.find((field) => field.key === "status")?.options ?? [];
+  const canComplete = Boolean(
+    task?.canEdit &&
+      statusOptions.some((option) => option.id === "done") &&
+      draft.statusId !== "done",
+  );
   const customFields = state.fields.filter(
     (field) => !coreKeys.includes(field.key) && field.type !== "MULTI_SELECT",
   );
@@ -221,6 +254,101 @@ export function TaskEditor({
   return (
     <>
       <header className="task-sheet-header">
+        <div className="task-panel-crumbs">
+          <span className="task-panel-board">
+            <span className="task-panel-board-dot" aria-hidden="true" />
+            {boardName ?? "Board"}
+          </span>
+          {currentGroup && (
+            <span className="task-panel-group">{currentGroup.name}</span>
+          )}
+          {task && (
+            <div className="task-panel-actions">
+              <button
+                type="button"
+                className="task-panel-icon"
+                aria-label="Copy task link"
+                title="Copy task link"
+                onClick={() => {
+                  const url = new URL(window.location.href);
+                  url.searchParams.set("task", task.id);
+                  url.searchParams.delete("tab");
+                  navigator.clipboard
+                    ?.writeText(url.toString())
+                    .then(() => onNotice("Task link copied.", "success"))
+                    .catch(() =>
+                      onNotice("Couldn't copy the task link.", "error"),
+                    );
+                }}
+              >
+                <Link2 size={16} />
+              </button>
+              {(task.canEdit || (task.archivedAt && state.canManage)) && (
+                <button
+                  type="button"
+                  className="task-panel-icon"
+                  title={task.archivedAt ? "Restore task" : "Archive task"}
+                  aria-label={task.archivedAt ? "Restore task" : "Archive task"}
+                  disabled={pending}
+                  onClick={() =>
+                    onAction(task.archivedAt ? "restore" : "archive", {
+                      taskId: task.id,
+                      revision: task.revision,
+                    })
+                  }
+                >
+                  {task.archivedAt ? (
+                    <ArchiveRestore size={16} />
+                  ) : (
+                    <Archive size={16} />
+                  )}
+                </button>
+              )}
+              {(canComplete || canManageEditors) && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className="task-panel-icon"
+                      aria-label="More task actions"
+                      title="More task actions"
+                    >
+                      <Ellipsis size={16} />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {canComplete && (
+                      <DropdownMenuItem
+                        disabled={
+                          pending || conflicts.length > 0 || dateOrderInvalid
+                        }
+                        onSelect={() =>
+                          onSubmit({
+                            taskId: task.id,
+                            revision: task.revision,
+                            requestKey: createKey,
+                            changes: { ...merged?.changes, statusId: "done" },
+                          })
+                        }
+                      >
+                        <Check size={14} />
+                        {completionRequiresApproval
+                          ? "Request completion"
+                          : "Mark as done"}
+                      </DropdownMenuItem>
+                    )}
+                    {canManageEditors && (
+                      <DropdownMenuItem onSelect={() => setEditorsOpen(true)}>
+                        <UserCog size={14} />
+                        Task editors…
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
+          )}
+        </div>
         <div className="task-sheet-heading-meta">
           <label
             className="task-status-pill"
@@ -270,104 +398,36 @@ export function TaskEditor({
             if (event.key === "Enter") event.preventDefault();
           }}
         />
+        <SheetDescription className="task-sheet-description">
+          {task?.archivedAt
+            ? "Archived task · read-only"
+            : task
+              ? `Created by ${task.createdByName}${editable ? "" : " · view only. Editing requires creator, assignee, or editor access."}`
+              : "Click any property to set it."}
+        </SheetDescription>
       </header>
-      <SheetDescription className="task-sheet-description">
-        {task?.archivedAt
-          ? "Archived task · read-only"
-          : task
-            ? `Created by ${task.createdByName}${editable ? "" : " · view only. Editing requires creator, assignee, or editor access."}`
-            : "Click any property to set it."}
-      </SheetDescription>
-      {task && (
-        <div
-          className="task-sheet-tabs"
-          role="tablist"
-          aria-label="Task sections"
-          onKeyDown={(event) => {
-            const keys = ["ArrowRight", "ArrowLeft", "Home", "End"];
-            if (!keys.includes(event.key)) return;
-            event.preventDefault();
-            const tabs = ["details", "comments", "activity", "files"] as const;
-            const index = tabs.indexOf(tab);
-            const next =
-              event.key === "Home"
-                ? 0
-                : event.key === "End"
-                  ? tabs.length - 1
-                  : (index +
-                      (event.key === "ArrowRight" ? 1 : -1) +
-                      tabs.length) %
-                    tabs.length;
-            setTab(tabs[next]!);
-            event.currentTarget
-              .querySelectorAll<HTMLButtonElement>('[role="tab"]')
-              [next]?.focus();
-          }}
-        >
-          <button
-            type="button"
-            role="tab"
-            id="task-tab-details"
-            aria-controls="task-editor-form"
-            tabIndex={tab === "details" ? 0 : -1}
-            aria-selected={tab === "details"}
-            onClick={() => setTab("details")}
-          >
-            Details
-          </button>
-          <button
-            type="button"
-            role="tab"
-            id="task-tab-comments"
-            aria-controls="task-panel-comments"
-            tabIndex={tab === "comments" ? 0 : -1}
-            aria-selected={tab === "comments"}
-            onClick={() => setTab("comments")}
-          >
-            Comments <span>{task.commentCount ?? 0}</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            id="task-tab-activity"
-            aria-controls="task-panel-activity"
-            tabIndex={tab === "activity" ? 0 : -1}
-            aria-selected={tab === "activity"}
-            onClick={() => setTab("activity")}
-          >
-            Activity
-          </button>
-          <button
-            type="button"
-            role="tab"
-            id="task-tab-files"
-            aria-controls="task-panel-files"
-            tabIndex={tab === "files" ? 0 : -1}
-            aria-selected={tab === "files"}
-            onClick={() => setTab("files")}
-          >
-            Files <span>{task.attachmentCount ?? 0}</span>
-          </button>
-        </div>
-      )}
       <div className="task-sheet-body">
-        {requiresApproval && (
-          <p className="mb-4 rounded-md border border-border bg-muted/40 p-3 text-xs leading-5">
-            This request needs one other approver. Current board values stay
-            unchanged until it is accepted.
-          </p>
-        )}
-        {task &&
-          state.pendingApprovals.some(
-            (proposal) => proposal.taskId === task.id,
-          ) && (
-            <p className="mb-4 text-xs text-muted-foreground">
-              This task has a pending request.{" "}
-              <Link className="text-primary underline" href="/approvals">
-                Open approvals
-              </Link>
+        {task && pendingRequest && (
+          <section className="task-approval-card" aria-label="Pending request">
+            <p className="task-approval-tape">
+              <Hourglass size={15} aria-hidden="true" />
+              {pendingRequest.operation === "ARCHIVE"
+                ? "Archiving waits for approval"
+                : "A change to this task is waiting for approval"}
             </p>
-          )}
+            <div className="task-approval-meta">
+              <AssigneeAvatars
+                ids={[pendingRequest.authorId]}
+                people={state.people}
+              />
+              <span>
+                {pendingRequest.authorName} sent it{" "}
+                {formatSent(pendingRequest.createdAt)}
+              </span>
+              <Link href="/approvals">Open request</Link>
+            </div>
+          </section>
+        )}
         {conflicts.length > 0 && (
           <section
             role="status"
@@ -415,9 +475,6 @@ export function TaskEditor({
         )}
         <form
           id="task-editor-form"
-          role={task ? "tabpanel" : undefined}
-          aria-labelledby={task ? "task-tab-details" : undefined}
-          hidden={task && tab !== "details"}
           className="task-sheet-details space-y-5"
           onSubmit={(event) => {
             event.preventDefault();
@@ -919,6 +976,65 @@ export function TaskEditor({
         {task && (
           <>
             <div
+              className="task-sheet-tabs"
+              role="tablist"
+              aria-label="Task conversation"
+              onKeyDown={(event) => {
+                const keys = ["ArrowRight", "ArrowLeft", "Home", "End"];
+                if (!keys.includes(event.key)) return;
+                event.preventDefault();
+                const tabs = ["comments", "activity", "files"] as const;
+                const index = tabs.indexOf(tab);
+                const next =
+                  event.key === "Home"
+                    ? 0
+                    : event.key === "End"
+                      ? tabs.length - 1
+                      : (index +
+                          (event.key === "ArrowRight" ? 1 : -1) +
+                          tabs.length) %
+                        tabs.length;
+                setTab(tabs[next]!);
+                event.currentTarget
+                  .querySelectorAll<HTMLButtonElement>('[role="tab"]')
+                  [next]?.focus();
+              }}
+            >
+              <button
+                type="button"
+                role="tab"
+                id="task-tab-comments"
+                aria-controls="task-panel-comments"
+                tabIndex={tab === "comments" ? 0 : -1}
+                aria-selected={tab === "comments"}
+                onClick={() => setTab("comments")}
+              >
+                Comments <span>{task.commentCount ?? 0}</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                id="task-tab-activity"
+                aria-controls="task-panel-activity"
+                tabIndex={tab === "activity" ? 0 : -1}
+                aria-selected={tab === "activity"}
+                onClick={() => setTab("activity")}
+              >
+                Activity
+              </button>
+              <button
+                type="button"
+                role="tab"
+                id="task-tab-files"
+                aria-controls="task-panel-files"
+                tabIndex={tab === "files" ? 0 : -1}
+                aria-selected={tab === "files"}
+                onClick={() => setTab("files")}
+              >
+                Files <span>{task.attachmentCount ?? 0}</span>
+              </button>
+            </div>
+            <div
               id="task-panel-comments"
               role="tabpanel"
               aria-labelledby="task-tab-comments"
@@ -930,6 +1046,7 @@ export function TaskEditor({
                 active={tab === "comments"}
                 syncInterval={syncInterval}
                 onNotice={onNotice}
+                composerTarget={composerSlot}
               />
             </div>
             <section
@@ -978,144 +1095,136 @@ export function TaskEditor({
                 onNotice={onNotice}
               />
             </section>
-            {state.canManage && !task.archivedAt && (
-              <section
-                hidden={tab !== "details"}
-                className="task-sheet-permissions border-t pt-5"
-              >
-                <h3 className="mb-3 text-sm">Task editors</h3>
-                <p className="mb-3 text-xs text-muted-foreground">
-                  Creators and current assignees can already edit this task.
-                </p>
-                {task.editorIds.map((id) => (
-                  <div
-                    key={id}
-                    className="mb-2 flex items-center justify-between text-xs"
-                  >
-                    <span>
-                      {state.people.find((person) => person.id === id)?.name ??
-                        "Former member"}
-                    </span>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={pending}
-                      onClick={() =>
-                        onAction("editor", {
-                          taskId: task.id,
-                          revision: task.revision,
-                          userId: id,
-                          grant: false,
-                        })
-                      }
-                    >
-                      Remove editor
-                    </Button>
-                  </div>
-                ))}
-                <div className="flex gap-2">
-                  <select
-                    aria-label="Grant task editor"
-                    className="task-select min-w-0 flex-1"
-                    value={accessPerson}
-                    onChange={(event) => setAccessPerson(event.target.value)}
-                  >
-                    <option value="">Choose a person</option>
-                    {state.people
-                      .filter((person) => !task.editorIds.includes(person.id))
-                      .map((person) => (
-                        <option key={person.id} value={person.id}>
-                          {person.name}
-                        </option>
-                      ))}
-                  </select>
-                  <Button
-                    size="sm"
-                    disabled={!accessPerson || pending}
-                    onClick={() =>
-                      onAction("editor", {
-                        taskId: task.id,
-                        revision: task.revision,
-                        userId: accessPerson,
-                        grant: true,
-                      })
-                    }
-                  >
-                    Grant editor
-                  </Button>
-                </div>
-              </section>
-            )}
           </>
         )}
       </div>
-      <footer className="task-sheet-footer">
-        {editable && tab === "details" && (
-          <Button
-            form="task-editor-form"
-            type="submit"
-            disabled={
-              pending ||
-              conflicts.length > 0 ||
-              dateOrderInvalid ||
-              Boolean(task && !Object.keys(merged?.changes ?? {}).length)
-            }
-            className="flex-1"
-          >
-            {pending
-              ? "Saving…"
-              : requiresApproval
-                ? task
-                  ? "Request approval"
-                  : "Submit task for approval"
-                : task
-                  ? "Save changes"
-                  : "Create task"}
-          </Button>
-        )}
-        {task?.canEdit &&
-          tab === "details" &&
-          statusOptions.some((option) => option.id === "done") &&
-          draft.statusId !== "done" && (
-            <Button
-              disabled={pending || conflicts.length > 0 || dateOrderInvalid}
-              variant="outline"
-              onClick={() =>
-                onSubmit({
-                  taskId: task.id,
-                  revision: task.revision,
-                  requestKey: createKey,
-                  changes: { ...merged?.changes, statusId: "done" },
-                })
-              }
-            >
-              <Check size={14} />
-              {completionRequiresApproval
-                ? "Request completion"
-                : "Mark as done"}
-            </Button>
-          )}
-        {task && (
-          <>
-            {" "}
-            {(task.canEdit || (task.archivedAt && state.canManage)) && (
+      {task && canManageEditors && (
+        <PauseModal
+          open={editorsOpen}
+          onOpenChange={setEditorsOpen}
+          title="Task editors"
+          description="Creators and current assignees can already edit this task."
+          actions={
+            <PauseClose asChild>
+              <PauseButton>Done</PauseButton>
+            </PauseClose>
+          }
+        >
+          <div className="grid gap-2">
+            <p className="mb-3 text-xs text-muted-foreground">
+              Creators and current assignees can already edit this task.
+            </p>
+            {task.editorIds.map((id) => (
+              <div
+                key={id}
+                className="mb-2 flex items-center justify-between text-xs"
+              >
+                <span>
+                  {state.people.find((person) => person.id === id)?.name ??
+                    "Former member"}
+                </span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={pending}
+                  onClick={() =>
+                    onAction("editor", {
+                      taskId: task.id,
+                      revision: task.revision,
+                      userId: id,
+                      grant: false,
+                    })
+                  }
+                >
+                  Remove editor
+                </Button>
+              </div>
+            ))}
+            <div className="flex gap-2">
+              <select
+                aria-label="Grant task editor"
+                className="task-select min-w-0 flex-1"
+                value={accessPerson}
+                onChange={(event) => setAccessPerson(event.target.value)}
+              >
+                <option value="">Choose a person</option>
+                {state.people
+                  .filter((person) => !task.editorIds.includes(person.id))
+                  .map((person) => (
+                    <option key={person.id} value={person.id}>
+                      {person.name}
+                    </option>
+                  ))}
+              </select>
               <Button
-                variant="outline"
-                size={task.archivedAt ? "default" : "icon"}
-                title={task.archivedAt ? "Restore task" : "Archive task"}
-                aria-label={task.archivedAt ? "Restore task" : "Archive task"}
-                disabled={pending}
+                size="sm"
+                disabled={!accessPerson || pending}
                 onClick={() =>
-                  onAction(task.archivedAt ? "restore" : "archive", {
+                  onAction("editor", {
                     taskId: task.id,
                     revision: task.revision,
+                    userId: accessPerson,
+                    grant: true,
                   })
                 }
               >
-                {task.archivedAt ? "Restore task" : <Archive size={15} />}
+                Grant editor
+              </Button>
+            </div>
+          </div>
+        </PauseModal>
+      )}
+      <footer className="task-sheet-footer">
+        {showSave && (
+          <div className="task-save-bar">
+            <span className="task-save-note">
+              {requiresApproval ? (
+                <>
+                  <Lock size={13} aria-hidden="true" />
+                  Needs approval
+                </>
+              ) : task ? (
+                "Unsaved changes"
+              ) : null}
+            </span>
+            {task && (
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={pending}
+                onClick={() => acceptLatest(false)}
+              >
+                Discard
               </Button>
             )}
-          </>
+            <Button
+              form="task-editor-form"
+              type="submit"
+              disabled={
+                pending ||
+                conflicts.length > 0 ||
+                dateOrderInvalid ||
+                Boolean(task && !Object.keys(merged?.changes ?? {}).length)
+              }
+            >
+              {pending
+                ? "Saving…"
+                : requiresApproval
+                  ? task
+                    ? "Request approval"
+                    : "Submit task for approval"
+                  : task
+                    ? "Save changes"
+                    : "Create task"}
+            </Button>
+          </div>
+        )}
+        {task && (
+          <div
+            ref={setComposerSlot}
+            className="task-composer-slot"
+            hidden={tab !== "comments" || Boolean(task.archivedAt)}
+          />
         )}
       </footer>
     </>
@@ -1164,4 +1273,15 @@ function DateChip({
       />
     </span>
   );
+}
+
+function formatSent(value: string) {
+  const minutes = Math.round((Date.now() - new Date(value).getTime()) / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 60 * 24) return `${Math.round(minutes / 60)}h ago`;
+  return `on ${new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+  }).format(new Date(value))}`;
 }

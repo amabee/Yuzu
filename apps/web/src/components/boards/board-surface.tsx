@@ -248,9 +248,6 @@ export function BoardSurface({
       statusFilter !== "__none__" &&
       !savedStatuses.some((status) => status.id === statusFilter)),
   );
-  const [selectedTab, setSelectedTab] = useState<"details" | "comments">(
-    initialCommentsTab ? "comments" : "details",
-  );
   const [creating, setCreating] = useState(false);
   const linkKey = `${initialTaskId ?? ""}:${Boolean(initialCommentsTab)}`;
   const [previousLink, setPreviousLink] = useState(linkKey);
@@ -264,7 +261,6 @@ export function BoardSurface({
     setSelectedId(
       initialTaskId && task?.id === initialTaskId ? initialTaskId : null,
     );
-    setSelectedTab(initialCommentsTab ? "comments" : "details");
     setCreating(false);
     if (initialTaskId && task)
       setViewConfig((current) => ({
@@ -707,7 +703,6 @@ export function BoardSurface({
             disabled={busy}
             onClick={() => {
               mutation.reset();
-              setSelectedTab("details");
               setCreateDueDate(undefined);
               setCreating(true);
             }}
@@ -806,7 +801,6 @@ export function BoardSurface({
           people={state.people}
           pending={busy}
           onOpen={(taskId) => {
-            setSelectedTab("details");
             setSelectedId(taskId);
           }}
           onChange={(task, dates) => patch(task, dates)}
@@ -827,13 +821,11 @@ export function BoardSurface({
           people={state.people}
           pending={busy}
           onOpen={(taskId) => {
-            setSelectedTab("details");
             setSelectedId(taskId);
           }}
           onMove={(task, dueDate) => patch(task, { dueDate })}
           onCreate={(dueDate) => {
             mutation.reset();
-            setSelectedTab("details");
             setCreateDueDate(dueDate);
             setCreating(true);
           }}
@@ -938,7 +930,6 @@ export function BoardSurface({
                         )
                           return;
                         mutation.reset();
-                        setSelectedTab("details");
                         setSelectedId(task.id);
                       }}
                       aria-busy={
@@ -983,7 +974,6 @@ export function BoardSurface({
                           className="task-card-title"
                           onClick={() => {
                             mutation.reset();
-                            setSelectedTab("details");
                             setSelectedId(task.id);
                           }}
                         >
@@ -1132,7 +1122,6 @@ export function BoardSurface({
                           aria-label={`Comments for ${task.name}`}
                           onClick={() => {
                             mutation.reset();
-                            setSelectedTab("comments");
                             setSelectedId(task.id);
                           }}
                         >
@@ -1257,7 +1246,6 @@ export function BoardSurface({
                           className="text-left font-medium text-primary"
                           onClick={() => {
                             mutation.reset();
-                            setSelectedTab("details");
                             setSelectedId(task.id);
                           }}
                         >
@@ -1364,7 +1352,6 @@ export function BoardSurface({
                         aria-label={`Open checklist for ${task.name}`}
                         onClick={() => {
                           mutation.reset();
-                          setSelectedTab("details");
                           setSelectedId(task.id);
                         }}
                       >
@@ -1611,7 +1598,7 @@ export function BoardSurface({
             defaultDueDate={selected ? undefined : createDueDate}
             state={state}
             task={selected}
-            initialTab={selectedTab}
+            boardName={name}
             syncInterval={live.syncInterval}
             onNotice={notify}
             onTransferNotice={transferNotice}

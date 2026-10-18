@@ -3538,27 +3538,31 @@ body:has(:is(.task-sheet-panel, .export-sheet-panel)[data-state="open"])
   color: var(--pause-on-dark);
 }
 
+/* The leaves and lemon are the toast's own artwork; the leaf SVG sways
+   itself and respects reduced motion. */
 .pause-leaf {
   position: absolute;
-  top: -15px;
-  left: -8px;
+  top: -27px;
+  left: -14px;
   z-index: 3;
-  width: 54px;
-  height: 26px;
-  transform: rotate(-8deg);
-  transform-origin: 85% 80%;
+  width: 80px;
+  height: 40px;
+  background: url("/toasts/yuzu-leaf-corner.svg") center / contain no-repeat;
   pointer-events: none;
 }
 .pause-slice {
   position: absolute;
-  right: -46px;
-  bottom: -46px;
+  right: -40px;
+  bottom: -50px;
   width: 170px;
   height: 170px;
-  color: var(--tint, var(--yuzu));
-  opacity: 0.09;
-  --pause-slice-gap: var(--card);
+  background: url("/toasts/yuzu-lemon-slice.svg") center / contain no-repeat;
+  opacity: 0.24;
+  mask-image: linear-gradient(to left, #000 45%, transparent 100%);
   pointer-events: none;
+}
+[data-mode="dark"] .pause-slice {
+  opacity: 0.22;
 }
 .pause-clip {
   position: absolute;
@@ -3608,10 +3612,10 @@ body:has(:is(.task-sheet-panel, .export-sheet-panel)[data-state="open"])
   color: var(--foreground);
 }
 .pause-alert .pause-slice {
-  right: -30px;
-  bottom: -60px;
-  width: 140px;
-  height: 140px;
+  right: -22px;
+  bottom: -42px;
+  width: 110px;
+  height: 110px;
 }
 .pause-alert:not([data-compact]) .pause-leaf {
   display: none;
@@ -3621,10 +3625,10 @@ body:has(:is(.task-sheet-panel, .export-sheet-panel)[data-state="open"])
   padding-block: 11px;
 }
 .pause-alert[data-compact] .pause-leaf {
-  top: -12px;
-  left: -6px;
-  width: 40px;
-  height: 20px;
+  top: -21px;
+  left: -10px;
+  width: 60px;
+  height: 30px;
 }
 .pause-alert .pause-close {
   top: 8px;
@@ -3707,9 +3711,6 @@ body:has(:is(.task-sheet-panel, .export-sheet-panel)[data-state="open"])
 }
 .pause-surface[data-state="open"] {
   animation: pause-rise 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.pause-surface[data-state="open"] > .pause-leaf {
-  animation: pause-sway 4s ease-in-out 220ms infinite alternate;
 }
 .pause-surface[data-kind="modal"] {
   width: min(560px, calc(100vw - 24px));
@@ -3906,8 +3907,7 @@ body:has(:is(.task-sheet-panel, .export-sheet-panel)[data-state="open"])
 }
 @media (prefers-reduced-motion: reduce) {
   .pause-backdrop[data-state="open"],
-  .pause-surface[data-state="open"],
-  .pause-surface[data-state="open"] > .pause-leaf {
+  .pause-surface[data-state="open"] {
     animation: none;
   }
 }
@@ -3996,7 +3996,7 @@ body:has(:is(.task-sheet-panel, .export-sheet-panel)[data-state="open"])
   width: 300px;
   height: 300px;
   color: var(--yuzu);
-  opacity: 0.14;
+  opacity: 0.5;
 }
 /* Lift content above the slice, but leave the absolutely placed close
    button where Radix puts it. */
@@ -4269,4 +4269,177 @@ fieldset:disabled .task-prop-value:hover {
     grid-template-columns: 5.5rem minmax(0, 1fr);
     gap: 0.5rem;
   }
+}
+
+/* Task panel: breadcrumb row, approval card, save bar and pinned reply. */
+.task-panel-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding-right: 36px;
+  font-size: 13px;
+}
+.task-panel-board {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--primary);
+}
+.task-panel-board-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 999px;
+  background: currentColor;
+}
+.task-panel-group {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-panel-group::before {
+  content: "·";
+  margin-right: 8px;
+}
+.task-panel-actions {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+.task-panel-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  color: var(--muted-foreground);
+}
+.task-panel-icon:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--foreground) 7%, transparent);
+  color: var(--foreground);
+}
+.task-panel-icon:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.task-panel .task-sheet-heading-meta {
+  margin-top: 14px;
+}
+.task-panel .task-sheet-header .task-sheet-description {
+  padding: 0;
+  margin-top: 4px;
+}
+.task-panel .task-sheet-details {
+  padding-top: 8px;
+}
+.task-panel .task-sheet-tabs {
+  margin: 4px 24px 0;
+}
+.task-panel :is(.task-comments-panel, .task-sheet-activity, .task-files-panel) {
+  padding-top: 16px;
+}
+.task-panel .task-comments-panel > h3 {
+  display: none;
+}
+
+.task-approval-card {
+  margin: 4px 24px 0;
+  overflow: hidden;
+  border: 1px solid
+    color-mix(in srgb, var(--pending-foreground) 35%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--pending) 18%, var(--card));
+}
+.task-approval-tape {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--pending) 0 10px,
+    color-mix(in srgb, var(--pending) 75%, var(--pending-foreground)) 10px 12px
+  );
+  color: var(--pending-foreground);
+  font-size: 13px;
+  font-weight: 700;
+}
+.task-approval-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+.task-approval-meta a {
+  margin-left: auto;
+  font-weight: 700;
+  color: var(--pending-foreground);
+}
+.task-approval-meta a:hover {
+  text-decoration: underline;
+}
+
+.task-panel .task-sheet-footer {
+  display: grid;
+  gap: 10px;
+  padding: 12px 20px;
+}
+.task-panel .task-sheet-footer:not(:has(> :not([hidden]))) {
+  display: none;
+}
+.task-save-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.task-save-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.task-save-bar .task-save-note:has(svg) {
+  font-weight: 700;
+  color: var(--pending-foreground);
+}
+.task-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.task-composer > .space-y-3 {
+  flex: 1;
+  min-width: 0;
+}
+.task-composer .task-textarea {
+  min-height: 42px;
+  max-height: 160px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  field-sizing: content;
+  resize: none;
+}
+.task-panel .task-sheet-footer .task-composer-send {
+  width: 42px;
+  height: 42px;
+  flex: none;
+  border-radius: 12px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+.task-composer {
+  flex-wrap: wrap;
+}
+.task-composer > [role="alert"] {
+  order: 3;
+  flex-basis: 100%;
 }
