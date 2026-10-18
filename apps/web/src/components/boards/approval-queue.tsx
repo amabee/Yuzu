@@ -1,4 +1,6 @@
 "use client";
+import { PauseAlert } from "@/components/pause/pause-alert";
+import { PauseSheetDecor } from "@/components/pause/pause-sheet";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
@@ -370,7 +372,8 @@ export function ApprovalQueueView({
           if (!open && !mutation.isPending) setSelectedId(null);
         }}
       >
-        <SheetContent className="board-details-panel task-sheet-panel">
+        <SheetContent className="board-details-panel task-sheet-panel task-panel">
+          <PauseSheetDecor />
           {selected && (
             <>
               <header className="task-sheet-header">
@@ -414,47 +417,39 @@ export function ApprovalQueueView({
                   </p>
                   <div className="space-y-4" aria-label="Proposed changes">
                     {changeRows(selected).map((row) => (
-                      <section
-                        className="space-y-2 border-b border-border pb-4"
-                        key={row.key}
-                      >
-                        <h3 className="break-words text-xs font-semibold">
-                          {row.label}
-                        </h3>
-                        <div className="grid grid-cols-2 gap-3">
+                      <section className="approval-compare" key={row.key}>
+                        <h3>{row.label}</h3>
+                        <div className="approval-compare-grid">
                           <div>
-                            <p className="mb-1 text-xs text-muted-foreground">
-                              At submission
-                            </p>
-                            <p className="whitespace-pre-wrap break-words rounded-md border border-border bg-muted/30 p-2 text-sm">
+                            <span>At submission</span>
+                            <p data-before>
                               {selected.operation === "CREATE"
                                 ? "—"
                                 : row.before}
                             </p>
                           </div>
                           <div>
-                            <p className="mb-1 text-xs text-primary">
-                              Proposed
-                            </p>
-                            <p className="whitespace-pre-wrap break-words rounded-md border border-border bg-primary/5 p-2 text-sm">
-                              {row.after}
-                            </p>
+                            <span>Proposed</span>
+                            <p>{row.after}</p>
                           </div>
                         </div>
                       </section>
                     ))}
                   </div>
                   {selected.reason && (
-                    <section className="rounded-md border border-border bg-muted/40 p-3">
-                      <h3 className="text-xs font-semibold">
-                        {selected.status === "STALE"
+                    <PauseAlert
+                      intent={selected.status === "STALE" ? "warning" : "info"}
+                      role="status"
+                      title={
+                        selected.status === "STALE"
                           ? "Why resubmission is needed"
-                          : "Decision reason"}
-                      </h3>
-                      <p className="mt-2 whitespace-pre-wrap break-words text-sm">
+                          : "Decision reason"
+                      }
+                    >
+                      <p className="whitespace-pre-wrap break-words">
                         {selected.reason}
                       </p>
-                    </section>
+                    </PauseAlert>
                   )}
                   {selected.canDecide && rejecting && (
                     <form

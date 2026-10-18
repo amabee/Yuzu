@@ -1,46 +1,64 @@
 # Yuzu development handoff
 
-Snapshot: 2026-10-17 (Asia/Singapore). Read this before older progress notes.
+Snapshot: 2026-10-19 (Asia/Singapore). Read this before older progress notes.
 Verify live Git, process, and Docker state when resuming; this is a snapshot.
 
 ## Where we are
 
 Yuzu is a self-hosted work-management app, initially for a small internal team.
-The user plans to run it on their computer first, then a shared server. Board
-work came before automation. The latest Phase 3 batch is implemented and merged:
-CSV exchange/background transfers, large-board performance, cross-board task
-search, and basic overview reporting. The application remains pre-production.
+The user plans to run it on their computer first, then a shared server. Phase 3
+(CSV exchange, large boards, cross-board search, overview reporting) is merged,
+followed by Projects, saved-view layouts, Calendar/Timeline, task start dates,
+the app redesign, the "pause point" design system, the task panel and the Kanban
+redesign. The application remains pre-production.
 
-Main baseline: `f8acb79`, merged through PR #8:
-https://github.com/amabee/Yuzu/pull/8
+Main: merge of PR #19 (`fdf1632`). PRs #11–#18 were merged into their stacked
+parent branches rather than `main`; #19 was retargeted to `main` and carried all of
+them in one merge. The `feat/finish-up` branch follows: remaining dialogs/sheets/notices in the pause
+style, a notification bell dropdown (the Inbox page stays; email delivery is a
+later idea), no theme switcher on sign-in/welcome, and this handoff. The user asked to reset the development database to a fresh
+install; the agent was not permitted to run `prisma migrate reset`, so the user
+runs it from `packages/database`.
 
-The merged feature branches were `feat/large-board-performance`,
-`feat/workspace-task-search`, and `feat/workspace-dashboards`, stacked on the CSV
-branches. Main includes their final integration fixes and the earlier CSV work.
-The source was verified unchanged between the tested feature tip and main.
-
-At handoff, unrelated user work was present and intentionally preserved:
-
-- Modified `.gitignore`.
-- Untracked `apps/web/src/components/yuzu/fonts.ts`.
-
-Do not discard or stage those automatically. `docs/` is locally ignored; this
-handoff is explicitly requested and can be tracked with a targeted force-add.
-The documentation handoff work uses `docs/development-context`; check Git for
-its final commit/push state. Existing `apps/web/AGENTS.md` remains in force.
+Unrelated local modifications are usually present in the working tree (many
+files show CRLF-only churn). Stage only files with real changes
+(`git diff --ignore-cr-at-eol`), never `git add -A`. `docs/` is locally ignored;
+force-add only an explicitly requested document. Do not add Claude attribution to
+commits or PR bodies. Existing `apps/web/AGENTS.md` remains in force.
 
 ## Product decisions and completed capabilities
 
 - Installation: resumable owner/workspace/board setup, working SMTP verification
   required before completion, invitations, password recovery and session controls.
   Mailpit is used for local email testing. Setup/welcome already have GSAP motion.
-- Boards: Table/Kanban, full-card dragging plus handle, archive/restore, custom
+- Boards: Kanban/Table/Calendar/Timeline layouts per saved view
+  (`config.layout`; Timeline adds `config.timeline {groupBy, zoom}`), custom
   fields, configurable statuses/order/icons/colors, priority colors, colored tags,
-  separate multi-select options, and independent per-task checklists.
-- Task sheets: shadcn Sheet, comments/mentions/history, activity, files, stacked
-  assignee avatars/tooltips, and editing with revision/conflict protection.
-  Cards keep avatars bottom-left, comments bottom-right, and a short date by the
-  title. Empty lanes use citrus artwork. Avoid restoring removed clutter.
+  multi-select options and per-task checklists. Every task has an optional start
+  date (`startDate <= dueDate` is a DB check). Week start is an installation
+  setting.
+- Kanban (`components/boards/board-kanban.tsx`): dnd-kit drag and drop (mouse,
+  touch long-press, keyboard) with GSAP lift/lean/settle, off for reduced motion.
+  Tasks keep a manual `position` (Float, backfilled from creation order; new
+  tasks append). `POST /api/v1/boards/reorder {taskId, afterId, beforeId}` needs
+  edit access but skips revisions, approvals and activity, and respaces the board
+  when neighbours get too close. The default "created" sort means manual order;
+  name/due sorts only allow moving between lanes. Status changes still go through
+  the normal update/approval path. Playwright drags need `dragTo(..., { steps })`.
+  The board pulse (`board-pulse.tsx`) shows whole-board status counts and overdue
+  from `state.pulse`, ignoring filters; it replaced the bottom "Project overview".
+- Task panel (`task-editor.tsx` inside a `task-panel` sheet): breadcrumb row with
+  copy link / archive / more menu (Mark as done, Task editors modal), status pill,
+  editable title, creator avatar, click-to-edit property rows, a pending-request
+  card, description, checklist, then Comments/Activity/Files with the comment
+  composer portalled into the footer. A save bar appears only with edits or
+  conflicts.
+- Pause points (`components/pause/`): the user's alert/dialog/modal design.
+  `PauseAlert`, `PauseDialog`, `PauseModal`, `PauseButton`, `PauseClose`, and
+  `PauseSheetDecor` for side sheets (`pause-sheet` + `pause-sheet-body`). Leaf and
+  lemon artwork are the toast's (`/toasts/yuzu-leaf-corner.svg`,
+  `yuzu-lemon-slice.svg`). Intent colors are fixed tokens (`--intent-*`), cream
+  `--pending` marks approvals.
 - Permissions: workspace-scoped access, creator/assignee/explicit editor writes,
   scoped board managers, owners/admins managing global access. A People custom
   field does not grant task editing permission.
@@ -145,49 +163,36 @@ realtime `:3101`, worker `:3102`, and SMTP `:25250`; fixtures reset test data.
 `YUZU_E2E_S3=1` enables the isolated SeaweedFS test bucket; Redis multi-instance
 tests require `YUZU_TEST_REDIS_URL`. Keep Docker builds separate from browser runs.
 
-Latest code validation: build/lint/types pass; 129 web unit tests pass. Across
-the final browser run and its resumed segment, 74 distinct scenarios passed;
-one S3-only migration scenario was skipped. The test web server stopped accepting
-connections during Docker unpack; the remaining 23 scenarios passed after restart.
-Regression fixes cover stale task copies, group usage outside the loaded page,
-same-board task links, and ordinary-member live reporting. Desktop/light/dark and
-390px mobile layouts were inspected. A 25,000-task seeded board was tested with
-paging, literal search, virtualization, scrolling and native dragging. The exact
-25 MB / 25,000-row preview and 300-task crash recovery were tested; this is **not**
-a benchmark of writing all 25,000 tasks or sustained multi-user concurrency.
+Latest code validation (2026-10-19, `feat/finish-up`): build/lint/types pass;
+147 web unit tests pass; the full browser suite ran 85 passed / 1 skipped with one
+failure (the theme test still clicking the removed sign-in switcher), which was
+updated and passes on rerun. A 25,000-task seeded board is covered for paging,
+search, virtualization and dragging; this is **not** a benchmark of sustained
+multi-user concurrency. Orphaned test servers on `:3101` can block a rerun; stop
+only that test port, never the dev services.
 
-## Projects (in progress, 2026-10)
+## Projects (merged)
 
-The user reprioritized Projects ahead of automation. Hierarchy: Organization
-(the installation; reserved for a future page builder) → Workspace → Project
-(optional, PUBLIC/PRIVATE) → Board → Groups → Items → Subitems. Standalone boards
-remain. Views (kanban/table/calendar/timeline) are views of one board, not a
-level. Spec: `docs/specs/projects.md` on branch `docs/projects-spec` (no PR yet).
-
-- `feat/projects-data`, PR #10 (https://github.com/amabee/Yuzu/pull/10): schema,
-  `/api/v1/projects/[action]`, and `boardScope`/`projectScope`/
-  `visibleWorkspaceScope` in `server/team-access.ts`, used by every board read.
-  Private projects are hidden from admins too; admins regain access only via
-  audited `recover`. Outsiders join a project by invitation (`projectOnly`).
-  Gotcha: Prisma matches nothing for `{}` inside `OR`, so the scopes return
-  `{}` directly for admins.
-- `feat/projects-ui`, PR #11 (https://github.com/amabee/Yuzu/pull/11), stacked
-  on #10 (merge #10 first). Sidebar Projects/Boards groups, `/projects/[id]`,
-  create/members/edit/move/archive flows. Still open from the spec: project-page
-  deadlines and approvals sections, admin recovery screen, collapsed-sidebar
-  board popover, realtime project-list hints, `projectName` in search and
-  notifications, and the dashboard project filter.
-- After that: saved-view layouts, then the app redesign (mockups in
-  `docs/mockups/app-redesign-*`).
+Hierarchy: Organization (the installation; reserved for a future page builder) →
+Workspace → Project (optional, PUBLIC/PRIVATE) → Board → Groups → Items.
+Standalone boards remain. Views are views of one board, not a level. Spec:
+`docs/specs/projects.md`. `boardScope`/`projectScope`/`visibleWorkspaceScope` in
+`server/team-access.ts` gate every board read. Private projects are hidden from
+admins too; admins regain access only via audited `recover`. Gotcha: Prisma
+matches nothing for `{}` inside `OR`, so the scopes return `{}` directly for
+admins. Navigation changes publish a data-free `kind: "navigation"` realtime hint.
 
 ## Next session
 
-Continue the Projects work above. Phase 4 on the roadmap is
-automation: triggers, conditions, actions, execution and monitoring. **Plan its
-first slice with the user before coding**; its precise implementation scope has
-not been approved. OpenAPI completion, remaining account/workspace lifecycle
-administration, release deployment, backup/restore and pilot/load verification
-also remain; do not describe Yuzu as production-ready or those as complete.
+Phase 4 is automation: triggers, conditions, actions, execution and monitoring.
+The user wants to **plan the first slice thoroughly before any code**. A proposed
+starting point (not approved): per-board rules — when a task changes status, is
+assigned or passes its due date; if simple conditions match; then assign, set a
+field, move status or notify — with an on/off switch, run history, permission and
+approval checks, and loop protection. OpenAPI completion, remaining
+account/workspace lifecycle administration, release deployment, backup/restore
+and pilot/load verification also remain; do not describe Yuzu as
+production-ready or those as complete.
 
 Start with this file, `git status`, and the specific source needed for the new
 request. Consult `README.md` for operational detail and `docs/progress.md` only
