@@ -7,6 +7,7 @@ export const notificationSchema = z.object({
     "APPROVAL_REQUEST",
     "APPROVAL_DECISION",
     "MENTION",
+    "AUTOMATION",
   ]),
   message: z.string(),
   actorName: z.string(),

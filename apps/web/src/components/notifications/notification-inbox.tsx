@@ -12,6 +12,7 @@ import {
   Inbox,
   Circle,
   AtSign,
+  Zap,
 } from "lucide-react";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
@@ -263,7 +264,9 @@ export function NotificationInboxView({
                 ? AtSign
                 : item.kind === "ASSIGNMENT"
                   ? UserRoundPlus
-                  : CheckCheck;
+                  : item.kind === "AUTOMATION"
+                    ? Zap
+                    : CheckCheck;
             return (
               <li
                 key={item.id}

@@ -88,6 +88,7 @@ model User {
   proposalsDecided        BoardProposal[]       @relation("ProposalDecider")
   notifications           Notification[]        @relation("NotificationRecipient")
   notificationsSent       Notification[]        @relation("NotificationActor")
+  automationRules         AutomationRule[]      @relation("AutomationCreator")
 }
 
 model Session {
@@ -264,29 +265,31 @@ model AccessEvent {
 }
 
 model Board {
-  id             String               @id @default(uuid(7))
-  name           String
-  workspaceId    String
-  workspace      Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  id               String               @id @default(uuid(7))
+  name             String
+  workspaceId      String
+  workspace        Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   // Null means a standalone board directly in the workspace.
-  projectId      String?
-  project        Project?             @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  position       Int                  @default(0)
-  createdById    String
-  createdBy      User                 @relation(fields: [createdById], references: [id], onDelete: Restrict)
-  managers       BoardManager[]
-  events         BoardEvent[]
-  approvalPolicy BoardApprovalPolicy?
-  proposals      BoardProposal[]
-  notifications  Notification[]
-  transfers      CsvTransfer[]
-  savedViews     SavedBoardView[]
-  viewSelections BoardViewSelection[]
-  tasks          Task[]
-  columns        BoardColumn[]
-  groups         BoardGroup[]
-  createdAt      DateTime             @default(now())
-  updatedAt      DateTime             @updatedAt
+  projectId        String?
+  project          Project?             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  position         Int                  @default(0)
+  createdById      String
+  createdBy        User                 @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  managers         BoardManager[]
+  events           BoardEvent[]
+  approvalPolicy   BoardApprovalPolicy?
+  proposals        BoardProposal[]
+  notifications    Notification[]
+  transfers        CsvTransfer[]
+  savedViews       SavedBoardView[]
+  viewSelections   BoardViewSelection[]
+  tasks            Task[]
+  columns          BoardColumn[]
+  groups           BoardGroup[]
+  automationRules  AutomationRule[]
+  automationEvents AutomationEvent[]
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
 
   @@index([workspaceId])
   @@index([projectId, position])
@@ -319,36 +322,38 @@ model BoardGroup {
 }
 
 model Task {
-  id            String            @id @default(uuid(7))
-  boardId       String
-  board         Board             @relation(fields: [boardId], references: [id], onDelete: Cascade)
-  name          String
-  description   String            @default("")
-  checklist     Json              @default("[]")
-  statusId      String?
-  priority      String            @default("NORMAL")
-  startDate     DateTime?         @db.Date
-  dueDate       DateTime?         @db.Date
-  groupId       String?
-  group         BoardGroup?       @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  id               String            @id @default(uuid(7))
+  boardId          String
+  board            Board             @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  name             String
+  description      String            @default("")
+  checklist        Json              @default("[]")
+  statusId         String?
+  priority         String            @default("NORMAL")
+  startDate        DateTime?         @db.Date
+  dueDate          DateTime?         @db.Date
+  groupId          String?
+  group            BoardGroup?       @relation(fields: [groupId], references: [id], onDelete: Restrict)
   /// Manual order on the board; lanes and lists sort by it.
-  position      Float             @default(0)
-  createdById   String
-  createdBy     User              @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  createKey     String
-  createDigest  String
-  revision      Int               @default(1)
-  archivedAt    DateTime?         @db.Timestamptz(3)
-  createdAt     DateTime          @default(now()) @db.Timestamptz(3)
-  updatedAt     DateTime          @updatedAt @db.Timestamptz(3)
-  assignees     TaskAssignee[]
-  editors       TaskEditorGrant[]
-  values        TaskFieldValue[]
-  activity      TaskActivity[]
-  comments      TaskComment[]
-  attachments   TaskAttachment[]
-  proposals     BoardProposal[]
-  notifications Notification[]
+  position         Float             @default(0)
+  createdById      String
+  createdBy        User              @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createKey        String
+  createDigest     String
+  revision         Int               @default(1)
+  archivedAt       DateTime?         @db.Timestamptz(3)
+  createdAt        DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime          @updatedAt @db.Timestamptz(3)
+  assignees        TaskAssignee[]
+  editors          TaskEditorGrant[]
+  values           TaskFieldValue[]
+  activity         TaskActivity[]
+  comments         TaskComment[]
+  attachments      TaskAttachment[]
+  proposals        BoardProposal[]
+  notifications    Notification[]
+  automationEvents AutomationEvent[]
+  automationRuns   AutomationRun[]
 
   @@unique([createdById, createKey])
   @@index([boardId, archivedAt, createdAt, id])
@@ -572,6 +577,7 @@ enum NotificationKind {
   ASSIGNMENT
   APPROVAL_REQUEST
   APPROVAL_DECISION
+  AUTOMATION
 }
 
 model Notification {
@@ -628,33 +634,35 @@ model BoardViewSelection {
 
 // Durable user-facing transfer state; queue scheduling lives in pg-boss's own schema.
 model CsvTransfer {
-  id          String   @id @default(uuid(7))
+  id          String             @id @default(uuid(7))
   ownerId     String
-  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  owner       User               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   boardId     String
-  board       Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  board       Board              @relation(fields: [boardId], references: [id], onDelete: Cascade)
   kind        String
   name        String
-  status      String   @default("UPLOADING")
+  status      String             @default("UPLOADING")
   total       Int
-  done        Int      @default(0)
-  chunkCount  Int      @default(0)
+  done        Int                @default(0)
+  chunkCount  Int                @default(0)
   config      Json
   error       String?
   filename    String?
   outputKey   String?
-  queueId     String   @unique @default(uuid(7))
-  enqueuedAt  DateTime? @db.Timestamptz(3)
-  finishedAt  DateTime? @db.Timestamptz(3)
-  dismissedAt DateTime? @db.Timestamptz(3)
-  expiresAt   DateTime  @db.Timestamptz(3)
-  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
+  queueId     String             @unique @default(uuid(7))
+  enqueuedAt  DateTime?          @db.Timestamptz(3)
+  finishedAt  DateTime?          @db.Timestamptz(3)
+  dismissedAt DateTime?          @db.Timestamptz(3)
+  expiresAt   DateTime           @db.Timestamptz(3)
+  createdAt   DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime           @updatedAt @db.Timestamptz(3)
   chunks      CsvTransferChunk[]
   rows        CsvTransferRow[]
+
   @@index([ownerId, dismissedAt, createdAt])
   @@index([status, enqueuedAt])
 }
+
 model CsvTransferChunk {
   transferId String
   transfer   CsvTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
@@ -663,8 +671,10 @@ model CsvTransferChunk {
   bytes      Int
   digest     String
   objectKey  String
+
   @@id([transferId, index])
 }
+
 model CsvTransferRow {
   transferId String
   transfer   CsvTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
@@ -673,5 +683,73 @@ model CsvTransferRow {
   taskId     String?
   proposalId String?
   message    String?
+
   @@id([transferId, row])
+}
+
+/// A board rule: When (trigger) / If (conditions) / Then (actions).
+/// It runs as its creator; see docs/specs/automation.md.
+model AutomationRule {
+  id                  String          @id @default(uuid(7))
+  boardId             String
+  board               Board           @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  name                String
+  enabled             Boolean         @default(true)
+  trigger             Json
+  conditions          Json            @default("[]")
+  actions             Json
+  createdById         String
+  createdBy           User            @relation("AutomationCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  revision            Int             @default(1)
+  pausedReason        String?
+  consecutiveFailures Int             @default(0)
+  createdAt           DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime        @updatedAt @db.Timestamptz(3)
+  runs                AutomationRun[]
+
+  @@index([boardId, enabled])
+}
+
+/// Outbox of task changes and due dates waiting for rules to run.
+model AutomationEvent {
+  id          String          @id @default(uuid(7))
+  boardId     String
+  board       Board           @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  taskId      String
+  task        Task            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  kind        String
+  payload     Json            @default("{}")
+  actorId     String?
+  depth       Int             @default(0)
+  chain       String[]        @default([])
+  dedupeKey   String?         @unique
+  attempts    Int             @default(0)
+  createdAt   DateTime        @default(now()) @db.Timestamptz(3)
+  processedAt DateTime?       @db.Timestamptz(3)
+  runs        AutomationRun[]
+
+  @@index([processedAt, createdAt])
+}
+
+enum AutomationOutcome {
+  APPLIED
+  SKIPPED
+  PENDING_APPROVAL
+  FAILED
+}
+
+model AutomationRun {
+  id        String            @id @default(uuid(7))
+  ruleId    String
+  rule      AutomationRule    @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  eventId   String
+  event     AutomationEvent   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  taskId    String
+  task      Task              @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  outcome   AutomationOutcome
+  detail    String?
+  createdAt DateTime          @default(now()) @db.Timestamptz(3)
+
+  @@unique([ruleId, eventId])
+  @@index([ruleId, createdAt])
 }

@@ -69,6 +69,10 @@ import {
 } from "./team-access";
 import { digest, SetupError } from "./setup/security";
 import { projectAccess } from "./project-access";
+import {
+  recordAutomationEvent,
+  type AutomationContext,
+} from "./automation-events";
 
 const db = getDatabase;
 const notFound = () =>
@@ -891,14 +895,22 @@ export async function createTaskRecord(
     message: "assigned you to this task",
     eventKey: `task:${task.id}:assignment:1`,
   });
+  const created = snapshot((await loadTask(tx, task.id))!);
   await tx.taskActivity.create({
     data: {
       taskId: task.id,
       actorId,
       action: activityAction,
       revision: 1,
-      after: snapshot((await loadTask(tx, task.id))!),
+      after: created,
     },
+  });
+  await recordAutomationEvent(tx, {
+    boardId: task.boardId,
+    taskId: task.id,
+    kind: "task.created",
+    after: created,
+    actorId,
   });
   return {
     outcome: "APPLIED" as const,
@@ -916,6 +928,8 @@ export async function applyTaskRecord(
   changes?: z.infer<typeof updateTaskSchema>["changes"],
   grant?: { userId: string; grant: boolean },
   activityAction?: string,
+  /** Set when a rule makes this change, so chains can be limited. */
+  automation?: AutomationContext,
 ) {
   const before = snapshot(task);
   if (changes) {
@@ -1000,6 +1014,16 @@ export async function applyTaskRecord(
       after: snapshot(after!),
     },
   });
+  if (action === "update" && changes)
+    await recordAutomationEvent(tx, {
+      boardId: task.boardId,
+      taskId: task.id,
+      kind: "task.changed",
+      before,
+      after: snapshot(after!),
+      actorId,
+      automation,
+    });
   return {
     outcome: "APPLIED" as const,
     taskId: task.id,
