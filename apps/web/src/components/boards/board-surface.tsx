@@ -58,6 +58,7 @@ import {
   Flag,
 } from "lucide-react";
 import { BoardCalendarView } from "./board-calendar";
+import { PauseLeaf, PauseSlice } from "@/components/pause/decor";
 import { BoardTimelineView } from "./board-timeline";
 import { timelineWindow } from "@/lib/timeline-contract";
 import { Button } from "@/components/ui/button";
@@ -1599,8 +1600,12 @@ export function BoardSurface({
             event.preventDefault();
             taskSheetRef.current?.focus();
           }}
-          className="board-details-panel task-sheet-panel outline-none"
+          className="board-details-panel task-sheet-panel task-panel outline-none"
         >
+          <PauseLeaf />
+          <span className="pause-clip" aria-hidden="true">
+            <PauseSlice />
+          </span>
           <TaskEditor
             key={selected?.id ?? `create-${createDueDate ?? ""}`}
             defaultDueDate={selected ? undefined : createDueDate}

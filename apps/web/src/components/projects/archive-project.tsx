@@ -2,14 +2,11 @@
 import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { useRouter } from "nextjs-toploader/app";
-import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  PauseButton,
+  PauseClose,
+  PauseDialog,
+} from "@/components/pause/pause-dialog";
 import { YuzuToast, type YuzuToastNotice } from "@/components/ui/yuzu-toast";
 import { useProjectAction } from "./use-project-action";
 
@@ -51,34 +48,36 @@ export function ArchiveProjectDialog({
   );
   return (
     <>
-      <Dialog open={Boolean(project)} onOpenChange={onOpenChange}>
-        <DialogContent>
-          <DialogTitle>Archive {project?.name}?</DialogTitle>
-          <DialogDescription>
-            Its boards will be hidden and read-only until you restore it.
-            Nothing is deleted.
-          </DialogDescription>
-          {archive.error && (
-            <p role="alert" className="text-sm text-destructive">
-              {archive.error.message}
-            </p>
-          )}
-          <div className="flex justify-end gap-2">
-            <DialogClose asChild>
-              <Button variant="ghost">Cancel</Button>
-            </DialogClose>
-            <Button
-              variant="destructive"
+      <PauseDialog
+        open={Boolean(project)}
+        onOpenChange={onOpenChange}
+        intent="warning"
+        title={`Archive ${project?.name ?? "project"}?`}
+        description="Its boards will be hidden and read-only until you restore it. Nothing is deleted."
+        actions={
+          <>
+            <PauseClose asChild>
+              <PauseButton>Cancel</PauseButton>
+            </PauseClose>
+            <PauseButton
+              tone="primary"
+              data-autofocus
               disabled={archive.isPending}
               onClick={() =>
                 project && archive.mutate({ projectId: project.id })
               }
             >
               {archive.isPending ? "Archiving…" : "Archive project"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+            </PauseButton>
+          </>
+        }
+      >
+        {archive.error && (
+          <p role="alert" className="text-sm text-destructive">
+            {archive.error.message}
+          </p>
+        )}
+      </PauseDialog>
       <YuzuToast notice={notice} />
     </>
   );

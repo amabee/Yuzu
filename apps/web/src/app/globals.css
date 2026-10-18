@@ -3483,3 +3483,579 @@ body:has(:is(.task-sheet-panel, .export-sheet-panel)[data-state="open"])
     opacity: 1;
   }
 }
+
+/* ---------- Pause points: alerts, dialogs, modals, task panel ----------
+   Intent colors are states (like destructive), so they are fixed per light
+   and dark mode rather than per theme. Surfaces still use theme tokens. */
+:root {
+  --intent-info: #2f6fe0;
+  --intent-success: #1e9e58;
+  --intent-warning: #b7791f;
+  --intent-danger: #cf3f3f;
+  --intent-yuzu: #e0a800;
+  --yuzu: #f6c945;
+  --pause-scrim: rgba(15, 23, 42, 0.38);
+  --pause-leaf: #3e9b5a;
+  --pause-leaf-vein: #2c7a45;
+  --pause-on-dark: #0b111c;
+}
+[data-mode="dark"] {
+  --intent-info: #8fb4ff;
+  --intent-success: #4ade80;
+  --intent-warning: #f6c945;
+  --intent-danger: #f87171;
+  --intent-yuzu: #f6c945;
+  --pause-scrim: rgba(9, 14, 28, 0.6);
+}
+[data-intent="info"] {
+  --tint: var(--intent-info);
+  --on-tint: #fff;
+}
+[data-intent="success"] {
+  --tint: var(--intent-success);
+  --on-tint: #fff;
+}
+[data-intent="warning"] {
+  --tint: var(--intent-warning);
+  --on-tint: #fff;
+}
+[data-intent="danger"] {
+  --tint: var(--intent-danger);
+  --on-tint: #fff;
+}
+[data-intent="yuzu"] {
+  --tint: var(--intent-yuzu);
+  --on-tint: var(--pause-on-dark);
+}
+/* In dark mode the tints are light, so text on them is dark. */
+[data-mode="dark"] [data-intent] {
+  --on-tint: var(--pause-on-dark);
+}
+/* The yuzu button is always the bright yuzu, on light and dark. */
+[data-intent="yuzu"] .pause-button[data-tone="primary"],
+[data-intent="warning"] .pause-button[data-tone="primary"] {
+  background: var(--yuzu);
+  color: var(--pause-on-dark);
+}
+
+.pause-leaf {
+  position: absolute;
+  top: -15px;
+  left: -8px;
+  z-index: 3;
+  width: 54px;
+  height: 26px;
+  transform: rotate(-8deg);
+  transform-origin: 85% 80%;
+  pointer-events: none;
+}
+.pause-slice {
+  position: absolute;
+  right: -46px;
+  bottom: -46px;
+  width: 170px;
+  height: 170px;
+  color: var(--tint, var(--yuzu));
+  opacity: 0.09;
+  --pause-slice-gap: var(--card);
+  pointer-events: none;
+}
+.pause-clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.pause-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  color: var(--muted-foreground);
+}
+.pause-close:hover {
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+  color: var(--foreground);
+}
+.pause-close:focus-visible,
+.pause-button:focus-visible {
+  outline: 2px solid var(--tint, var(--ring));
+  outline-offset: 2px;
+}
+
+/* Alerts */
+.pause-alert {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 44px 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--tint) 32%, var(--border));
+  border-radius: 14px;
+  background:
+    radial-gradient(
+      ellipse 60% 120% at 0% 0%,
+      color-mix(in srgb, var(--tint) 12%, transparent),
+      transparent 70%
+    ),
+    color-mix(in srgb, var(--tint) 5%, var(--card));
+  color: var(--foreground);
+}
+.pause-alert .pause-slice {
+  right: -30px;
+  bottom: -60px;
+  width: 140px;
+  height: 140px;
+}
+.pause-alert:not([data-compact]) .pause-leaf {
+  display: none;
+}
+.pause-alert[data-compact] {
+  align-items: center;
+  padding-block: 11px;
+}
+.pause-alert[data-compact] .pause-leaf {
+  top: -12px;
+  left: -6px;
+  width: 40px;
+  height: 20px;
+}
+.pause-alert .pause-close {
+  top: 8px;
+  right: 8px;
+}
+.pause-alert-mascot {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+}
+.pause-alert-mascot svg {
+  width: 100%;
+  height: 100%;
+}
+.pause-alert-icon {
+  flex-shrink: 0;
+  color: var(--tint);
+}
+.pause-alert-body {
+  position: relative;
+  min-width: 0;
+}
+.pause-alert-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+.pause-alert-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--foreground) 82%, transparent);
+}
+.pause-alert-action {
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.pause-alert-action :is(a, button) {
+  color: var(--tint);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Dialogs and modals */
+.pause-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--pause-scrim);
+  backdrop-filter: blur(8px);
+}
+.pause-backdrop[data-state="open"] {
+  animation: pause-fade 220ms ease-out;
+}
+.pause-surface {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 51;
+  display: grid;
+  gap: 18px;
+  width: min(440px, calc(100vw - 24px));
+  max-height: calc(100svh - 32px);
+  padding: 22px;
+  border: 1px solid color-mix(in srgb, var(--tint) 26%, var(--border));
+  border-radius: 20px;
+  background:
+    radial-gradient(
+      ellipse 85% 220px at 0% 0%,
+      color-mix(in srgb, var(--tint) 16%, transparent),
+      color-mix(in srgb, var(--tint) 4%, transparent) 55%,
+      transparent 80%
+    ),
+    var(--card);
+  color: var(--foreground);
+  box-shadow:
+    0 30px 70px -20px rgba(0, 0, 0, 0.45),
+    0 1px 0 color-mix(in srgb, #fff 6%, transparent) inset;
+  transform: translate(-50%, -50%);
+  outline: none;
+}
+.pause-surface[data-state="open"] {
+  animation: pause-rise 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.pause-surface[data-state="open"] > .pause-leaf {
+  animation: pause-sway 4s ease-in-out 220ms infinite alternate;
+}
+.pause-surface[data-kind="modal"] {
+  width: min(560px, calc(100vw - 24px));
+  padding: 0;
+  gap: 0;
+  overflow: visible;
+}
+.pause-surface > * {
+  position: relative;
+}
+.pause-surface > .pause-leaf,
+.pause-surface > .pause-clip,
+.pause-surface > .pause-close {
+  position: absolute;
+}
+.pause-dialog-head {
+  display: flex;
+  gap: 14px;
+  padding-right: 24px;
+}
+.pause-icon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--tint) 16%, transparent);
+  color: var(--tint);
+}
+.pause-title {
+  font-family: var(--theme-heading, inherit);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+.pause-description {
+  margin-top: 6px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--muted-foreground);
+}
+.pause-dialog-body {
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+}
+.pause-dialog-body input {
+  height: 40px;
+}
+.pause-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.pause-actions .pause-button[data-tone="text"]:first-child {
+  margin-right: auto;
+}
+.pause-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 16px;
+  border-radius: 11px;
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+.pause-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.pause-button[data-tone="primary"] {
+  background: var(--tint);
+  color: var(--on-tint);
+}
+.pause-button[data-tone="primary"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--tint) 88%, var(--foreground));
+}
+.pause-button[data-tone="quiet"] {
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 70%, transparent);
+  color: var(--foreground);
+}
+.pause-button[data-tone="quiet"]:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--foreground) 25%, var(--border));
+}
+.pause-button[data-tone="text"] {
+  padding-inline: 8px;
+  color: var(--intent-danger);
+}
+.pause-button[data-tone="text"]:hover:not(:disabled) {
+  text-decoration: underline;
+}
+/* Result dialogs center their outcome and stack actions. */
+.pause-result {
+  justify-items: center;
+  text-align: center;
+}
+.pause-result .pause-dialog-head {
+  flex-direction: column;
+  align-items: center;
+  padding-right: 0;
+}
+.pause-result .pause-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+}
+.pause-result .pause-actions {
+  width: 100%;
+  flex-direction: column;
+  align-items: stretch;
+}
+.pause-result .pause-button[data-tone="quiet"] {
+  border: none;
+  background: transparent;
+}
+/* Modal layout */
+.pause-modal-form {
+  display: grid;
+  min-height: 0;
+  max-height: calc(100svh - 32px);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+.pause-modal-head {
+  padding: 24px 56px 6px 26px;
+}
+.pause-modal-head .pause-title {
+  font-size: 21px;
+}
+.pause-modal-body {
+  display: grid;
+  gap: 18px;
+  overflow-y: auto;
+  padding: 16px 26px 22px;
+}
+.pause-modal-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px 14px 26px;
+  border-top: 1px solid var(--border);
+}
+.pause-modal-note {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.pause-field {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.pause-field-hint {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+.pause-surface :is(input, select, textarea):focus-visible {
+  border-color: var(--tint);
+  outline: 2px solid color-mix(in srgb, var(--tint) 35%, transparent);
+  outline-offset: 0;
+}
+@keyframes pause-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes pause-rise {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 8px)) scale(0.96);
+  }
+}
+@keyframes pause-sway {
+  from {
+    transform: rotate(-11deg);
+  }
+  to {
+    transform: rotate(-4deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pause-backdrop[data-state="open"],
+  .pause-surface[data-state="open"],
+  .pause-surface[data-state="open"] > .pause-leaf {
+    animation: none;
+  }
+}
+/* Narrow screens: full width, buttons stack. */
+@media (max-width: 479px) {
+  .pause-surface,
+  .pause-surface[data-kind="modal"] {
+    top: auto;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    max-height: calc(100svh - 24px);
+    border-radius: 20px 20px 0 0;
+    transform: none;
+  }
+  .pause-surface[data-state="open"] {
+    animation: pause-sheet 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .pause-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+    width: 100%;
+  }
+  .pause-actions .pause-button {
+    width: 100%;
+  }
+  .pause-actions .pause-button[data-tone="text"]:first-child {
+    margin-right: 0;
+  }
+  .pause-modal-foot {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+@keyframes pause-sheet {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+}
+
+/* ---------- Task panel (pause-point language) ---------- */
+/* Every side sheet shares the pause backdrop. */
+[data-slot="sheet-overlay"] {
+  background: var(--pause-scrim);
+  backdrop-filter: blur(8px);
+}
+.board-details-panel.task-panel {
+  --tint: var(--intent-yuzu);
+  top: 14px;
+  right: 14px;
+  bottom: 14px;
+  height: auto;
+  width: min(560px, calc(100vw - 28px));
+  max-width: none;
+  overflow: visible;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background:
+    radial-gradient(
+      ellipse 85% 260px at 0% 0%,
+      color-mix(in srgb, var(--yuzu) 18%, transparent),
+      color-mix(in srgb, var(--yuzu) 5%, transparent) 55%,
+      transparent 80%
+    ),
+    var(--card);
+  box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.45);
+}
+.task-panel > .pause-leaf {
+  top: -16px;
+  left: -10px;
+}
+.task-panel[data-state="open"] > .pause-leaf {
+  animation: pause-sway 4s ease-in-out 300ms infinite alternate;
+}
+.task-panel > .pause-clip .pause-slice {
+  right: -70px;
+  bottom: 120px;
+  width: 260px;
+  height: 260px;
+  color: var(--yuzu);
+  opacity: 0.07;
+}
+/* Lift content above the slice, but leave the absolutely placed close
+   button where Radix puts it. */
+.task-panel > :not(.pause-leaf, .pause-clip, .absolute) {
+  position: relative;
+}
+.task-panel .task-sheet-header {
+  padding: 22px 24px 8px;
+}
+.task-panel .task-sheet-title {
+  margin: 14px 0 6px;
+  font-family: var(--theme-heading, inherit);
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 1.1;
+}
+.task-panel .task-sheet-tabs {
+  gap: 4px;
+  margin: 8px 24px 4px;
+  padding: 4px;
+  border: none;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+.task-panel .task-sheet-tabs [role="tab"] {
+  flex: 1;
+  height: 34px;
+  margin: 0;
+  border: none;
+  border-radius: 9px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  font-weight: 600;
+}
+.task-panel .task-sheet-tabs [role="tab"][aria-selected="true"] {
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: 0 4px 10px -4px rgba(0, 0, 0, 0.3);
+}
+.task-panel .task-sheet-tabs [role="tab"]::after {
+  display: none;
+}
+.task-panel .task-sheet-footer {
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 22px 22px;
+  background: var(--card);
+}
+.task-panel .task-sheet-footer button[type="submit"] {
+  background: var(--yuzu);
+  color: var(--pause-on-dark);
+}
+body:has(.task-panel[data-state="open"]) .yuzu-toast-viewport {
+  right: 592px;
+}
+@media (max-width: 640px) {
+  .board-details-panel.task-panel {
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    max-height: calc(100svh - 24px);
+    border-radius: 22px 22px 0 0;
+  }
+  .task-panel .task-sheet-footer {
+    border-radius: 0;
+  }
+}
