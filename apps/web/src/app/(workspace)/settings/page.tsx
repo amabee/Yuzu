@@ -4,8 +4,10 @@ import {
   CalendarRange,
   Paperclip,
   ShieldCheck,
+  Webhook,
 } from "lucide-react";
 import { WeekStartSetting } from "@/components/settings/week-start-setting";
+import { PrivateWebhookSetting } from "@/components/settings/private-webhook-setting";
 import Link from "next/link";
 import { workspaceContext } from "@/server/workspace-access";
 import { isAdministrator } from "@/server/team-access";
@@ -117,6 +119,26 @@ export default async function SettingsPage() {
             </span>
           )}
         </section>
+        {isAdministrator(user.role) && (
+          <section className="flex flex-col justify-between gap-4 border-t p-6 sm:flex-row sm:items-center">
+            <div className="flex gap-4">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-secondary">
+                <Webhook size={19} className="text-primary" />
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold">Automation webhooks</h2>
+                <p className="mt-1 max-w-md text-sm text-muted-foreground">
+                  By default, webhooks can only reach public addresses. Allow
+                  local-network addresses for tools running next to Yuzu.
+                </p>
+              </div>
+            </div>
+            <PrivateWebhookSetting
+              allowed={installation.allowPrivateWebhooks}
+              revision={installation.revision}
+            />
+          </section>
+        )}
       </div>
       <p className="mt-5 text-xs leading-5 text-muted-foreground">
         General settings are shown as a preview. Team invitations and membership

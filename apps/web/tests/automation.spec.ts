@@ -778,3 +778,109 @@ test("slice 2: schedules run once, missed runs catch up once, and webhooks are s
     server.close();
   }
 });
+
+test("slice 2 builder: schedules, custom messages, the webhook switch and its secret", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const { boardId } = await ownerBoard(page);
+  const db = getDatabase();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`/boards/${boardId}`);
+  await page.getByRole("button", { name: "Automations", exact: true }).click();
+  const sheet = page.getByRole("dialog", { name: "Automations" });
+
+  // A recurring task from the template, with a next-run preview.
+  await sheet
+    .getByRole("button", { name: "Weekly report", exact: true })
+    .click();
+  const builder = page.getByRole("dialog", { name: "New rule" });
+  await expect(builder.getByLabel("Trigger", { exact: true })).toHaveValue(
+    "schedule",
+  );
+  await expect(
+    builder.getByRole("button", { name: "Monday", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await builder.getByRole("button", { name: "Friday", exact: true }).click();
+  await expect(builder.locator(".automation-next")).toContainText("Next run:");
+  await expect(builder.locator(".automation-preview")).toContainText(
+    "every week on Monday and Friday at 09:00",
+  );
+  await page.screenshot({ path: "../../artifacts/automation/schedule.png" });
+  await builder.getByRole("button", { name: "Save rule" }).click();
+  await expect(builder).toHaveCount(0);
+  await expect(sheet.locator(".automation-rule")).toContainText("Next ");
+
+  // A custom notification message with placeholders.
+  await sheet
+    .getByRole("button", { name: "Notify on completion", exact: true })
+    .click();
+  const notify = page.getByRole("dialog", { name: "New rule" });
+  await notify
+    .getByLabel("Action 1 message", { exact: true })
+    .fill("{task} just shipped 🎉 It's now ${status}");
+  await notify.getByRole("button", { name: "Save rule" }).click();
+  await expect(notify).toHaveCount(0);
+  const created = await post(page, "/api/v1/boards/create-task", {
+    boardId,
+    createKey: crypto.randomUUID(),
+    name: "Launch post",
+    statusId: "todo",
+  });
+  const taskId = (await created.json()).data.taskId as string;
+  await post(page, "/api/v1/boards/update", {
+    taskId,
+    revision: 1,
+    requestKey: crypto.randomUUID(),
+    changes: { statusId: "done" },
+  });
+  await expect
+    .poll(
+      async () =>
+        (
+          await db.notification.findFirst({
+            where: { kind: "AUTOMATION", taskId },
+          })
+        )?.message,
+      { timeout: 20_000 },
+    )
+    .toBe("Launch post just shipped 🎉 It's now Done");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: /^Notifications/ }).click();
+  await expect(page.locator(".notification-menu-sentence")).toHaveText(
+    "Launch post just shipped 🎉 It's now Done",
+  );
+  await page.screenshot({ path: "../../artifacts/automation/message.png" });
+  await page.keyboard.press("Escape");
+
+  // Admins allow local-network webhooks, then get a secret once.
+  await page.goto("/settings");
+  await page
+    .getByRole("switch", { name: "Allow local-network webhooks" })
+    .click();
+  await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
+  expect(
+    (
+      await db.installationSettings.findUniqueOrThrow({
+        where: { id: "installation" },
+      })
+    ).allowPrivateWebhooks,
+  ).toBe(true);
+  await page.goto(`/boards/${boardId}`);
+  await page.getByRole("button", { name: "Automations", exact: true }).click();
+  await sheet.getByRole("button", { name: "New rule", exact: true }).click();
+  const hook = page.getByRole("dialog", { name: "New rule" });
+  await hook.getByLabel("Rule name").fill("Tell the dashboard");
+  await hook.getByLabel("Action 1", { exact: true }).selectOption("webhook");
+  await hook
+    .getByLabel("Action 1 webhook URL", { exact: true })
+    .fill("http://127.0.0.1:9/yuzu");
+  await hook.getByRole("button", { name: "Save rule" }).click();
+  const secret = page.getByRole("dialog", { name: "Webhook signing secret" });
+  await expect(secret.getByLabel("Webhook signing secret")).toHaveText(
+    /^whsec_/,
+  );
+  await page.screenshot({ path: "../../artifacts/automation/secret.png" });
+  await secret.getByRole("button", { name: "I've saved it" }).click();
+  await expect(secret).toHaveCount(0);
+});

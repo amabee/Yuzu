@@ -199,6 +199,7 @@ export function describeAction(
               ? "notify the creator"
               : `notify ${(action.userIds ?? []).map(labels.person).join(", ")}`,
         ),
+        ...(action.message ? [t(`: “${action.message}”`)] : []),
       ];
     case "create.task":
       return [

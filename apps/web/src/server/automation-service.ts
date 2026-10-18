@@ -48,13 +48,14 @@ import {
 import { readApprovalPolicy, submitProposal } from "./approval-policy";
 import { createNotifications } from "./notification-events";
 import { notifyBoardMutation } from "./realtime";
-import { isAdministrator, requireIdentity } from "./team-access";
+import { boardScope, isAdministrator, requireIdentity } from "./team-access";
 import {
   assertWebhookUrl,
   deliverWebhooks,
   newWebhookSecret,
 } from "./automation-webhooks";
 import { latestOccurrence, nextOccurrence } from "@/lib/automation-schedule";
+import { defaultMessage, renderMessage } from "@/lib/automation-message";
 import { digest, SetupError } from "./setup/security";
 
 const db = () => getDatabase();
@@ -335,7 +336,25 @@ export async function listAutomations(boardId: string, headers: Headers) {
       rules.map((rule) => rule.id),
     );
     const zone = await installationZone(tx);
-    return { rules: rules.map((rule) => presentRule(rule, stats, zone)) };
+    // Boards this person manages, for "create a task on …".
+    const boards = await tx.board.findMany({
+      where: {
+        id: { not: boardId },
+        ...boardScope(user),
+        ...(isAdministrator(user.role)
+          ? {}
+          : { managers: { some: { userId: user.id } } }),
+      },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+      take: 100,
+    });
+    return {
+      rules: rules.map((rule) => presentRule(rule, stats, zone)),
+      timezone: zone,
+      canWebhook: isAdministrator(user.role),
+      boards,
+    };
   });
 }
 
@@ -856,17 +875,52 @@ async function runRule(rule: StoredRule, event: StoredEvent) {
       ),
     ].filter((id) => people.has(id));
     const subjectId = task?.id ?? createdTaskId;
-    if (recipients.length)
-      await createNotifications(tx, {
-        recipientIds: recipients,
-        actorId: rule.createdById,
-        boardId: rule.boardId,
-        taskId: subjectId,
-        kind: "AUTOMATION",
-        message: `ran the “${rule.name}” rule on`,
-        eventKey: `automation:${rule.id}:${event.id}`,
-        includeActor: true,
+    if (recipients.length) {
+      // Each notify step may carry its own message, filled from the task.
+      const values = await messageValues(tx, {
+        board: context.board,
+        rule,
+        task: task
+          ? {
+              ...current,
+              ...changes,
+              assigneeIds: assignees,
+              name: task.name,
+              createdById: task.createdById,
+            }
+          : null,
+        day,
       });
+      let index = 0;
+      for (const notice of notices) {
+        const to = [
+          ...new Set(
+            notice.to === "assignees"
+              ? assignees
+              : notice.to === "creator"
+                ? task
+                  ? [task.createdById]
+                  : []
+                : notice.userIds,
+          ),
+        ].filter((id) => people.has(id));
+        if (to.length)
+          await createNotifications(tx, {
+            recipientIds: to,
+            actorId: rule.createdById,
+            boardId: rule.boardId,
+            taskId: subjectId,
+            kind: "AUTOMATION",
+            message: renderMessage(
+              notice.message || defaultMessage(Boolean(task)),
+              values,
+            ),
+            eventKey: `automation:${rule.id}:${event.id}:${index}`,
+            includeActor: true,
+          });
+        index++;
+      }
+    }
     const parts = [
       ...(task && Object.keys(changes).length
         ? [await describe(tx, context.board, changes, 0)]
@@ -915,6 +969,53 @@ async function runRule(rule: StoredRule, event: StoredEvent) {
   });
 }
 
+/** What a notify message's placeholders become for this run. */
+async function messageValues(
+  tx: DatabaseTransaction,
+  input: {
+    board: Board;
+    rule: { name: string };
+    task: (RuleTask & { name: string; createdById: string }) | null;
+    day: string;
+  },
+) {
+  const { board, task } = input;
+  const ids = task ? [...task.assigneeIds, task.createdById] : [];
+  const names = new Map(
+    (
+      await tx.user.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, name: true },
+      })
+    ).map((person) => [person.id, person.name]),
+  );
+  const priority =
+    fieldOptions(
+      board.columns.find((field) => field.key === "priority")?.config,
+    ).find((option) => option.id === task?.priority)?.label ??
+    (task
+      ? task.priority.charAt(0) + task.priority.slice(1).toLowerCase()
+      : "");
+  return {
+    task: task?.name ?? "",
+    status: task
+      ? (fieldOptions(
+          board.columns.find((field) => field.key === "status")?.config,
+        ).find((option) => option.id === task.statusId)?.label ?? "No status")
+      : "",
+    priority,
+    due: task ? (task.dueDate ? shortDay(task.dueDate) : "no due date") : "",
+    assignees: task
+      ? task.assigneeIds.map((id) => names.get(id) ?? "someone").join(", ") ||
+        "nobody"
+      : "",
+    creator: task ? (names.get(task.createdById) ?? "someone") : "",
+    board: board.name,
+    rule: input.rule.name,
+    date: shortDay(input.day),
+  };
+}
+
 /** Counts a failure against a rule and pauses it after a streak. */
 async function noteFailure(
   tx: DatabaseTransaction,
@@ -942,7 +1043,7 @@ async function noteFailure(
     boardId: rule.boardId,
     taskId,
     kind: "AUTOMATION",
-    message: `paused the “${rule.name}” rule after repeated failures, last on`,
+    message: `“${rule.name}” paused after ${PAUSE_AFTER_FAILURES} failures in a row.`,
     eventKey: `automation:${rule.id}:paused:${key}`,
     includeActor: true,
   });
@@ -957,7 +1058,10 @@ async function recordFailure(
   const message =
     error instanceof SetupError
       ? error.message
-      : "Something went wrong while running this rule.";
+      : error instanceof z.ZodError
+        ? // A rule saved by a newer Yuzu than the worker running it.
+          "This rule uses options the worker doesn't recognise. Rebuild or restart the Yuzu worker so it runs the same version as the app."
+        : "Something went wrong while running this rule.";
   await serial(async (tx) => {
     const existing = await tx.automationRun.findUnique({
       where: { ruleId_eventId: { ruleId: rule.id, eventId: event.id } },

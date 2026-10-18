@@ -108,6 +108,8 @@ export const automationActionSchema = z.discriminatedUnion("kind", [
       kind: z.literal("notify"),
       to: z.enum(["assignees", "creator", "people"]),
       userIds: z.array(personId).max(20).optional(),
+      /** Custom text; {task}, {status}, {due} and friends fill in when it runs. */
+      message: z.string().trim().max(280).optional(),
     })
     .strict()
     .refine(

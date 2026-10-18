@@ -22,7 +22,7 @@ import {
 } from "@/lib/notification-contract";
 import { apiRequest, ApiError } from "@/lib/api-client";
 import { useApprovalLiveSync } from "@/components/boards/use-board-live-sync";
-import { NotificationMenu } from "./notification-menu";
+import { NotificationMenu, sentence } from "./notification-menu";
 
 function useInbox(
   principalId: string,
@@ -276,8 +276,14 @@ export function NotificationInboxView({
                 >
                   <span className="flex items-start justify-between gap-2">
                     <span className="text-sm">
-                      <b className="font-medium">{item.actorName}</b>{" "}
-                      {item.message}
+                      {sentence(item) ? (
+                        item.message
+                      ) : (
+                        <>
+                          <b className="font-medium">{item.actorName}</b>{" "}
+                          {item.message}
+                        </>
+                      )}
                     </span>
                     <ArrowUpRight
                       size={14}

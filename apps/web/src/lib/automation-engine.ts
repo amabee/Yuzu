@@ -136,6 +136,7 @@ export type PlannedChanges = {
 };
 
 export type PlannedNotice = {
+  message?: string;
   to: "assignees" | "creator" | "people";
   userIds: string[];
 };
@@ -188,7 +189,11 @@ export function planActions(
         break;
       }
       case "notify":
-        notices.push({ to: action.to, userIds: action.userIds ?? [] });
+        notices.push({
+          to: action.to,
+          userIds: action.userIds ?? [],
+          ...(action.message ? { message: action.message } : {}),
+        });
         break;
       case "create.task":
         creations.push(action);

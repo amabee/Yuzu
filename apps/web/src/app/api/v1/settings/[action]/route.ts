@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { readSetupBody, SetupError } from "@/server/setup/security";
-import { updateCalendarSettings } from "@/server/installation-settings-service";
+import {
+  updateAutomationSettings,
+  updateCalendarSettings,
+} from "@/server/installation-settings-service";
 
 export async function POST(
   request: Request,
@@ -9,12 +12,13 @@ export async function POST(
   const requestId = crypto.randomUUID();
   try {
     const action = (await context.params).action;
-    if (action !== "calendar")
+    if (action !== "calendar" && action !== "automation")
       throw new SetupError(404, "NOT_FOUND", "Settings action not found.");
-    const data = await updateCalendarSettings(
-      await readSetupBody(request),
-      request.headers,
-    );
+    const body = await readSetupBody(request);
+    const data =
+      action === "calendar"
+        ? await updateCalendarSettings(body, request.headers)
+        : await updateAutomationSettings(body, request.headers);
     return Response.json(
       { data, requestId },
       { headers: { "Cache-Control": "no-store" } },

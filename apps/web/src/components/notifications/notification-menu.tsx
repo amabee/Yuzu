@@ -132,9 +132,16 @@ export function NotificationMenu({
                 >
                   <KindIcon kind={item.kind} />
                   <span className="notification-menu-text">
-                    <span>
-                      <b>{item.actorName}</b> {item.message} <b>{item.name}</b>
-                    </span>
+                    {sentence(item) ? (
+                      <span className="notification-menu-sentence">
+                        {item.message}
+                      </span>
+                    ) : (
+                      <span>
+                        <b>{item.actorName}</b> {item.message}{" "}
+                        <b>{item.name}</b>
+                      </span>
+                    )}
                     <small>
                       {item.projectName ? `${item.projectName} / ` : ""}
                       {item.boardName} ·{" "}
@@ -176,6 +183,11 @@ export function NotificationMenu({
       </Popover.Portal>
     </Popover.Root>
   );
+}
+
+/** Rule notifications are whole sentences; older ones read "ran the … on". */
+export function sentence(item: Pick<Item, "kind" | "message">) {
+  return item.kind === "AUTOMATION" && !item.message.startsWith("ran the ");
 }
 
 function KindIcon({ kind }: { kind: Item["kind"] }) {
