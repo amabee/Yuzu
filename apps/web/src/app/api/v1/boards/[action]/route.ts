@@ -5,6 +5,7 @@ import { recordId } from "@/lib/board-contract";
 import {
   boardState,
   boardCalendar,
+  boardTimeline,
   taskComments,
   createComment,
   changeComment,
@@ -25,6 +26,12 @@ async function handle(request: Request, action: string) {
         new URL(request.url).searchParams.has("query")
           ? JSON.parse(new URL(request.url).searchParams.get("query")!)
           : {},
+      );
+    else if (request.method === "GET" && action === "timeline")
+      data = await boardTimeline(
+        recordId.parse(new URL(request.url).searchParams.get("boardId")),
+        request.headers,
+        JSON.parse(new URL(request.url).searchParams.get("query") ?? "{}"),
       );
     else if (request.method === "GET" && action === "calendar")
       data = await boardCalendar(

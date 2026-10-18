@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PageCrumbs } from "@/components/page-crumbs";
 import { getDatabase } from "@yuzu/database";
 import { workspaceContext } from "@/server/workspace-access";
 import { boardScope } from "@/server/team-access";
@@ -22,7 +23,7 @@ export default async function BoardsPage() {
   });
   return (
     <div>
-      <div className="workspace-breadcrumb">Workspaces / Boards</div>
+      <PageCrumbs items={[{ label: "Boards" }]} />
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-3xl font-semibold tracking-tight">Boards</h1>
         {(isAdministrator(user.role) ||

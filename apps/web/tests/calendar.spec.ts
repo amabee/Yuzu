@@ -215,3 +215,77 @@ test("owners choose the week start for every calendar", async ({ page }) => {
   await page.goto(`/boards/${board.id}?layout=calendar`);
   await expect(firstWeekday).toHaveText("Sun");
 });
+
+test("tasks have an optional start date that can't fall after the due date", async ({
+  page,
+}) => {
+  const seeded = await ownerBoard(page);
+  // A board made through the API has the default columns, Start date included.
+  const made = await post(page, "/api/v1/boards/create-board", {
+    workspaceId: seeded.workspaceId,
+    name: "Dated work",
+  });
+  expect(made.status()).toBe(200);
+  const board = { id: (await made.json()).data.id as string };
+  const created = await post(page, "/api/v1/boards/create-task", {
+    boardId: board.id,
+    createKey: crypto.randomUUID(),
+    name: "Plan launch",
+    startDate: "2026-10-12",
+    dueDate: "2026-10-16",
+  });
+  expect(created.status()).toBe(200);
+  const taskId = (await created.json()).data.taskId as string;
+  // The server rejects a start after the due date, on create and update.
+  expect(
+    (
+      await post(page, "/api/v1/boards/create-task", {
+        boardId: board.id,
+        createKey: crypto.randomUUID(),
+        name: "Backwards",
+        startDate: "2026-10-20",
+        dueDate: "2026-10-16",
+      })
+    ).status(),
+  ).toBe(422);
+  const task = await getDatabase().task.findUniqueOrThrow({
+    where: { id: taskId },
+  });
+  const late = await post(page, "/api/v1/boards/update", {
+    taskId,
+    revision: task.revision,
+    changes: { startDate: "2026-10-17" },
+  });
+  expect(late.status()).toBe(422);
+  expect((await late.json()).error.code).toBe("START_AFTER_DUE");
+
+  // The table has a Start date column; the editor guards the order.
+  await page.goto(`/boards/${board.id}?layout=table`);
+  await expect(
+    page.getByRole("columnheader", { name: "Start date" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Plan launch", exact: true })
+    .first()
+    .click();
+  const start = page.getByLabel("Task start date");
+  await expect(start).toHaveValue("2026-10-12");
+  await start.fill("2026-10-18");
+  await expect(
+    page.getByText("The start date must be on or before the due date."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Save changes" }),
+  ).toBeDisabled();
+  await start.fill("2026-10-14");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect
+    .poll(async () =>
+      (
+        await getDatabase().task.findUniqueOrThrow({ where: { id: taskId } })
+      ).startDate
+        ?.toISOString()
+        .slice(0, 10),
+    )
+    .toBe("2026-10-14");
+});

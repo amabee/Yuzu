@@ -25,6 +25,7 @@ const fieldKeys: Record<string, string> = {
   description: "description",
   statusId: "status",
   priority: "priority",
+  startDate: "start_date",
   dueDate: "due_date",
   assigneeIds: "assignees",
 };

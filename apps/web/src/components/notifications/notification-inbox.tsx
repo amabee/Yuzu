@@ -59,6 +59,10 @@ function useInbox(
     refetchOnReconnect: "always",
   });
 }
+/** Unread count for navigation badges; shares the bell's cached query. */
+export function useUnreadCount(principalId: string) {
+  return useInbox(principalId).data?.unreadCount ?? 0;
+}
 export function NotificationBell({ principalId }: { principalId: string }) {
   const live = useApprovalLiveSync(principalId);
   const query = useInbox(

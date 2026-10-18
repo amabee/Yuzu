@@ -6,11 +6,12 @@ import { apiRequest } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { useUiStore } from "./providers";
 
-export function SignOut() {
+/** Signs out, clears every cached query and client UI state, then leaves. */
+export function useSignOut() {
   const cache = useQueryClient();
   const router = useRouter();
   const reset = useUiStore((state) => state.reset);
-  const action = useMutation({
+  return useMutation({
     mutationFn: () =>
       apiRequest("/api/v1/session/sign-out", { method: "POST", json: {} }),
     onSuccess: async () => {
@@ -21,6 +22,10 @@ export function SignOut() {
       router.refresh();
     },
   });
+}
+
+export function SignOut() {
+  const action = useSignOut();
   return (
     <div>
       <Button

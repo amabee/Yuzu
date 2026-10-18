@@ -6,18 +6,11 @@ import { Archive, Pencil, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  PauseButton,
+  PauseClose,
+  PauseDialog,
+  PauseModal,
+} from "@/components/pause/pause-dialog";
 import { CreateBoard } from "@/components/boards/create-board";
 import { ColorSwatches, VisibilityChoice } from "./project-form-fields";
 import { ArchiveProjectDialog } from "./archive-project";
@@ -163,81 +156,93 @@ function EditProjectSheet({
       ...changes,
     });
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="board-details-panel">
-        <SheetTitle>Edit project</SheetTitle>
-        <SheetDescription>
-          Changes apply for everyone who can see {project.name}.
-        </SheetDescription>
-        <form
-          className="space-y-5"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (
-              visibility === "PRIVATE" &&
-              project.visibility === "PUBLIC" &&
-              outsiders > 0
-            )
-              setConfirming(true);
-            else save();
-          }}
-        >
-          <label className="task-field-label">
-            Project name
-            <Input
-              aria-label="Project name"
-              required
-              maxLength={100}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-            />
-          </label>
-          <div className="task-field-label">
-            Color
-            <ColorSwatches value={color} onChange={setColor} />
-          </div>
-          <VisibilityChoice
-            value={visibility}
-            onChange={setVisibility}
-            workspaceName={workspaceName}
+    <>
+      <PauseModal
+        open={open}
+        onOpenChange={onOpenChange}
+        title="Edit project"
+        description={`Changes apply for everyone who can see ${project.name}.`}
+        as="form"
+        footer="Renaming keeps every board and link."
+        actions={
+          <>
+            <PauseClose asChild>
+              <PauseButton>Cancel</PauseButton>
+            </PauseClose>
+            <PauseButton
+              tone="primary"
+              type="submit"
+              disabled={update.isPending || Object.keys(changes).length === 0}
+            >
+              {update.isPending ? "Saving…" : "Save changes"}
+            </PauseButton>
+          </>
+        }
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (
+            visibility === "PRIVATE" &&
+            project.visibility === "PUBLIC" &&
+            outsiders > 0
+          )
+            setConfirming(true);
+          else save();
+        }}
+      >
+        <label className="task-field-label">
+          Project name
+          <Input
+            aria-label="Project name"
+            required
+            maxLength={100}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
           />
-          {update.error && !confirming && (
-            <p role="alert" className="text-sm text-destructive">
-              {update.error.message}
-            </p>
-          )}
-          <Button
-            className="w-full"
-            disabled={update.isPending || Object.keys(changes).length === 0}
-          >
-            {update.isPending ? "Saving…" : "Save changes"}
-          </Button>
-        </form>
-        <Dialog open={confirming} onOpenChange={setConfirming}>
-          <DialogContent>
-            <DialogTitle>Make {project.name} private?</DialogTitle>
-            <DialogDescription>
-              {outsiders}{" "}
-              {outsiders === 1 ? "person who isn't" : "people who aren't"}{" "}
-              project members will lose access to its boards right away.
-            </DialogDescription>
-            {update.error && (
-              <p role="alert" className="text-sm text-destructive">
-                {update.error.message}
-              </p>
-            )}
-            <div className="flex justify-end gap-2">
-              <DialogClose asChild>
-                <Button variant="ghost">Cancel</Button>
-              </DialogClose>
-              <Button disabled={update.isPending} onClick={save}>
-                Make private
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-      </SheetContent>
-    </Sheet>
+        </label>
+        <div className="task-field-label">
+          Color
+          <ColorSwatches value={color} onChange={setColor} />
+        </div>
+        <VisibilityChoice
+          value={visibility}
+          onChange={setVisibility}
+          workspaceName={workspaceName}
+        />
+        {update.error && !confirming && (
+          <p role="alert" className="text-sm text-destructive">
+            {update.error.message}
+          </p>
+        )}
+      </PauseModal>
+      <PauseDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        intent="warning"
+        title={`Make ${project.name} private?`}
+        description={`${outsiders} ${outsiders === 1 ? "person who isn't" : "people who aren't"} project members will lose access to its boards right away.`}
+        actions={
+          <>
+            <PauseClose asChild>
+              <PauseButton>Cancel</PauseButton>
+            </PauseClose>
+            <PauseButton
+              tone="primary"
+              data-autofocus
+              disabled={update.isPending}
+              onClick={save}
+            >
+              Make private
+            </PauseButton>
+          </>
+        }
+      >
+        {update.error && (
+          <p role="alert" className="text-sm text-destructive">
+            {update.error.message}
+          </p>
+        )}
+      </PauseDialog>
+    </>
   );
 }
 
@@ -293,14 +298,23 @@ function MembersSheet({
   );
   const error = member.error ?? invite.error ?? revoke.error;
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="board-details-panel overflow-y-auto">
-        <SheetTitle>Members</SheetTitle>
-        <SheetDescription>
-          {project.visibility === "PRIVATE"
+    <>
+      <PauseModal
+        open={open}
+        onOpenChange={onOpenChange}
+        title="Members"
+        description={
+          project.visibility === "PRIVATE"
             ? "Only these people can see this project and its boards."
-            : "Everyone in the workspace can see this project. Managers can change it and add boards."}
-        </SheetDescription>
+            : "Everyone in the workspace can see this project. Managers can change it and add boards."
+        }
+        footer={canManage ? "Invitations expire in 7 days." : undefined}
+        actions={
+          <PauseClose asChild>
+            <PauseButton tone="primary">Done</PauseButton>
+          </PauseClose>
+        }
+      >
         <p role="status" aria-live="polite" className="sr-only">
           {status}
         </p>
@@ -484,45 +498,42 @@ function MembersSheet({
             )}
           </>
         )}
-        <Dialog
-          open={Boolean(removing)}
-          onOpenChange={(next) => !next && setRemoving(null)}
-        >
-          <DialogContent>
-            <DialogTitle>Remove {removing?.name}?</DialogTitle>
-            <DialogDescription>
-              They&apos;ll lose access to this project&apos;s{" "}
-              {project.boardCount}{" "}
-              {project.boardCount === 1 ? "board" : "boards"} right away.
-            </DialogDescription>
-            {member.error && (
-              <p role="alert" className="text-sm text-destructive">
-                {member.error.message}
-              </p>
-            )}
-            <div className="flex justify-end gap-2">
-              <DialogClose asChild>
-                <Button variant="ghost">Cancel</Button>
-              </DialogClose>
-              <Button
-                variant="destructive"
-                disabled={member.isPending}
-                onClick={() =>
-                  removing &&
-                  member.mutate({
-                    action: "remove",
-                    projectId: project.id,
-                    userId: removing.id,
-                  })
-                }
-              >
-                Remove
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-      </SheetContent>
-    </Sheet>
+      </PauseModal>
+      <PauseDialog
+        open={Boolean(removing)}
+        onOpenChange={(next) => !next && setRemoving(null)}
+        intent="danger"
+        title={`Remove ${removing?.name ?? "this person"}?`}
+        description={`They'll lose access to this project's ${project.boardCount} ${project.boardCount === 1 ? "board" : "boards"} right away.`}
+        actions={
+          <>
+            <PauseClose asChild>
+              <PauseButton>Cancel</PauseButton>
+            </PauseClose>
+            <PauseButton
+              tone="primary"
+              disabled={member.isPending}
+              onClick={() =>
+                removing &&
+                member.mutate({
+                  action: "remove",
+                  projectId: project.id,
+                  userId: removing.id,
+                })
+              }
+            >
+              Remove
+            </PauseButton>
+          </>
+        }
+      >
+        {member.error && (
+          <p role="alert" className="text-sm text-destructive">
+            {member.error.message}
+          </p>
+        )}
+      </PauseDialog>
+    </>
   );
 }
 
