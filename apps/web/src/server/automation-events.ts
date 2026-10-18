@@ -13,6 +13,14 @@ const pick = (task: Record<string, unknown>): RuleTask => ({
   startDate: (task.startDate as string | null) ?? null,
   dueDate: (task.dueDate as string | null) ?? null,
   fieldValues: (task.fieldValues as RuleTask["fieldValues"]) ?? {},
+  checklist: Array.isArray(task.checklist)
+    ? {
+        done: (task.checklist as { done?: boolean }[]).filter(
+          (item) => item.done,
+        ).length,
+        total: task.checklist.length,
+      }
+    : undefined,
 });
 
 /**
@@ -24,7 +32,9 @@ export async function recordAutomationEvent(
   input: {
     boardId: string;
     taskId: string;
-    kind: "task.created" | "task.changed";
+    kind: "task.created" | "task.changed" | "comment.added";
+    /** People a new comment mentions. */
+    mentions?: string[];
     before?: Record<string, unknown>;
     after: Record<string, unknown>;
     actorId: string;
@@ -44,6 +54,7 @@ export async function recordAutomationEvent(
       payload: {
         ...(input.before ? { before: pick(input.before) } : {}),
         after: pick(input.after),
+        ...(input.mentions ? { mentions: input.mentions } : {}),
       },
       actorId: input.actorId,
       depth: input.automation?.depth ?? 0,

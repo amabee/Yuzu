@@ -44,6 +44,8 @@ model InstallationSettings {
   verificationSentAt         DateTime?  @db.Timestamptz(3)
   initialWorkspaceId         String?    @unique
   initialBoardId             String?    @unique
+  /// Lets automation webhooks reach local or private-network addresses.
+  allowPrivateWebhooks       Boolean    @default(false)
 }
 
 model User {
@@ -690,22 +692,29 @@ model CsvTransferRow {
 /// A board rule: When (trigger) / If (conditions) / Then (actions).
 /// It runs as its creator; see docs/specs/automation.md.
 model AutomationRule {
-  id                  String          @id @default(uuid(7))
+  id                  String               @id @default(uuid(7))
   boardId             String
-  board               Board           @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  board               Board                @relation(fields: [boardId], references: [id], onDelete: Cascade)
   name                String
-  enabled             Boolean         @default(true)
+  enabled             Boolean              @default(true)
   trigger             Json
-  conditions          Json            @default("[]")
+  /// "all" or "any": how the conditions combine.
+  match               String               @default("all")
+  conditions          Json                 @default("[]")
   actions             Json
   createdById         String
-  createdBy           User            @relation("AutomationCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  revision            Int             @default(1)
+  createdBy           User                 @relation("AutomationCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  revision            Int                  @default(1)
   pausedReason        String?
-  consecutiveFailures Int             @default(0)
-  createdAt           DateTime        @default(now()) @db.Timestamptz(3)
-  updatedAt           DateTime        @updatedAt @db.Timestamptz(3)
+  consecutiveFailures Int                  @default(0)
+  /// Signs webhook deliveries; encrypted with the settings key.
+  webhookSecret       String?
+  /// The last schedule occurrence that was queued, so it fires once.
+  lastScheduledAt     DateTime?            @db.Timestamptz(3)
+  createdAt           DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime             @updatedAt @db.Timestamptz(3)
   runs                AutomationRun[]
+  deliveries          AutomationDelivery[]
 
   @@index([boardId, enabled])
 }
@@ -715,8 +724,11 @@ model AutomationEvent {
   id          String          @id @default(uuid(7))
   boardId     String
   board       Board           @relation(fields: [boardId], references: [id], onDelete: Cascade)
-  taskId      String
-  task        Task            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  /// Null for scheduled events, which aren't about a task.
+  taskId      String?
+  task        Task?           @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  /// Set for scheduled events: only this rule runs them.
+  ruleId      String?
   kind        String
   payload     Json            @default("{}")
   actorId     String?
@@ -739,17 +751,47 @@ enum AutomationOutcome {
 }
 
 model AutomationRun {
-  id        String            @id @default(uuid(7))
-  ruleId    String
-  rule      AutomationRule    @relation(fields: [ruleId], references: [id], onDelete: Cascade)
-  eventId   String
-  event     AutomationEvent   @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  taskId    String
-  task      Task              @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  outcome   AutomationOutcome
-  detail    String?
-  createdAt DateTime          @default(now()) @db.Timestamptz(3)
+  id            String               @id @default(uuid(7))
+  ruleId        String
+  rule          AutomationRule       @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  eventId       String
+  event         AutomationEvent      @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  taskId        String?
+  task          Task?                @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  /// A task this run created, possibly on another board.
+  createdTaskId String?
+  outcome       AutomationOutcome
+  detail        String?
+  createdAt     DateTime             @default(now()) @db.Timestamptz(3)
+  deliveries    AutomationDelivery[]
 
   @@unique([ruleId, eventId])
   @@index([ruleId, createdAt])
+}
+
+enum AutomationDeliveryStatus {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
+/// A webhook POST queued by a run and sent after it commits, with retries.
+model AutomationDelivery {
+  id            String                   @id @default(uuid(7))
+  runId         String
+  run           AutomationRun            @relation(fields: [runId], references: [id], onDelete: Cascade)
+  ruleId        String
+  rule          AutomationRule           @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  url           String
+  payload       Json
+  status        AutomationDeliveryStatus @default(PENDING)
+  attempts      Int                      @default(0)
+  responseCode  Int?
+  durationMs    Int?
+  error         String?
+  nextAttemptAt DateTime                 @default(now()) @db.Timestamptz(3)
+  createdAt     DateTime                 @default(now()) @db.Timestamptz(3)
+
+  @@index([status, nextAttemptAt])
+  @@index([runId])
 }

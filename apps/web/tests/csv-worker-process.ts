@@ -19,6 +19,8 @@ export async function startTestCsvWorker() {
         ),
         DATABASE_URL: process.env.YUZU_E2E_DATABASE_URL,
         WORKER_PORT: "3102",
+        // Same test-only key as the web server, so both read stored secrets.
+        SETTINGS_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64url"),
         BETTER_AUTH_URL: "http://127.0.0.1:3100",
         REALTIME_SECRET: "browser-tests-only-realtime-secret-32-characters",
         REALTIME_INTERNAL_URL: "http://127.0.0.1:3101",
