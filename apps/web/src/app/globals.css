@@ -3601,7 +3601,7 @@ body:has(:is(.task-sheet-panel, .export-sheet-panel)[data-state="open"])
 }
 .pause-alert[data-compact] {
   align-items: center;
-  padding-block: 11px;
+  padding-block: 17px;
 }
 .pause-alert[data-compact] .pause-leaf {
   top: -21px;
