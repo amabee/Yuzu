@@ -5,11 +5,10 @@ import { useRouter } from "nextjs-toploader/app";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetTitle,
-} from "@/components/ui/sheet";
+  PauseButton,
+  PauseClose,
+  PauseModal,
+} from "@/components/pause/pause-dialog";
 import { apiRequest } from "@/lib/api-client";
 export function CreateBoard({
   workspaces,
@@ -49,60 +48,67 @@ export function CreateBoard({
       >
         {project ? "New board" : "Create board"}
       </Button>
-      <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent className="board-details-panel">
-          <SheetTitle>Create board</SheetTitle>
-          <SheetDescription>
-            Start with task names, statuses, assignees, priorities, and dates.
-            New boards use direct editing.
-          </SheetDescription>
-          <form
-            className="space-y-5"
-            onSubmit={(event) => {
-              event.preventDefault();
-              mutation.mutate();
-            }}
-          >
-            <label className="task-field-label">
-              Board name
-              <Input
-                aria-label="Board name"
-                required
-                maxLength={100}
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-              />
-            </label>
-            {project ? (
-              <p className="text-sm text-muted-foreground">In {project.name}</p>
-            ) : (
-              <label className="task-field-label">
-                Workspace
-                <select
-                  aria-label="Board workspace"
-                  className="task-select"
-                  value={selectedWorkspace?.id ?? ""}
-                  onChange={(event) => setWorkspaceId(event.target.value)}
-                >
-                  {workspaces.map((workspace) => (
-                    <option key={workspace.id} value={workspace.id}>
-                      {workspace.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            {mutation.error && (
-              <p role="alert" className="text-sm text-destructive">
-                {mutation.error.message}
-              </p>
-            )}
-            <Button className="w-full" disabled={mutation.isPending}>
+      <PauseModal
+        open={open}
+        onOpenChange={setOpen}
+        title={project ? `New board in ${project.name}` : "Create board"}
+        description="Start with task names, statuses, assignees, priorities, and dates."
+        as="form"
+        footer="Boards start with To do, In progress and Done."
+        actions={
+          <>
+            <PauseClose asChild>
+              <PauseButton>Cancel</PauseButton>
+            </PauseClose>
+            <PauseButton
+              tone="primary"
+              type="submit"
+              disabled={mutation.isPending}
+            >
               {mutation.isPending ? "Creating…" : "Create board"}
-            </Button>
-          </form>
-        </SheetContent>
-      </Sheet>
+            </PauseButton>
+          </>
+        }
+        onSubmit={(event) => {
+          event.preventDefault();
+          mutation.mutate();
+        }}
+      >
+        <label className="task-field-label">
+          Board name
+          <Input
+            aria-label="Board name"
+            required
+            maxLength={100}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </label>
+        {project ? (
+          <p className="text-sm text-muted-foreground">In {project.name}</p>
+        ) : (
+          <label className="task-field-label">
+            Workspace
+            <select
+              aria-label="Board workspace"
+              className="task-select"
+              value={selectedWorkspace?.id ?? ""}
+              onChange={(event) => setWorkspaceId(event.target.value)}
+            >
+              {workspaces.map((workspace) => (
+                <option key={workspace.id} value={workspace.id}>
+                  {workspace.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {mutation.error && (
+          <p role="alert" className="text-sm text-destructive">
+            {mutation.error.message}
+          </p>
+        )}
+      </PauseModal>
     </>
   );
 }

@@ -257,7 +257,8 @@ test("owner setup resumes, verifies actual receipt, and completes exactly once",
   const publicState = await anonymous.json();
   expect(publicState.data.authorized).toBe(false);
   expect(publicState.data.settings).toBeUndefined();
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: /^Account menu/ }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/sign-in$/);
   await page.getByLabel("Email address").fill("owner@example.test");
   await page
@@ -265,7 +266,7 @@ test("owner setup resumes, verifies actual receipt, and completes exactly once",
     .fill("test-owner-password-123");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Good work starts here." }),
+    page.getByRole("heading", { name: /^Good (morning|afternoon|evening), / }),
   ).toBeVisible();
   expect(errors).toEqual([]);
 });
@@ -817,7 +818,9 @@ test("password recovery works from email and revokes every existing session", as
       .getByRole("button", { name: "Sign in", exact: true })
       .click();
     await expect(
-      recoveryPage.getByRole("heading", { name: "Good work starts here." }),
+      recoveryPage.getByRole("heading", {
+        name: /^Good (morning|afternoon|evening), /,
+      }),
     ).toBeVisible();
     expect(
       (await db.user.findUniqueOrThrow({ where: { id: owner.id } })).role,
@@ -1597,7 +1600,10 @@ test("global themes persist, drafts stay scoped, modes remain personal, and prev
     path: "../../artifacts/phase-0.5/applied-editor-mobile.png",
     fullPage: true,
   });
-  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  // On phones the account menu lives in the navigation drawer.
+  await page.getByRole("button", { name: "Toggle navigation" }).click();
+  await page.getByRole("button", { name: /^Account menu/ }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/sign-in$/);
   await expect(page.getByRole("switch", { name: "Dark mode" })).toBeChecked();
   await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
@@ -1693,7 +1699,7 @@ test("appearance writes reject members, malformed themes, cross-origin requests 
   expect((await post("publish", { revision: 1, theme })).status()).toBe(200);
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "Good work starts here." }),
+    page.getByRole("heading", { name: /^Good (morning|afternoon|evening), / }),
   ).toBeVisible();
   const computed = await page.evaluate(() => ({
     blur: getComputedStyle(document.querySelector(".yuzu-topbar")!)
@@ -1718,7 +1724,7 @@ test("shadcn sidebar collapses and theme switch animates with accessible fallbac
   await readyTeam(page);
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "Good work starts here." }),
+    page.getByRole("heading", { name: /^Good (morning|afternoon|evening), / }),
   ).toBeVisible();
   const sidebar = page.locator("[data-collapsible]");
   await expect(sidebar).toHaveAttribute("data-state", "expanded");
@@ -3182,11 +3188,9 @@ test("task reference sheet persists option appearance, formats dates and shows r
     .getByRole("button", { name: "Develop core features", exact: true })
     .click();
   await expect(
-    page.getByRole("tab", { name: "Details", exact: true }),
+    page.getByRole("tab", { name: "Comments 0", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  await expect(page.locator(".task-sheet-header")).toContainText(
-    "Apr 16, 2026",
-  );
+  await expect(page.getByLabel("Task due date")).toHaveValue("2026-04-16");
   await expect(page.locator(".task-sheet-header .lucide-clock")).toHaveCount(1);
   await expect(
     page.getByRole("progressbar", { name: "Checklist progress" }),
@@ -3269,7 +3273,7 @@ test("task reference sheet persists option appearance, formats dates and shows r
   ).toHaveAttribute("aria-selected", "true");
   await page.getByRole("tab", { name: "Activity", exact: true }).press("Home");
   await expect(
-    page.getByRole("tab", { name: "Details", exact: true }),
+    page.getByRole("tab", { name: "Comments 1", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await page.setViewportSize({ width: 390, height: 844 });
   expect(
@@ -3281,9 +3285,10 @@ test("task reference sheet persists option appearance, formats dates and shows r
     element.scrollTop = element.scrollHeight;
   });
   await expect(page.locator(".task-sheet-header")).toBeVisible();
+  // The reply box stays pinned to the bottom of the panel.
   await expect(
-    page.getByRole("button", { name: "Save changes", exact: true }),
-  ).toBeVisible();
+    page.getByLabel("New comment", { exact: true }),
+  ).toBeInViewport();
   await page.screenshot({
     path: "../../artifacts/phase-2/reference-task-sheet-mobile.png",
     fullPage: true,
@@ -3753,7 +3758,6 @@ test("boards sync across people, preserve drafts and recover concurrent non-over
       "A live teammate comment",
       { timeout: 10_000 },
     );
-    await page.getByRole("tab", { name: "Details", exact: true }).click();
     await page.getByLabel("Task description").fill("My conflicting notes");
     await remote({ description: "Teammate's notes" });
     await expect(
@@ -3851,7 +3855,7 @@ test("boards sync across people, preserve drafts and recover concurrent non-over
     );
     await expect(
       page.getByRole("button", { name: "Save changes", exact: true }),
-    ).toBeDisabled();
+    ).toHaveCount(0);
     await remote({ description: "New visible notes" });
     await expect(page.getByLabel("Task description")).toHaveValue(
       "New visible notes",
@@ -4008,7 +4012,7 @@ test("standalone offline recovery shares one server probe and returns to the wor
     .click();
   await expect(page).toHaveURL("http://127.0.0.1:3100/");
   await expect(
-    page.getByRole("heading", { name: "Good work starts here." }),
+    page.getByRole("heading", { name: /^Good (morning|afternoon|evening), / }),
   ).toBeVisible();
   expect(probes).toBe(1);
 });
@@ -4050,7 +4054,9 @@ test("maintenance routes members to recovery, blocks API access, and keeps admin
     await team.author.page.getByRole("link", { name: "Check again" }).click();
     await expect(team.author.page).toHaveURL("http://127.0.0.1:3100/");
     await expect(
-      team.author.page.getByRole("heading", { name: "Good work starts here." }),
+      team.author.page.getByRole("heading", {
+        name: /^Good (morning|afternoon|evening), /,
+      }),
     ).toBeVisible();
   } finally {
     await db.installationSettings.update({
@@ -5194,13 +5200,16 @@ test("task sheet avoids automatic avatar tooltips and table shows live task chec
       .click();
     await expect(page.getByRole("dialog")).toBeFocused();
     await expect(page.getByRole("tooltip")).toHaveCount(0);
+    // The first stop is the copy-link action, not an avatar tooltip.
     await page.keyboard.press("Tab");
-    await expect(page.getByRole("tooltip")).toContainText("Request Author");
-    await page.keyboard.press("Escape");
+    await expect(
+      page.getByRole("button", { name: "Copy task link", exact: true }),
+    ).toBeFocused();
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
     // Hover tooltips still work after deliberately moving onto the avatar.
     await page
       .getByRole("dialog")
-      .locator('.task-sheet-metadata [role="img"][aria-label="Request Author"]')
+      .locator('.task-props summary [role="img"][aria-label="Request Author"]')
       .hover();
     await expect(page.getByRole("tooltip")).toContainText("Request Author");
     await page.mouse.move(0, 0);

@@ -3,15 +3,16 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  CheckCheck,
-  FolderOpen,
-  Palette,
+  ChevronsUpDown,
   Home,
-  LayoutGrid,
-  Settings2,
-  Sprout,
-  X,
   Inbox,
+  LayoutGrid,
+  LogOut,
+  Palette,
+  Settings2,
+  ShieldCheck,
+  Users,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,10 +21,10 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
@@ -31,24 +32,107 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ModeSwitcher } from "@/components/appearance/theme-runtime";
 import {
   WorkspaceSearch,
   type NavigationWorkspace,
 } from "@/components/workspace-search";
-import { SignOut } from "@/components/sign-out";
+import { useSignOut } from "@/components/sign-out";
 import { useNavigationLiveSync } from "@/components/projects/use-navigation-live-sync";
 import { ProjectNavigation } from "@/components/projects/project-navigation";
 import type { ProjectSummary } from "@/lib/project-contract";
-import { NotificationBell } from "@/components/notifications/notification-inbox";
+import {
+  NotificationBell,
+  useUnreadCount,
+} from "@/components/notifications/notification-inbox";
+import { CRUMBS_SLOT } from "@/components/page-crumbs";
 
 const navigation = [
   { href: "/", label: "Overview", icon: Home },
   { href: "/boards", label: "Boards", icon: LayoutGrid },
-  { href: "/approvals", label: "Approvals", icon: CheckCheck },
+  { href: "/approvals", label: "Approvals", icon: ShieldCheck },
   { href: "/notifications", label: "Inbox", icon: Inbox },
-  { href: "/settings", label: "Settings", icon: Settings2 },
-];
+] as const;
+const roleLabel = (role?: string) =>
+  role === "OWNER"
+    ? "Owner"
+    : role === "ADMIN"
+      ? "Administrator"
+      : "Team member";
+const initials = (name?: string) =>
+  (name ?? "Y")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join("");
+
+function AccountMenu({ name, role }: { name?: string; role?: string }) {
+  const signOut = useSignOut();
+  const { setOpenMobile } = useSidebar();
+  const admin = role === "OWNER" || role === "ADMIN";
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <SidebarMenuButton
+          size="lg"
+          aria-label={`Account menu for ${name ?? "you"}`}
+          className="shell-account"
+        >
+          <span className="shell-avatar" aria-hidden="true">
+            {initials(name)}
+          </span>
+          <span className="grid min-w-0 flex-1 text-left leading-tight">
+            <span className="truncate text-sm font-semibold">{name}</span>
+            <span className="truncate text-xs text-sidebar-foreground/65">
+              {roleLabel(role)}
+            </span>
+          </span>
+          <ChevronsUpDown size={15} className="opacity-60" />
+        </SidebarMenuButton>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="top" align="start" className="w-56">
+        <DropdownMenuItem asChild>
+          <Link href="/settings" onClick={() => setOpenMobile(false)}>
+            <Settings2 /> Settings
+          </Link>
+        </DropdownMenuItem>
+        {admin && (
+          <>
+            <DropdownMenuItem asChild>
+              <Link href="/settings/team" onClick={() => setOpenMobile(false)}>
+                <Users /> Team access
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link
+                href="/settings/appearance"
+                onClick={() => setOpenMobile(false)}
+              >
+                <Palette /> Appearance
+              </Link>
+            </DropdownMenuItem>
+          </>
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          disabled={signOut.isPending}
+          onSelect={() => signOut.mutate()}
+        >
+          <LogOut /> Sign out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function WorkspaceSidebar({
   installationName = "Yuzu",
   workspaceName = "Your team's space",
@@ -56,6 +140,9 @@ function WorkspaceSidebar({
   projects,
   creatableWorkspaces,
   role,
+  ownerName,
+  principalId,
+  approvalCount,
 }: {
   installationName?: string;
   workspaceName?: string;
@@ -63,10 +150,18 @@ function WorkspaceSidebar({
   projects: ProjectSummary[];
   creatableWorkspaces: { id: string; name: string }[];
   role?: string;
+  ownerName?: string;
+  principalId: string;
+  approvalCount: number;
 }) {
   const pathname = usePathname();
   const { isMobile, setOpenMobile } = useSidebar();
   const close = () => setOpenMobile(false);
+  const unread = useUnreadCount(principalId);
+  const counts: Record<string, number> = {
+    "/approvals": approvalCount,
+    "/notifications": unread,
+  };
   const activeWorkspace = workspaces.find(
     (item) =>
       item.boards.some((board) => pathname === `/boards/${board.id}`) ||
@@ -76,27 +171,28 @@ function WorkspaceSidebar({
           pathname === `/projects/${project.id}`,
       ),
   );
+  const workspaceLabel = activeWorkspace?.name ?? workspaceName;
+  const active = (href: string) =>
+    pathname === href || (href !== "/" && pathname.startsWith(`${href}/`));
   return (
-    <Sidebar collapsible="icon" className="border-sidebar-border">
-      <SidebarHeader className="gap-5 p-4 group-data-[collapsible=icon]:p-2">
+    <Sidebar collapsible="icon" className="shell-sidebar">
+      <SidebarHeader className="gap-4 px-3 pt-4 group-data-[collapsible=icon]:px-2">
         <div className="flex items-center justify-between">
           <Link
             href="/"
             onClick={close}
             aria-label="Yuzu overview"
-            className="flex min-w-0 items-center gap-3 rounded-lg"
+            className="shell-brand"
           >
             <Image
               src="/logo.svg"
               alt=""
-              width={32}
-              height={32}
+              width={30}
+              height={30}
               priority
               className="shrink-0"
             />
-            <span className="text-2xl font-semibold tracking-tight group-data-[collapsible=icon]:hidden">
-              yuzu.
-            </span>
+            <span className="group-data-[collapsible=icon]:hidden">yuzu</span>
           </Link>
           {isMobile && (
             <Button
@@ -109,50 +205,55 @@ function WorkspaceSidebar({
             </Button>
           )}
         </div>
-        <div className="workspace-identity group-data-[collapsible=icon]:hidden">
-          <span className="workspace-identity-icon">
-            <FolderOpen size={18} />
+        <div
+          className="shell-workspace group-data-[collapsible=icon]:hidden"
+          aria-label="Current workspace"
+        >
+          <span className="shell-workspace-mark" aria-hidden="true">
+            {workspaceLabel.charAt(0).toUpperCase()}
           </span>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">{installationName}</p>
-            <p className="mt-0.5 truncate text-xs text-sidebar-foreground/70">
-              {activeWorkspace?.name ?? workspaceName}
-            </p>
-          </div>
+          <span className="grid min-w-0 leading-tight">
+            <span className="truncate text-sm font-semibold">
+              {workspaceLabel}
+            </span>
+            <span className="truncate text-xs text-sidebar-foreground/65">
+              {installationName}
+            </span>
+          </span>
         </div>
       </SidebarHeader>
-      <SidebarContent>
+      <SidebarContent className="gap-1">
         <SidebarGroup>
-          <SidebarGroupLabel className="text-sidebar-foreground/65">
-            Your workspace
-          </SidebarGroupLabel>
           <SidebarGroupContent>
             <nav aria-label="Main navigation">
               <SidebarMenu>
-                {navigation.map(({ href, label, icon: Icon }) => {
-                  const active =
-                    pathname === href ||
-                    (href !== "/" && pathname.startsWith(`${href}/`));
-                  return (
-                    <SidebarMenuItem key={href}>
-                      <SidebarMenuButton
-                        asChild
-                        isActive={active}
-                        tooltip={label}
-                        className="h-9"
+                {navigation.map(({ href, label, icon: Icon }) => (
+                  <SidebarMenuItem key={href}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={active(href)}
+                      tooltip={label}
+                      className="h-9"
+                    >
+                      <Link
+                        href={href}
+                        onClick={close}
+                        aria-current={active(href) ? "page" : undefined}
                       >
-                        <Link
-                          href={href}
-                          onClick={close}
-                          aria-current={active ? "page" : undefined}
-                        >
-                          <Icon size={18} />
-                          <span>{label}</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                })}
+                        <Icon size={17} />
+                        <span>{label}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                    {(counts[href] ?? 0) > 0 && (
+                      <SidebarMenuBadge
+                        className="shell-badge"
+                        aria-label={`${counts[href]} ${href === "/approvals" ? "waiting on you" : "unread"}`}
+                      >
+                        {counts[href] > 99 ? "99+" : counts[href]}
+                      </SidebarMenuBadge>
+                    )}
+                  </SidebarMenuItem>
+                ))}
               </SidebarMenu>
             </nav>
           </SidebarGroupContent>
@@ -163,46 +264,36 @@ function WorkspaceSidebar({
           creatableWorkspaces={creatableWorkspaces}
           isAdmin={role === "OWNER" || role === "ADMIN"}
         />
-        {(role === "OWNER" || role === "ADMIN") && (
-          <SidebarGroup>
-            <SidebarGroupLabel className="text-sidebar-foreground/65">
-              Administration
-            </SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    asChild
-                    tooltip="Appearance"
-                    isActive={pathname === "/settings/appearance"}
-                  >
-                    <Link href="/settings/appearance" onClick={close}>
-                      <Palette size={16} />
-                      <span>Appearance</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        )}
       </SidebarContent>
-      <SidebarFooter className="p-4 group-data-[collapsible=icon]:p-2">
-        <div className="rounded-xl bg-sidebar-accent p-4 group-data-[collapsible=icon]:hidden">
-          <Sprout size={20} className="mb-3 text-sidebar-foreground/80" />
-          <p className="text-sm font-medium">Room to grow.</p>
-          <p className="mt-2 text-xs leading-relaxed text-sidebar-foreground/75">
-            A workspace shaped around your team, one project at a time.
-          </p>
-        </div>
-        <p className="mt-2 truncate text-xs text-sidebar-foreground/65 group-data-[collapsible=icon]:hidden">
-          {installationName}
-        </p>
+      <SidebarFooter className="gap-1 px-3 pb-4 group-data-[collapsible=icon]:px-2">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              asChild
+              isActive={active("/settings")}
+              tooltip="Settings"
+              className="h-9"
+            >
+              <Link
+                href="/settings"
+                onClick={close}
+                aria-current={active("/settings") ? "page" : undefined}
+              >
+                <Settings2 size={17} />
+                <span>Settings</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <AccountMenu name={ownerName} role={role} />
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
   );
 }
+
 export function AppShell({
   principalId,
   children,
@@ -213,6 +304,7 @@ export function AppShell({
   workspaces = [],
   projects = [],
   creatableWorkspaces = [],
+  approvalCount = 0,
   role,
 }: {
   principalId: string;
@@ -224,23 +316,18 @@ export function AppShell({
   workspaces?: NavigationWorkspace[];
   projects?: ProjectSummary[];
   creatableWorkspaces?: { id: string; name: string }[];
+  /** Pending approval requests from other people on visible boards. */
+  approvalCount?: number;
   role?: string;
 }) {
-  const pathname = usePathname();
   useNavigationLiveSync(principalId);
-  const title =
-    navigation.find(
-      (item) =>
-        item.href === pathname ||
-        (item.href !== "/" && pathname.startsWith(`${item.href}/`)),
-    )?.label ?? "Workspace";
   return (
     <SidebarProvider
       defaultOpen={sidebarDefaultOpen}
       className="yuzu-workspace"
       style={
         {
-          "--sidebar-width": "16rem",
+          "--sidebar-width": "16.5rem",
           "--sidebar-width-icon": "3.5rem",
         } as React.CSSProperties
       }
@@ -258,48 +345,32 @@ export function AppShell({
         projects={projects}
         creatableWorkspaces={creatableWorkspaces}
         role={role}
+        ownerName={ownerName}
+        principalId={principalId}
+        approvalCount={approvalCount}
       />
-      <SidebarInset className="min-w-0 bg-transparent">
-        <header className="yuzu-topbar sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b px-4 sm:px-8">
-          <div className="flex min-w-0 items-center gap-3">
+      <SidebarInset className="shell-inset">
+        <div className="shell-panel">
+          <header className="shell-topbar yuzu-topbar">
             <SidebarTrigger aria-label="Toggle navigation" />
-            <WorkspaceSearch
-              workspaces={workspaces}
-              principalId={principalId}
-            />
-            <span className="sr-only">{title}</span>
-          </div>
-          <div className="flex shrink-0 items-center gap-2 sm:gap-4">
-            <ModeSwitcher />
-            <NotificationBell principalId={principalId} />
-            <SignOut />
-            <div
-              aria-label="Yuzu workspace"
-              className="hidden size-9 items-center justify-center rounded-full bg-secondary text-sm font-semibold text-primary sm:flex"
-            >
-              {ownerName?.charAt(0).toUpperCase() ?? "Y"}
+            <div id={CRUMBS_SLOT} className="shell-crumbs" />
+            <div className="shell-actions">
+              <WorkspaceSearch
+                workspaces={workspaces}
+                principalId={principalId}
+              />
+              <ModeSwitcher />
+              <NotificationBell principalId={principalId} />
             </div>
-            <div className="hidden min-w-0 lg:block">
-              <p className="max-w-40 truncate text-xs font-medium">
-                {ownerName}
-              </p>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">
-                {role === "OWNER"
-                  ? "Workspace owner"
-                  : role === "ADMIN"
-                    ? "Administrator"
-                    : "Team member"}
-              </p>
-            </div>
-          </div>
-        </header>
-        <main
-          id="main-content"
-          tabIndex={-1}
-          className="workspace-content mx-auto w-full max-w-[1600px] px-5 py-6 outline-none sm:px-7"
-        >
-          {children}
-        </main>
+          </header>
+          <main
+            id="main-content"
+            tabIndex={-1}
+            className="workspace-content shell-main outline-none"
+          >
+            {children}
+          </main>
+        </div>
       </SidebarInset>
     </SidebarProvider>
   );

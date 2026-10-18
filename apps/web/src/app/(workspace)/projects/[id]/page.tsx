@@ -1,6 +1,7 @@
 import Link from "next/link";
+import { PageCrumbs } from "@/components/page-crumbs";
 import { notFound } from "next/navigation";
-import { ChevronRight, Lock, Users } from "lucide-react";
+import { Lock, Users } from "lucide-react";
 import { getDatabase } from "@yuzu/database";
 import { workspaceContext } from "@/server/workspace-access";
 import { isAdministrator, projectScope } from "@/server/team-access";
@@ -10,6 +11,7 @@ import { ProjectBadge } from "@/components/projects/project-badge";
 import { ProjectActions } from "@/components/projects/project-actions";
 import { MoveBoard } from "@/components/projects/move-board";
 import { RestoreProject } from "@/components/projects/restore-project";
+import { PauseAlert } from "@/components/pause/pause-alert";
 import { visibleProjects } from "@/server/project-service";
 
 export default async function ProjectPage({
@@ -159,19 +161,23 @@ export default async function ProjectPage({
   const isPrivate = project.visibility === "PRIVATE";
   return (
     <div>
-      <nav aria-label="Breadcrumb" className="workspace-breadcrumb">
-        <Link href="/boards">{project.workspace.name}</Link>
-        <ChevronRight size={13} />
-        <span aria-current="page">{project.name}</span>
-      </nav>
+      <PageCrumbs
+        items={[
+          { label: project.workspace.name, href: "/boards" },
+          { label: project.name },
+        ]}
+      />
       {project.archivedAt && (
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted px-4 py-3 text-sm">
-          <span>
-            This project is archived. Its boards are read-only and hidden from
-            navigation.
-          </span>
-          {canManage && <RestoreProject projectId={project.id} />}
-        </div>
+        <PauseAlert
+          intent="warning"
+          className="mb-6"
+          action={
+            canManage ? <RestoreProject projectId={project.id} /> : undefined
+          }
+        >
+          This project is archived. Its boards are read-only and hidden from
+          navigation.
+        </PauseAlert>
       )}
       <header className="project-hero">
         <ProjectBadge name={project.name} color={project.color} size="lg" />

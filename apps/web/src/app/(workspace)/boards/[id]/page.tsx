@@ -1,12 +1,12 @@
 import { notFound } from "next/navigation";
+import { PageCrumbs } from "@/components/page-crumbs";
+import { PauseAlert } from "@/components/pause/pause-alert";
 import { getDatabase } from "@yuzu/database";
 import { workspaceContext } from "@/server/workspace-access";
 import { boardScope, isAdministrator } from "@/server/team-access";
 import { visibleProjects } from "@/server/project-service";
 import { MoveBoard } from "@/components/projects/move-board";
 import { BoardSurface } from "@/components/boards/board-surface";
-import Link from "next/link";
-import { Rocket, ChevronRight } from "lucide-react";
 import { headers } from "next/headers";
 import { boardState } from "@/server/board-service";
 import { z } from "zod";
@@ -92,39 +92,39 @@ export default async function BoardPage({
   });
   return (
     <div>
-      <nav aria-label="Breadcrumb" className="workspace-breadcrumb">
-        <Link href="/boards">{board.workspace.name}</Link>
-        <ChevronRight size={13} />
-        {board.project && (
-          <>
-            <Link
-              href={`/projects/${board.project.id}`}
-              className="flex items-center gap-1.5"
-            >
-              <ProjectBadge
-                name={board.project.name}
-                color={board.project.color}
-              />
-              {board.project.name}
-            </Link>
-            <ChevronRight size={13} />
-          </>
-        )}
-        <span aria-current="page">{board.name}</span>
-        {board.project?.archivedAt && (
-          <span className="rounded-full bg-muted px-2 py-0.5">
-            Archived project, read-only
-          </span>
-        )}
-      </nav>
-      <div className="project-heading">
-        <div className="project-symbol">
-          <Rocket size={27} />
-        </div>
+      <PageCrumbs
+        items={[
+          { label: board.workspace.name, href: "/boards" },
+          ...(board.project
+            ? [
+                {
+                  label: (
+                    <span className="flex items-center gap-1.5">
+                      <ProjectBadge
+                        name={board.project.name}
+                        color={board.project.color}
+                      />
+                      {board.project.name}
+                    </span>
+                  ),
+                  href: `/projects/${board.project.id}`,
+                },
+              ]
+            : []),
+          { label: board.name },
+        ]}
+      />
+      {board.project?.archivedAt && (
+        <PauseAlert intent="warning" className="mb-4">
+          Archived project, read-only. Restore the project to make edits.
+        </PauseAlert>
+      )}
+      <div className="board-heading">
         <div className="min-w-0 flex-1">
-          <h1 className="text-2xl sm:text-3xl">{board.name}</h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            Plan, organize, and keep your team’s work in view.
+          <h1 className="board-title">{board.name}</h1>
+          <p className="board-subtitle">
+            {board.project ? `${board.project.name} · ` : ""}
+            Created by {board.createdBy.name}
           </p>
         </div>
         {canMove && (
@@ -134,13 +134,6 @@ export default async function BoardPage({
             targets={moveTargets}
           />
         )}
-        <div className="project-owner">
-          <span>{board.createdBy.name.charAt(0).toUpperCase()}</span>
-          <div>
-            <small>Created by</small>
-            <b>{board.createdBy.name}</b>
-          </div>
-        </div>
       </div>
       <BoardSurface
         key={board.id}
