@@ -70,7 +70,9 @@ export function PauseAlert({
       data-compact={!title || undefined}
     >
       <PauseLeaf />
-      <PauseSlice />
+      <span className="pause-clip" aria-hidden="true">
+        <PauseSlice />
+      </span>
       {title ? (
         <Mood intent={intent} />
       ) : (
