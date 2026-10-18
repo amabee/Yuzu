@@ -1,5 +1,4 @@
 "use client";
-import Link from "next/link";
 import { useRouter } from "nextjs-toploader/app";
 import { useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
@@ -22,6 +21,7 @@ import {
 } from "@/lib/notification-contract";
 import { apiRequest, ApiError } from "@/lib/api-client";
 import { useApprovalLiveSync } from "@/components/boards/use-board-live-sync";
+import { NotificationMenu } from "./notification-menu";
 
 function useInbox(
   principalId: string,
@@ -65,33 +65,24 @@ export function useUnreadCount(principalId: string) {
 }
 export function NotificationBell({ principalId }: { principalId: string }) {
   const live = useApprovalLiveSync(principalId);
-  const query = useInbox(
+  const [filter, setFilter] = useState<"ALL" | "UNREAD">("ALL");
+  const all = useInbox(principalId, "ALL", null, undefined, live.syncInterval);
+  const shown = useInbox(
     principalId,
-    "ALL",
+    filter,
     null,
     undefined,
     live.syncInterval,
   );
-  const count = query.data?.unreadCount ?? 0;
   return (
-    <Link
-      href="/notifications"
-      className="relative flex size-9 shrink-0 items-center justify-center rounded-lg hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring"
-      aria-label={`Notifications${count ? ` (${count} unread)` : ""}`}
-    >
-      <Bell size={18} aria-hidden="true" />
-      {count > 0 && (
-        <span
-          className="absolute -top-1 -right-1 min-w-4 rounded-full bg-primary px-1 text-center text-[10px] leading-4 font-semibold text-primary-foreground"
-          aria-hidden="true"
-        >
-          {count > 99 ? "99+" : count}
-        </span>
-      )}
-      <span className="sr-only" aria-live="polite">
-        {count} unread notifications
-      </span>
-    </Link>
+    <NotificationMenu
+      principalId={principalId}
+      count={all.data?.unreadCount ?? 0}
+      data={shown.data}
+      loading={shown.isPending}
+      filter={filter}
+      onFilter={setFilter}
+    />
   );
 }
 export function NotificationInboxView({

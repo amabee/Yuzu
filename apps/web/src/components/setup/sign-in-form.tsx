@@ -1,5 +1,4 @@
 "use client";
-import { ModeSwitcher } from "@/components/appearance/theme-runtime";
 import Image from "next/image";
 import Link from "next/link";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -36,9 +35,6 @@ export function SignInForm({
   });
   return (
     <main className="yuzu-account relative flex min-h-svh items-center justify-center px-5 py-10">
-      <div className="absolute top-5 right-5">
-        <ModeSwitcher />
-      </div>
       <div className="w-full max-w-md rounded-2xl border bg-card p-7 sm:p-9">
         <Image src="/logo.svg" alt="Yuzu" width={44} height={44} />
         <h1 className="mt-6 text-2xl font-semibold">Welcome back.</h1>
