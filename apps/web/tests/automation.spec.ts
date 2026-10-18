@@ -305,3 +305,215 @@ test("rules that undo each other stop instead of looping", async ({ page }) => {
     )
     .toBe(0);
 });
+
+test("protected changes become approval requests and repeated failures pause a rule", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const { owner, boardId } = await ownerBoard(page);
+  const db = getDatabase();
+  // A reviewer who can see the board, and a policy protecting priority.
+  const reviewer = await db.user.create({
+    data: {
+      name: "Mia Reviewer",
+      email: "mia@example.test",
+      emailVerified: true,
+    },
+  });
+  const board = await db.board.findUniqueOrThrow({
+    where: { id: boardId },
+    include: { columns: true },
+  });
+  await db.workspaceMember.create({
+    data: { workspaceId: board.workspaceId, userId: reviewer.id },
+  });
+  const priority = board.columns.find((column) => column.key === "priority")!;
+  await db.boardApprovalPolicy.create({
+    data: {
+      boardId,
+      enabled: true,
+      requireChanges: true,
+      protectedFieldIds: [priority.id],
+      primaryApproverId: reviewer.id,
+    },
+  });
+  const save = (rule: Record<string, unknown>) =>
+    post(page, "/api/v1/automations/save", { boardId, ...rule });
+  expect(
+    (
+      await save({
+        name: "Escalate done",
+        trigger: { kind: "status.changed", from: null, to: "done" },
+        actions: [{ kind: "set.priority", value: "URGENT" }],
+      })
+    ).status(),
+  ).toBe(200);
+  const task = async (name: string) =>
+    (
+      await (
+        await post(page, "/api/v1/boards/create-task", {
+          boardId,
+          createKey: crypto.randomUUID(),
+          name,
+          statusId: "todo",
+        })
+      ).json()
+    ).data.taskId as string;
+  const guarded = await task("Guarded");
+  await post(page, "/api/v1/boards/update", {
+    taskId: guarded,
+    revision: 1,
+    requestKey: crypto.randomUUID(),
+    changes: { statusId: "done" },
+  });
+  // The rule asks instead of changing the protected field.
+  await expect
+    .poll(
+      () =>
+        db.boardProposal.count({
+          where: { taskId: guarded, authorId: owner.id, status: "PENDING" },
+        }),
+      { timeout: 20_000 },
+    )
+    .toBe(1);
+  expect(
+    (await db.task.findUniqueOrThrow({ where: { id: guarded } })).priority,
+  ).toBe("NORMAL");
+  expect(
+    (await db.automationRun.findFirstOrThrow({ where: { taskId: guarded } }))
+      .outcome,
+  ).toBe("PENDING_APPROVAL");
+
+  // A rule whose option disappears fails, then pauses after five in a row.
+  const field = await post(page, "/api/v1/boards/field", {
+    boardId,
+    name: "Stage",
+    type: "SINGLE_SELECT",
+    options: ["Ready"],
+  });
+  expect(field.status()).toBe(200);
+  const stage = await db.boardColumn.findFirstOrThrow({
+    where: { boardId, name: "Stage" },
+  });
+  const ready = (stage.config as { options: { id?: string; label: string }[] })
+    .options[0]!;
+  const staging = await save({
+    name: "Stage new work",
+    trigger: { kind: "task.created" },
+    actions: [
+      { kind: "set.field", fieldId: stage.id, value: ready.id ?? ready.label },
+    ],
+  });
+  expect(staging.status()).toBe(200);
+  await db.boardColumn.update({
+    where: { id: stage.id },
+    data: { config: { options: [{ id: "later", label: "Later" }] } },
+  });
+  for (let index = 0; index < 5; index++) await task(`Broken ${index}`);
+  const ruleId = (await staging.json()).data.id as string;
+  await expect
+    .poll(
+      async () => {
+        const rule = await db.automationRule.findUniqueOrThrow({
+          where: { id: ruleId },
+        });
+        return [rule.enabled, rule.consecutiveFailures];
+      },
+      { timeout: 30_000 },
+    )
+    .toEqual([false, 5]);
+  expect(
+    await db.notification.count({
+      where: { recipientId: owner.id, kind: "AUTOMATION" },
+    }),
+  ).toBe(1);
+});
+
+test("managers build, edit, switch off, inspect and remove rules from the board", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const { boardId } = await ownerBoard(page);
+  const db = getDatabase();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`/boards/${boardId}`);
+  await page.getByRole("button", { name: "Automations", exact: true }).click();
+  const sheet = page.getByRole("dialog", { name: "Automations" });
+  await expect(
+    sheet.getByText("No rules yet.", { exact: false }),
+  ).toBeVisible();
+
+  // Start from a template, rename it and add a condition.
+  await sheet
+    .getByRole("button", { name: "Notify on completion", exact: true })
+    .click();
+  const builder = page.getByRole("dialog", { name: "New rule" });
+  await expect(builder.getByLabel("Rule name")).toHaveValue(
+    "Notify on completion",
+  );
+  await builder.getByLabel("Rule name").fill("Ship it");
+  await builder.getByRole("button", { name: "Add condition" }).click();
+  await builder
+    .getByLabel("Condition 1 value", { exact: true })
+    .selectOption("HIGH");
+  await builder.getByRole("button", { name: "Add action" }).click();
+  await builder
+    .getByLabel("Action 2", { exact: true })
+    .selectOption("set.priority");
+  await builder.getByLabel("Action 2 value").selectOption("URGENT");
+  await expect(builder.locator(".automation-preview")).toHaveText(
+    "When status changes to Done, if priority is High, then notify the creator and set priority to Urgent.",
+  );
+  await page.screenshot({
+    path: "../../artifacts/automation/builder.png",
+  });
+  await builder.getByRole("button", { name: "Save rule" }).click();
+  await expect(builder).toHaveCount(0);
+  await expect(sheet.locator(".automation-rule")).toContainText("Ship it");
+
+  // The rule runs when a matching task is finished.
+  const created = await post(page, "/api/v1/boards/create-task", {
+    boardId,
+    createKey: crypto.randomUUID(),
+    name: "Hot task",
+    priority: "HIGH",
+    statusId: "todo",
+  });
+  const taskId = (await created.json()).data.taskId as string;
+  await post(page, "/api/v1/boards/update", {
+    taskId,
+    revision: 1,
+    requestKey: crypto.randomUUID(),
+    changes: { statusId: "done" },
+  });
+  await expect
+    .poll(
+      async () =>
+        (await db.task.findUniqueOrThrow({ where: { id: taskId } })).priority,
+      { timeout: 20_000 },
+    )
+    .toBe("URGENT");
+  await sheet.getByRole("button", { name: "Runs for Ship it" }).click();
+  const runs = page.getByRole("dialog", { name: "Ship it: runs" });
+  await expect(runs.locator(".automation-runs li")).toHaveCount(1, {
+    timeout: 20_000,
+  });
+  await expect(runs.locator(".automation-runs li")).toContainText("Hot task");
+  await expect(runs.locator(".automation-outcome")).toHaveText("Applied");
+  await page.screenshot({ path: "../../artifacts/automation/runs.png" });
+  await runs.getByRole("button", { name: "Done", exact: true }).click();
+
+  // Switch it off, then remove it.
+  await sheet.getByRole("switch", { name: "Turn off Ship it" }).click();
+  await expect(
+    sheet.getByRole("switch", { name: "Turn on Ship it" }),
+  ).toBeVisible();
+  await page.screenshot({ path: "../../artifacts/automation/rules.png" });
+  await sheet.getByRole("button", { name: "Remove Ship it" }).click();
+  await page.getByRole("button", { name: "Remove rule", exact: true }).click();
+  await expect(sheet.locator(".automation-rule")).toHaveCount(0);
+  await expect
+    .poll(() => db.automationRule.count({ where: { boardId } }))
+    .toBe(0);
+  await expect(sheet).toBeVisible();
+});

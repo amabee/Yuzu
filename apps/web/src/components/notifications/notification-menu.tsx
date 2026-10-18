@@ -4,7 +4,7 @@ import { useRouter } from "nextjs-toploader/app";
 import { useState } from "react";
 import { Popover } from "radix-ui";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AtSign, Bell, CheckCheck, UserRoundPlus } from "lucide-react";
+import { AtSign, Bell, CheckCheck, UserRoundPlus, Zap } from "lucide-react";
 import { z } from "zod";
 import { apiRequest } from "@/lib/api-client";
 import type { NotificationInbox } from "@/lib/notification-contract";
@@ -184,7 +184,9 @@ function KindIcon({ kind }: { kind: Item["kind"] }) {
       ? AtSign
       : kind === "ASSIGNMENT"
         ? UserRoundPlus
-        : CheckCheck;
+        : kind === "AUTOMATION"
+          ? Zap
+          : CheckCheck;
   return (
     <span
       className="notification-menu-icon"

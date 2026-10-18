@@ -5154,3 +5154,319 @@ body:has(.pause-sheet[data-state="open"]) .yuzu-toast-viewport {
   border-top: 1px solid var(--border);
   text-align: center;
 }
+
+/* ---------- Automations: rules sheet, builder and run history ---------- */
+.automation-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-right: 28px;
+}
+.automation-rules {
+  display: grid;
+  gap: 10px;
+}
+.automation-rule {
+  padding: 13px 14px 10px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+}
+.automation-rule-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.automation-rule-head h3 {
+  font-size: 14px;
+  font-weight: 650;
+}
+.automation-sentence {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--muted-foreground);
+}
+.automation-sentence b {
+  font-weight: 650;
+  color: var(--foreground);
+}
+.automation-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.automation-stats [data-alert] {
+  font-weight: 650;
+  color: var(--intent-danger);
+}
+.automation-stats-by {
+  margin-left: auto;
+}
+.automation-rule-actions {
+  display: flex;
+  gap: 4px;
+  margin: 8px -6px 0;
+}
+.automation-rule-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.automation-rule-actions button:hover {
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+  color: var(--foreground);
+}
+.automation-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 26px 18px;
+  border: 1.5px dashed var(--border);
+  border-radius: 14px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  text-align: center;
+}
+.automation-empty svg {
+  color: var(--intent-yuzu);
+}
+.automation-templates p {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.automation-templates div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.automation-templates button {
+  padding: 5px 11px;
+  border: 1px dashed color-mix(in srgb, var(--primary) 45%, var(--border));
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
+}
+.automation-templates button:hover {
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+}
+
+/* Builder: When / If / Then blocks that read as one sentence. */
+.automation-block h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-family: var(--font-display, inherit);
+  font-size: 14px;
+  font-weight: 800;
+}
+.automation-block h3 i {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font: 700 11px var(--font-sans, inherit);
+  font-style: normal;
+}
+.automation-block[data-step="if"] h3 i {
+  background: var(--muted-foreground);
+}
+.automation-block[data-step="then"] h3 i {
+  background: var(--intent-success);
+}
+.automation-block h3 small {
+  font-family: var(--font-sans, inherit);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.automation-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 10px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--muted) 70%, transparent);
+  font-size: 13.5px;
+  color: var(--muted-foreground);
+}
+.automation-line + .automation-line {
+  margin-top: 6px;
+}
+.automation-pick {
+  max-width: 100%;
+  padding: 4px 26px 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%237b8f99' stroke-width='3'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")
+      right 9px center / 10px no-repeat,
+    var(--card);
+  appearance: none;
+  color: var(--foreground);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.automation-pick:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.automation-remove {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-left: auto;
+  border-radius: 8px;
+  color: var(--muted-foreground);
+}
+.automation-remove:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--foreground) 7%, transparent);
+  color: var(--foreground);
+}
+.automation-remove:disabled {
+  opacity: 0.35;
+}
+.automation-order {
+  display: inline-flex;
+  flex-direction: column;
+}
+.automation-order button {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 14px;
+  color: var(--muted-foreground);
+}
+.automation-order button:disabled {
+  opacity: 0.3;
+}
+.automation-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--primary);
+}
+.automation-preview {
+  padding: 10px 12px;
+  border-left: 3px solid var(--intent-yuzu);
+  border-radius: 4px 10px 10px 4px;
+  background: color-mix(in srgb, var(--yuzu) 10%, transparent);
+}
+.automation-preview .automation-sentence {
+  margin: 0;
+}
+.automation-approval {
+  padding: 9px 12px;
+  border-radius: 11px;
+  background: var(--pending);
+  color: var(--pending-foreground);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+/* Run history */
+.automation-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.automation-filters button {
+  padding: 4px 11px;
+  border-radius: 99px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.automation-filters button[aria-checked="true"] {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+}
+.automation-runs {
+  display: grid;
+  max-height: 52vh;
+  overflow-y: auto;
+}
+.automation-runs li {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  padding: 11px 2px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+.automation-runs time {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.automation-runs a {
+  font-weight: 600;
+}
+.automation-runs a:hover {
+  text-decoration: underline;
+}
+.automation-runs small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.automation-outcome {
+  padding: 2px 9px;
+  border-radius: 99px;
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.automation-outcome[data-outcome="APPLIED"] {
+  background: color-mix(in srgb, var(--intent-success) 14%, transparent);
+  color: var(--intent-success);
+}
+.automation-outcome[data-outcome="SKIPPED"] {
+  background: color-mix(in srgb, var(--muted-foreground) 14%, transparent);
+  color: var(--muted-foreground);
+}
+.automation-outcome[data-outcome="PENDING_APPROVAL"] {
+  background: var(--pending);
+  color: var(--pending-foreground);
+}
+.automation-outcome[data-outcome="FAILED"] {
+  background: color-mix(in srgb, var(--intent-danger) 13%, transparent);
+  color: var(--intent-danger);
+}
+.automation-empty-runs {
+  padding: 18px 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+@media (max-width: 479px) {
+  .automation-runs li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .automation-runs time {
+    grid-column: 1 / -1;
+  }
+}

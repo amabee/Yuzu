@@ -73,6 +73,10 @@ function useLiveSync(boardId: string | undefined, principalId: string) {
             { queryKey: ["principal", principalId, "notifications"] },
             { cancelRefetch: false },
           ),
+          queryClient.invalidateQueries(
+            { queryKey: ["principal", principalId, "automations"] },
+            { cancelRefetch: false },
+          ),
         ]),
     );
     const changed = queue.changed;

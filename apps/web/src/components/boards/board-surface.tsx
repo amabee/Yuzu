@@ -54,6 +54,7 @@ import {
 import { BoardCalendarView } from "./board-calendar";
 import { BoardKanban, type KanbanPlacement } from "./board-kanban";
 import { BoardPulse } from "./board-pulse";
+import { BoardAutomations } from "./board-automations";
 import { PauseSlice } from "@/components/pause/decor";
 import { PauseAlert } from "@/components/pause/pause-alert";
 import { BoardTimelineView } from "./board-timeline";
@@ -793,6 +794,7 @@ export function BoardSurface({
             <Info size={15} />
             <span>Board details</span>
           </Button>
+          <BoardAutomations state={state} />
         </div>
       </div>
       {mutation.error && !selected && !creating && (
