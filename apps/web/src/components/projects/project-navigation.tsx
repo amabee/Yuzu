@@ -55,7 +55,9 @@ export function ProjectNavigation({
   isAdmin: boolean;
 }) {
   const pathname = usePathname();
-  const { setOpenMobile } = useSidebar();
+  const { setOpenMobile, state, isMobile } = useSidebar();
+  // In the icon-only sidebar a project's boards open as a menu from its badge.
+  const iconOnly = state === "collapsed" && !isMobile;
   const close = () => setOpenMobile(false);
   const [creating, setCreating] = useState(false);
   const [archiving, setArchiving] = useState<ProjectSummary | null>(null);
@@ -119,36 +121,78 @@ export function ProjectNavigation({
                     className="group/project"
                   >
                     <SidebarMenuItem>
-                      <SidebarMenuButton
-                        asChild
-                        tooltip={project.name}
-                        isActive={pathname === href}
-                        className="h-9 pr-14"
-                      >
-                        <Link
-                          href={href}
-                          onClick={close}
-                          aria-current={pathname === href ? "page" : undefined}
+                      {iconOnly ? (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <SidebarMenuButton
+                              tooltip={project.name}
+                              isActive={inside || pathname === href}
+                              aria-label={`${project.name} boards`}
+                              className="h-9"
+                            >
+                              <ProjectBadge
+                                name={project.name}
+                                color={project.color}
+                              />
+                            </SidebarMenuButton>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent side="right" align="start">
+                            <DropdownMenuItem asChild>
+                              <Link href={href} className="font-medium">
+                                <ProjectBadge
+                                  name={project.name}
+                                  color={project.color}
+                                />
+                                {project.name}
+                              </Link>
+                            </DropdownMenuItem>
+                            {project.boards.length > 0 && (
+                              <DropdownMenuSeparator />
+                            )}
+                            {project.boards.map((board) => (
+                              <DropdownMenuItem key={board.id} asChild>
+                                <Link href={`/boards/${board.id}`}>
+                                  <Columns3 />
+                                  {board.name}
+                                </Link>
+                              </DropdownMenuItem>
+                            ))}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      ) : (
+                        <SidebarMenuButton
+                          asChild
+                          tooltip={project.name}
+                          isActive={pathname === href}
+                          className="h-9 pr-14"
                         >
-                          <ProjectBadge
-                            name={project.name}
-                            color={project.color}
-                          />
-                          <span className="truncate">{project.name}</span>
-                          {multiple && (
-                            <span className="sr-only">
-                              , in {workspaceName(project.workspaceId)}
-                            </span>
-                          )}
-                          {project.visibility === "PRIVATE" && (
-                            <Lock
-                              size={12}
-                              aria-label="Private project"
-                              className="ml-auto shrink-0 opacity-70"
+                          <Link
+                            href={href}
+                            onClick={close}
+                            aria-current={
+                              pathname === href ? "page" : undefined
+                            }
+                          >
+                            <ProjectBadge
+                              name={project.name}
+                              color={project.color}
                             />
-                          )}
-                        </Link>
-                      </SidebarMenuButton>
+                            <span className="truncate">{project.name}</span>
+                            {multiple && (
+                              <span className="sr-only">
+                                , in {workspaceName(project.workspaceId)}
+                              </span>
+                            )}
+                            {project.visibility === "PRIVATE" && (
+                              <Lock
+                                size={12}
+                                aria-label="Private project"
+                                className="ml-auto shrink-0 opacity-70"
+                              />
+                            )}
+                          </Link>
+                        </SidebarMenuButton>
+                      )}
                       <Collapsible.Trigger asChild>
                         <SidebarMenuAction
                           className="right-7 transition-transform group-data-[state=open]/project:rotate-90"

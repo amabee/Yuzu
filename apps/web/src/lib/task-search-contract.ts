@@ -20,6 +20,7 @@ export const taskSearchResultSchema = z.object({
         boardId: z.string().uuid(),
         boardName: z.string(),
         workspaceName: z.string(),
+        projectName: z.string().nullable(),
         archived: z.boolean(),
         dueDate: z.string().nullable(),
       }),

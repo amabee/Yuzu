@@ -178,3 +178,49 @@ test("user-scoped queue sockets receive only signed signals addressed to that pr
     await runtime.close();
   }
 });
+test("navigation hints reach only the named users and never board rooms", async () => {
+  const runtime = await start();
+  const endpoint = url(runtime);
+  const user = (userId) =>
+    signRealtimeToken(
+      { purpose: "user", userId, expiresAt: Date.now() + 60_000 },
+      secret,
+    );
+  const named = client(endpoint, user("named_user"));
+  const other = client(endpoint, user("other_user"));
+  const viewer = client(endpoint, ticket(boardA));
+  try {
+    await Promise.all([
+      once(named, "connect"),
+      once(other, "connect"),
+      once(viewer, "connect"),
+    ]);
+    const stray = [];
+    other.on("navigation:changed", (event) => stray.push(event));
+    viewer.on("navigation:changed", (event) => stray.push(event));
+    const received = once(named, "navigation:changed");
+    const eventId = crypto.randomUUID();
+    const response = await fetch(`${endpoint}/events`, {
+      method: "POST",
+      body: signRealtimeToken(
+        {
+          purpose: "event",
+          kind: "navigation",
+          userIds: ["named_user"],
+          eventId,
+          expiresAt: Date.now() + 10_000,
+        },
+        secret,
+      ),
+    });
+    assert.equal(response.status, 204);
+    assert.deepEqual((await received)[0], { eventId });
+    await delay(50);
+    assert.equal(stray.length, 0);
+  } finally {
+    named.close();
+    other.close();
+    viewer.close();
+    await runtime.close();
+  }
+});

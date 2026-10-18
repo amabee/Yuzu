@@ -70,3 +70,33 @@ test("user tickets are identity-scoped and cannot publish or masquerade as board
   assert.throws(() => verifyRealtimeToken(token, secret, "board"));
   assert.throws(() => verifyRealtimeToken(token, secret, "event"));
 });
+test("navigation events name their recipients and carry no board", () => {
+  const event = {
+    purpose: "event",
+    kind: "navigation",
+    eventId: crypto.randomUUID(),
+    userIds: ["member_1"],
+    expiresAt: Date.now() + 10_000,
+  };
+  assert.deepEqual(
+    verifyRealtimeToken(signRealtimeToken(event, secret), secret, "event"),
+    event,
+  );
+  for (const invalid of [
+    { ...event, kind: "other" },
+    { ...event, userIds: undefined },
+    { ...event, boardId },
+  ])
+    assert.throws(() =>
+      verifyRealtimeToken(signRealtimeToken(invalid, secret), secret, "event"),
+    );
+  // A board ticket can't drop its board by claiming to be navigation.
+  const { boardId: _, ...unscoped } = ticket;
+  assert.throws(() =>
+    verifyRealtimeToken(
+      signRealtimeToken({ ...unscoped, kind: "navigation" }, secret),
+      secret,
+      "board",
+    ),
+  );
+});

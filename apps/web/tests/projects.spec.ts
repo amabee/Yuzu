@@ -587,7 +587,7 @@ test("projects UI: create, add boards and people, move a board, archive from the
     if (shots) await mp.screenshot({ path: `${shots}/members.png` });
     await mp.keyboard.press("Escape");
     await expect(mp).not.toHaveURL(/panel=/);
-    await leeSession.page.reload();
+    // No reload: Lee's sidebar updates live.
     await expect(
       leeSession.page
         .getByRole("navigation", { name: "Projects" })
@@ -662,5 +662,112 @@ test("projects UI: create, add boards and people, move a board, archive from the
   } finally {
     await miaSession.context.close();
     await leeSession.context.close();
+  }
+});
+
+test("project page sections, search, dashboard filter and admin recovery", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(90_000);
+  const { mia, workspace } = await team(page);
+  const miaSession = await signIn(browser, mia.email, "mia-password-123");
+  const mp = miaSession.page;
+  try {
+    const projectId = (
+      await (
+        await post(mp, "/api/v1/projects/create", {
+          workspaceId: workspace.id,
+          name: "Hidden plans",
+          color: "slate",
+          visibility: "PRIVATE",
+        })
+      ).json()
+    ).data.id as string;
+    const boardId = (
+      await (
+        await post(mp, "/api/v1/boards/create-board", {
+          projectId,
+          name: "Roadmap",
+        })
+      ).json()
+    ).data.id as string;
+    const taskId = (
+      await (
+        await post(mp, "/api/v1/boards/create-task", {
+          boardId,
+          createKey: crypto.randomUUID(),
+          name: "Ship the roadmap",
+        })
+      ).json()
+    ).data.taskId as string;
+    // Due tomorrow, so it lands in "Deadlines this week".
+    const due = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    await getDatabase().task.update({
+      where: { id: taskId },
+      data: { dueDate: new Date(`${due}T00:00:00Z`) },
+    });
+    await mp.goto(`/projects/${projectId}`);
+    const deadlines = mp.getByRole("region", { name: "Deadlines this week" });
+    await expect(
+      deadlines.getByRole("link", { name: "Ship the roadmap" }),
+    ).toBeVisible();
+    await expect(
+      mp
+        .getByRole("region", { name: "Waiting on approval" })
+        .getByText("No changes are waiting."),
+    ).toBeVisible();
+
+    // Search results and the dashboard know the project.
+    const search = (await (
+      await mp.request.get("/api/v1/search/tasks?q=roadmap")
+    ).json()) as { data: { tasks: { projectName: string | null }[] } };
+    expect(search.data.tasks[0]?.projectName).toBe("Hidden plans");
+    const filtered = (await (
+      await mp.request.get(`/api/v1/dashboard?projectId=${projectId}`)
+    ).json()) as { data: { boardCount: number; total: number } };
+    expect(filtered.data).toMatchObject({ boardCount: 1, total: 1 });
+    // The owner can't see a private project's boards through the filter.
+    const ownerView = (await (
+      await page.request.get(`/api/v1/dashboard?projectId=${projectId}`)
+    ).json()) as { data: { boardCount: number } };
+    expect(ownerView.data.boardCount).toBe(0);
+
+    // The admin directory shows the name only and offers audited recovery.
+    await page.goto("/settings/projects");
+    const row = page.getByRole("listitem").filter({ hasText: "Hidden plans" });
+    await expect(row.getByText("Managed by Mia")).toBeVisible();
+    await expect(row.getByRole("link", { name: "Hidden plans" })).toHaveCount(
+      0,
+    );
+    await row.getByRole("button", { name: "Recover access" }).click();
+    const dialog = page.getByRole("dialog", { name: /Recover access/ });
+    const confirm = dialog.getByRole("button", { name: "Recover access" });
+    await dialog.getByLabel("Project name to confirm").fill("hidden plans");
+    await expect(confirm).toBeDisabled();
+    await dialog.getByLabel("Project name to confirm").fill("Hidden plans");
+    await confirm.click();
+    await expect(page).toHaveURL(new RegExp(`/projects/${projectId}$`));
+    await expect(
+      page.getByRole("link", { name: "Roadmap" }).first(),
+    ).toBeVisible();
+
+    // An archived project shows a read-only banner with Restore for managers.
+    expect(
+      (await post(mp, "/api/v1/projects/archive", { projectId })).status(),
+    ).toBe(200);
+    await mp.goto(`/projects/${projectId}`);
+    await expect(mp.getByText("This project is archived.")).toBeVisible();
+    await expect(mp.getByRole("button", { name: "New board" })).toHaveCount(0);
+    await mp.getByRole("button", { name: "Restore" }).click();
+    await expect(mp.getByText("This project is archived.")).toHaveCount(0);
+
+    // In the icon-only sidebar, a project's badge opens its boards.
+    await mp.getByRole("button", { name: "Toggle navigation" }).click();
+    await mp.getByRole("button", { name: "Hidden plans boards" }).click();
+    await mp.getByRole("menuitem", { name: "Roadmap" }).click();
+    await expect(mp).toHaveURL(new RegExp(`/boards/${boardId}$`));
+  } finally {
+    await miaSession.context.close();
   }
 });

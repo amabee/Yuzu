@@ -5,9 +5,11 @@ import { getDatabase } from "@yuzu/database";
 import { workspaceContext } from "@/server/workspace-access";
 import { isAdministrator, projectScope } from "@/server/team-access";
 import { COMPLETED_STATUS_ID } from "@/lib/dashboard-contract";
+import { calendarWindow } from "@/lib/board-query";
 import { ProjectBadge } from "@/components/projects/project-badge";
 import { ProjectActions } from "@/components/projects/project-actions";
 import { MoveBoard } from "@/components/projects/move-board";
+import { RestoreProject } from "@/components/projects/restore-project";
 import { visibleProjects } from "@/server/project-service";
 
 export default async function ProjectPage({
@@ -15,7 +17,7 @@ export default async function ProjectPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { user } = await workspaceContext();
+  const { user, settings } = await workspaceContext();
   const db = getDatabase();
   const project = await db.project.findFirst({
     where: { id: (await params).id, ...projectScope(user) },
@@ -42,7 +44,46 @@ export default async function ProjectPage({
   const canManage =
     role === "MANAGER" ||
     (isAdministrator(user.role) && project.visibility === "PUBLIC");
+  // Archived projects are read-only until restored.
+  const canChange = canManage && !project.archivedAt;
   const boardIds = project.boards.map((board) => board.id);
+  // "This week" follows the installation's timezone, like the Overview.
+  const { start, end } = calendarWindow(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: settings.timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date()),
+  );
+  const [deadlines, pending] = await Promise.all([
+    db.task.findMany({
+      where: {
+        boardId: { in: project.boards.map((board) => board.id) },
+        archivedAt: null,
+        dueDate: { gte: start, lte: end },
+        OR: [{ statusId: null }, { statusId: { not: COMPLETED_STATUS_ID } }],
+      },
+      orderBy: [{ dueDate: "asc" }, { id: "asc" }],
+      take: 8,
+      select: {
+        id: true,
+        name: true,
+        dueDate: true,
+        board: { select: { id: true, name: true } },
+      },
+    }),
+    // Counts only: proposal contents stay on the Approvals page, where
+    // approver permissions apply.
+    db.boardProposal.groupBy({
+      by: ["boardId"],
+      where: {
+        boardId: { in: project.boards.map((board) => board.id) },
+        status: "PENDING",
+      },
+      _count: true,
+    }),
+  ]);
   const [totals, completed] = await Promise.all([
     db.task.groupBy({
       by: ["boardId"],
@@ -123,6 +164,15 @@ export default async function ProjectPage({
         <ChevronRight size={13} />
         <span aria-current="page">{project.name}</span>
       </nav>
+      {project.archivedAt && (
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted px-4 py-3 text-sm">
+          <span>
+            This project is archived. Its boards are read-only and hidden from
+            navigation.
+          </span>
+          {canManage && <RestoreProject projectId={project.id} />}
+        </div>
+      )}
       <header className="project-hero">
         <ProjectBadge name={project.name} color={project.color} size="lg" />
         <div className="min-w-0">
@@ -152,7 +202,7 @@ export default async function ProjectPage({
               boardCount: project.boards.length,
             }}
             workspaceName={project.workspace.name}
-            canManage={canManage}
+            canManage={canChange}
             viewerId={user.id}
             members={project.members.map((member) => ({
               id: member.user.id,
@@ -210,7 +260,7 @@ export default async function ProjectPage({
                   </div>
                 </div>
                 <div>
-                  {canManage && (
+                  {canChange && (
                     <MoveBoard
                       board={board}
                       currentProjectId={project.id}
@@ -223,6 +273,59 @@ export default async function ProjectPage({
             );
           })}
         </section>
+      )}
+      {project.boards.length > 0 && (
+        <div className="project-panels">
+          <section aria-labelledby="project-deadlines">
+            <h2 id="project-deadlines">Deadlines this week</h2>
+            {deadlines.length === 0 ? (
+              <p className="project-panel-empty">
+                Nothing open is due in the next 7 days.
+              </p>
+            ) : (
+              <ul>
+                {deadlines.map((task) => (
+                  <li key={task.id}>
+                    <Link href={`/boards/${task.board.id}?task=${task.id}`}>
+                      {task.name}
+                    </Link>
+                    <small>
+                      {task.board.name},{" "}
+                      {new Intl.DateTimeFormat("en", {
+                        weekday: "short",
+                        month: "short",
+                        day: "numeric",
+                        timeZone: "UTC",
+                      }).format(task.dueDate!)}
+                    </small>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+          <section aria-labelledby="project-approvals">
+            <h2 id="project-approvals">Waiting on approval</h2>
+            {pending.length === 0 ? (
+              <p className="project-panel-empty">No changes are waiting.</p>
+            ) : (
+              <ul>
+                {pending.map((row) => (
+                  <li key={row.boardId}>
+                    <Link href="/approvals">
+                      {row._count} {row._count === 1 ? "change" : "changes"}
+                    </Link>
+                    <small>
+                      {
+                        project.boards.find((board) => board.id === row.boardId)
+                          ?.name
+                      }
+                    </small>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
       )}
     </div>
   );

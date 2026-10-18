@@ -12,6 +12,7 @@ export const notificationSchema = z.object({
   actorName: z.string(),
   name: z.string(),
   boardName: z.string(),
+  projectName: z.string().nullable(),
   createdAt: z.string().datetime(),
   readAt: z.string().datetime().nullable(),
 });

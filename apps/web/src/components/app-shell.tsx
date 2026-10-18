@@ -37,6 +37,7 @@ import {
   type NavigationWorkspace,
 } from "@/components/workspace-search";
 import { SignOut } from "@/components/sign-out";
+import { useNavigationLiveSync } from "@/components/projects/use-navigation-live-sync";
 import { ProjectNavigation } from "@/components/projects/project-navigation";
 import type { ProjectSummary } from "@/lib/project-contract";
 import { NotificationBell } from "@/components/notifications/notification-inbox";
@@ -226,6 +227,7 @@ export function AppShell({
   role?: string;
 }) {
   const pathname = usePathname();
+  useNavigationLiveSync(principalId);
   const title =
     navigation.find(
       (item) =>

@@ -203,3 +203,69 @@ export async function notifyBoardMutation(input: unknown, result?: unknown) {
     );
   }
 }
+
+/** Tells people whose navigation may have changed (a project created, renamed,
+ *  shared, archived or reordered, or a board moved) to reload it. The event
+ *  carries no names; each client refetches through the normal access scope. */
+export async function notifyNavigationChange(target: {
+  projectId?: string;
+  workspaceId?: string;
+  boardId?: string;
+}) {
+  const secret = process.env.REALTIME_SECRET;
+  const internalURL = process.env.REALTIME_INTERNAL_URL;
+  if (!secret || !internalURL) return;
+  try {
+    const db = getDatabase();
+    const workspaceId =
+      target.workspaceId ??
+      (target.projectId
+        ? (
+            await db.project.findUnique({
+              where: { id: target.projectId },
+              select: { workspaceId: true },
+            })
+          )?.workspaceId
+        : target.boardId
+          ? (
+              await db.board.findUnique({
+                where: { id: target.boardId },
+                select: { workspaceId: true },
+              })
+            )?.workspaceId
+          : undefined);
+    if (!workspaceId) return;
+    const people = await db.user.findMany({
+      where: {
+        OR: [
+          { role: { in: ["OWNER", "ADMIN"] } },
+          { memberships: { some: { workspaceId } } },
+          { projectMemberships: { some: { project: { workspaceId } } } },
+        ],
+      },
+      select: { id: true },
+      take: 500,
+    });
+    const ids = people.map((person) => person.id);
+    // The protocol caps recipients per event, so send in batches.
+    for (let start = 0; start < ids.length; start += 20)
+      await fetch(new URL("/events", internalURL), {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: signRealtimeToken(
+          {
+            purpose: "event",
+            kind: "navigation",
+            userIds: ids.slice(start, start + 20),
+            eventId: crypto.randomUUID(),
+            expiresAt: Date.now() + 10_000,
+          },
+          secret,
+        ),
+        signal: AbortSignal.timeout(1000),
+        cache: "no-store",
+      });
+  } catch {
+    // Live hints are best effort; navigation still refreshes on next load.
+  }
+}

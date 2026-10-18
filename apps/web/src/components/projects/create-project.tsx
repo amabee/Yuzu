@@ -45,7 +45,14 @@ export function CreateProjectSheet({
           className="space-y-5"
           onSubmit={(event) => {
             event.preventDefault();
-            create.mutate({ workspaceId, name, color, visibility });
+            // Always send a listed workspace, never stale or empty state.
+            if (workspace)
+              create.mutate({
+                workspaceId: workspace.id,
+                name,
+                color,
+                visibility,
+              });
           }}
         >
           <label className="task-field-label">
@@ -64,7 +71,7 @@ export function CreateProjectSheet({
               <select
                 aria-label="Project workspace"
                 className="task-select"
-                value={workspaceId}
+                value={workspace?.id ?? ""}
                 onChange={(event) => setWorkspaceId(event.target.value)}
               >
                 {workspaces.map((item) => (

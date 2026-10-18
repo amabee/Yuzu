@@ -55,6 +55,14 @@ export default async function SettingsPage() {
           Customize appearance
         </Link>
       )}
+      {isAdministrator(user.role) && (
+        <Link
+          href="/settings/projects"
+          className="ml-3 mt-6 inline-flex rounded-lg border bg-card px-4 py-3 text-sm font-medium"
+        >
+          Projects directory
+        </Link>
+      )}
       <div className="mt-8 overflow-hidden rounded-xl border bg-card">
         {settings.map(({ icon: Icon, title, description, value }) => (
           <section

@@ -23,6 +23,8 @@ export function CreateBoard({
   const [name, setName] = useState("");
   const [workspaceId, setWorkspaceId] = useState(workspaces[0]?.id ?? "");
   const router = useRouter();
+  const selectedWorkspace =
+    workspaces.find((item) => item.id === workspaceId) ?? workspaces[0];
   const mutation = useMutation({
     mutationFn: async () =>
       (
@@ -30,7 +32,7 @@ export function CreateBoard({
           method: "POST",
           json: project
             ? { projectId: project.id, name }
-            : { workspaceId, name },
+            : { workspaceId: selectedWorkspace?.id, name },
         })
       ).data,
     onSuccess: (board) => {
@@ -79,7 +81,7 @@ export function CreateBoard({
                 <select
                   aria-label="Board workspace"
                   className="task-select"
-                  value={workspaceId}
+                  value={selectedWorkspace?.id ?? ""}
                   onChange={(event) => setWorkspaceId(event.target.value)}
                 >
                   {workspaces.map((workspace) => (

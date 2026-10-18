@@ -31,22 +31,39 @@ export function WorkspaceDashboard({
   initialData,
   principalId,
   workspaces,
+  projects = [],
 }: {
   initialData: Dashboard;
   principalId: string;
   workspaces: { id: string; name: string }[];
+  projects?: { id: string; name: string; workspaceId: string }[];
 }) {
   const [workspaceId, setWorkspaceId] = useState("all");
+  const [projectId, setProjectId] = useState("all");
+  const projectChoices = projects.filter(
+    (project) => workspaceId === "all" || project.workspaceId === workspaceId,
+  );
   const [page, setPage] = useState(1);
   const [deadlineTab, setDeadlineTab] = useState<"upcoming" | "overdue">(
     "upcoming",
   );
   const query = useQuery({
-    queryKey: ["principal", principalId, "dashboard", workspaceId, page],
-    initialData: workspaceId === "all" && page === 1 ? initialData : undefined,
+    queryKey: [
+      "principal",
+      principalId,
+      "dashboard",
+      workspaceId,
+      projectId,
+      page,
+    ],
+    initialData:
+      workspaceId === "all" && projectId === "all" && page === 1
+        ? initialData
+        : undefined,
     queryFn: async ({ signal }) => {
       const params = new URLSearchParams({ page: String(page) });
       if (workspaceId !== "all") params.set("workspaceId", workspaceId);
+      if (projectId !== "all") params.set("projectId", projectId);
       return dashboardSchema.parse(
         (
           await apiRequest(`/api/v1/dashboard?${params}`, {
@@ -78,6 +95,7 @@ export function WorkspaceDashboard({
           value={workspaceId}
           onValueChange={(value) => {
             setWorkspaceId(value);
+            setProjectId("all");
             setPage(1);
           }}
         >
@@ -96,6 +114,30 @@ export function WorkspaceDashboard({
             ))}
           </SelectContent>
         </Select>
+        {projectChoices.length > 0 && (
+          <Select
+            value={projectId}
+            onValueChange={(value) => {
+              setProjectId(value);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger
+              aria-label="Dashboard project"
+              className="w-full sm:w-56"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All projects and boards</SelectItem>
+              {projectChoices.map((project) => (
+                <SelectItem key={project.id} value={project.id}>
+                  {project.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </div>
       {query.isError ? (
         <div role="alert" className="rounded-xl border bg-card p-6">

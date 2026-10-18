@@ -7,6 +7,7 @@ export const DASHBOARD_BOARD_PAGE_SIZE = 12;
 export const dashboardQuerySchema = z
   .object({
     workspaceId: z.string().uuid().optional(),
+    projectId: z.string().uuid().optional(),
     page: z.coerce.number().int().min(1).max(1_000_000).default(1),
   })
   .strict();

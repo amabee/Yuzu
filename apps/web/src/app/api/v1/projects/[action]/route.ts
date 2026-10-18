@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { readSetupBody, SetupError } from "@/server/setup/security";
+import { notifyNavigationChange } from "@/server/realtime";
 import {
   changeProjectMember,
   createProject,
@@ -13,6 +14,18 @@ import {
   setProjectArchived,
   updateProject,
 } from "@/server/project-service";
+
+// Actions that can change what appears in someone's sidebar.
+const navigationActions = new Set([
+  "create",
+  "update",
+  "reorder",
+  "archive",
+  "restore",
+  "member",
+  "recover",
+  "move-board",
+]);
 
 async function handle(request: Request, action: string) {
   const requestId = crypto.randomUUID();
@@ -44,6 +57,24 @@ async function handle(request: Request, action: string) {
       else if (action === "recover") data = await recoverProject(body, headers);
       else if (action === "move-board") data = await moveBoard(body, headers);
       else throw new SetupError(404, "NOT_FOUND", "Project action not found.");
+      if (navigationActions.has(action)) {
+        const target = (body ?? {}) as Record<string, unknown>;
+        const created = (data ?? {}) as { id?: unknown };
+        void notifyNavigationChange({
+          projectId:
+            typeof target.projectId === "string"
+              ? target.projectId
+              : typeof created.id === "string"
+                ? created.id
+                : undefined,
+          workspaceId:
+            typeof target.workspaceId === "string"
+              ? target.workspaceId
+              : undefined,
+          boardId:
+            typeof target.boardId === "string" ? target.boardId : undefined,
+        });
+      }
     } else throw new SetupError(404, "NOT_FOUND", "Project action not found.");
     return Response.json(
       { data, requestId },
