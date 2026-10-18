@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const viewConfigSchema = z
   .object({
-    layout: z.enum(["board", "table"]),
+    layout: z.enum(["board", "table", "calendar"]),
     search: z.string().max(200),
     groupId: z.string().uuid().nullable(),
     statusId: z.string().min(1).max(100).nullable(),

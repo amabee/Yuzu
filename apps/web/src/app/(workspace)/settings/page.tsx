@@ -1,5 +1,11 @@
 import type { Metadata } from "next";
-import { CalendarDays, Paperclip, ShieldCheck } from "lucide-react";
+import {
+  CalendarDays,
+  CalendarRange,
+  Paperclip,
+  ShieldCheck,
+} from "lucide-react";
+import { WeekStartSetting } from "@/components/settings/week-start-setting";
 import Link from "next/link";
 import { workspaceContext } from "@/server/workspace-access";
 import { isAdministrator } from "@/server/team-access";
@@ -87,6 +93,30 @@ export default async function SettingsPage() {
             </span>
           </section>
         ))}
+        <section className="flex flex-col justify-between gap-4 p-6 sm:flex-row sm:items-center">
+          <div className="flex gap-4">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-secondary">
+              <CalendarRange size={19} className="text-primary" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold">Calendar</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                The first day of the week on every board calendar.
+              </p>
+            </div>
+          </div>
+          {isAdministrator(user.role) ? (
+            <WeekStartSetting
+              weekStartsOn={installation.weekStartsOn === 0 ? 0 : 1}
+              revision={installation.revision}
+            />
+          ) : (
+            <span className="text-sm text-muted-foreground">
+              Weeks start on{" "}
+              {installation.weekStartsOn === 0 ? "Sunday" : "Monday"}
+            </span>
+          )}
+        </section>
       </div>
       <p className="mt-5 text-xs leading-5 text-muted-foreground">
         General settings are shown as a preview. Team invitations and membership

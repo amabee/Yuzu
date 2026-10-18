@@ -55,6 +55,7 @@ import {
   MessageSquare,
   Flag,
 } from "lucide-react";
+import { BoardCalendarView } from "./board-calendar";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -77,6 +78,7 @@ export function BoardSurface({
   initialCommentsTab,
   initialViewId,
   initialLayout,
+  calendar,
   group,
   info,
 }: {
@@ -87,6 +89,8 @@ export function BoardSurface({
   initialViewId?: string;
   /** From `?layout=`: show this layout for this visit. */
   initialLayout?: ViewConfig["layout"];
+  /** Installation calendar settings and the month from `?month=`. */
+  calendar: { today: string; weekStartsOn: 0 | 1; month?: string };
   name: string;
   fields: { id: string; name: string; type?: string }[];
   statuses: string[];
@@ -406,7 +410,7 @@ export function BoardSurface({
       changes,
     }: {
       task: BoardTask;
-      changes: Partial<Pick<BoardTask, "statusId" | "priority">>;
+      changes: Partial<Pick<BoardTask, "statusId" | "priority" | "dueDate">>;
     }) => {
       const result = await saveTaskUpdate(
         state.boardId,
@@ -467,7 +471,7 @@ export function BoardSurface({
   const busy = mutation.isPending || inlineMutation.isPending;
   const patch = (
     task: BoardTask,
-    changes: Partial<Pick<BoardTask, "statusId" | "priority">>,
+    changes: Partial<Pick<BoardTask, "statusId" | "priority" | "dueDate">>,
   ) => {
     if (!busy) inlineMutation.mutate({ task, changes });
   };
@@ -507,8 +511,17 @@ export function BoardSurface({
   };
   const view = viewConfig.layout;
   // Keep the URL shareable: the board id stays the same across layouts.
-  const linkView = (changes: { layout?: string; view?: string | null }) => {
+  const [calendarMonth, setCalendarMonth] = useState(
+    calendar.month ?? calendar.today.slice(0, 7),
+  );
+  const [createDueDate, setCreateDueDate] = useState<string | undefined>();
+  const linkView = (changes: {
+    layout?: string;
+    view?: string | null;
+    month?: string;
+  }) => {
     const url = new URL(window.location.href);
+    if (changes.month) url.searchParams.set("month", changes.month);
     if (changes.layout) url.searchParams.set("layout", changes.layout);
     if (changes.view === null) url.searchParams.delete("view");
     else if (changes.view) url.searchParams.set("view", changes.view);
@@ -577,6 +590,15 @@ export function BoardSurface({
           <Table2 size={16} />
           Table
         </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-pressed={view === "calendar"}
+          onClick={() => setView("calendar")}
+        >
+          <CalendarDays size={16} />
+          Calendar
+        </Button>
       </div>
       {(state.pendingApprovalCount ?? state.pendingApprovals.length) > 0 && (
         <div className="mb-2 flex items-center justify-between gap-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs">
@@ -641,6 +663,7 @@ export function BoardSurface({
             onClick={() => {
               mutation.reset();
               setSelectedTab("details");
+              setCreateDueDate(undefined);
               setCreating(true);
             }}
           >
@@ -702,9 +725,37 @@ export function BoardSurface({
           groupActive={!!activeGroupFilter}
           count={total}
           onChange={setViewConfig}
+          hideDue={view === "calendar"}
         />
       )}
-      {view === "board" ? (
+      {view === "calendar" ? (
+        <BoardCalendarView
+          boardKey={boardKey}
+          boardId={state.boardId}
+          config={requestConfig}
+          month={calendarMonth}
+          today={calendar.today}
+          weekStartsOn={calendar.weekStartsOn}
+          onMonthChange={(month) => {
+            setCalendarMonth(month);
+            linkView({ month });
+          }}
+          statuses={savedStatuses}
+          people={state.people}
+          pending={busy}
+          onOpen={(taskId) => {
+            setSelectedTab("details");
+            setSelectedId(taskId);
+          }}
+          onMove={(task, dueDate) => patch(task, { dueDate })}
+          onCreate={(dueDate) => {
+            mutation.reset();
+            setSelectedTab("details");
+            setCreateDueDate(dueDate);
+            setCreating(true);
+          }}
+        />
+      ) : view === "board" ? (
         <div className="board-lanes-scroll">
           <div
             className="board-lanes"
@@ -1264,7 +1315,7 @@ export function BoardSurface({
           </table>
         </div>
       )}
-      {state.pagination && (
+      {state.pagination && view !== "calendar" && (
         <nav
           aria-label="Task pages"
           className="my-4 flex flex-wrap items-center justify-between gap-3 text-xs"
@@ -1462,7 +1513,8 @@ export function BoardSurface({
           className="board-details-panel task-sheet-panel outline-none"
         >
           <TaskEditor
-            key={selected?.id ?? "create"}
+            key={selected?.id ?? `create-${createDueDate ?? ""}`}
+            defaultDueDate={selected ? undefined : createDueDate}
             state={state}
             task={selected}
             initialTab={selectedTab}

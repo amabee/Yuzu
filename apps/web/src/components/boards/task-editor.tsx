@@ -52,9 +52,12 @@ export function TaskEditor({
   onTransferNotice,
   uploads,
   syncInterval = 15_000,
+  defaultDueDate,
 }: {
   state: BoardState;
   task?: BoardTask;
+  /** Prefills the due date of a new task, such as a calendar day. */
+  defaultDueDate?: string;
   pending: boolean;
   syncInterval?: number;
   error?: string;
@@ -75,7 +78,7 @@ export function TaskEditor({
         : (state.fields.find((field) => field.key === "status")?.options[0]
             ?.id ?? ""),
       priority: task?.priority ?? "NORMAL",
-      dueDate: task?.dueDate ?? "",
+      dueDate: task?.dueDate ?? defaultDueDate ?? "",
       groupId: task ? (task.groupId ?? "") : (state.groups[0]?.id ?? ""),
       assigneeIds: task?.assigneeIds ?? ([] as string[]),
       fieldValues: task?.fieldValues ?? ({} as Record<string, FieldValue>),

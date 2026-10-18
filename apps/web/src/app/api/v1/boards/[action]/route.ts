@@ -4,6 +4,7 @@ import { notifyBoardMutation, notifyNavigationChange } from "@/server/realtime";
 import { recordId } from "@/lib/board-contract";
 import {
   boardState,
+  boardCalendar,
   taskComments,
   createComment,
   changeComment,
@@ -24,6 +25,12 @@ async function handle(request: Request, action: string) {
         new URL(request.url).searchParams.has("query")
           ? JSON.parse(new URL(request.url).searchParams.get("query")!)
           : {},
+      );
+    else if (request.method === "GET" && action === "calendar")
+      data = await boardCalendar(
+        recordId.parse(new URL(request.url).searchParams.get("boardId")),
+        request.headers,
+        JSON.parse(new URL(request.url).searchParams.get("query") ?? "{}"),
       );
     else if (request.method === "GET" && action === "comments")
       data = await taskComments(

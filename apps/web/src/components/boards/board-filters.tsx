@@ -82,6 +82,7 @@ export function BoardFilters({
   groupActive,
   count,
   onChange,
+  hideDue = false,
 }: {
   config: ViewConfig;
   statuses: BoardOption[];
@@ -89,6 +90,8 @@ export function BoardFilters({
   groupActive: boolean;
   count: number;
   onChange: (config: ViewConfig) => void;
+  /** The calendar places tasks by date, so it hides the due-date filter. */
+  hideDue?: boolean;
 }) {
   const searchId = useId();
   const active = [
@@ -215,18 +218,20 @@ export function BoardFilters({
             })),
           ]}
         />
-        <BoardFilterSelect
-          title="Due date"
-          label="Filter task due date"
-          value={config.due}
-          onChange={(value) => field("due", value as ViewConfig["due"])}
-          options={[
-            { value: "all", label: "Any date" },
-            { value: "overdue", label: "Overdue" },
-            { value: "next-week", label: "Next 7 days" },
-            { value: "none", label: "No due date" },
-          ]}
-        />
+        {!hideDue && (
+          <BoardFilterSelect
+            title="Due date"
+            label="Filter task due date"
+            value={config.due}
+            onChange={(value) => field("due", value as ViewConfig["due"])}
+            options={[
+              { value: "all", label: "Any date" },
+              { value: "overdue", label: "Overdue" },
+              { value: "next-week", label: "Next 7 days" },
+              { value: "none", label: "No due date" },
+            ]}
+          />
+        )}
         <BoardFilterSelect
           className="min-w-0 sm:col-span-2"
           title="Sort by"
