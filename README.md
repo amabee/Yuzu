@@ -72,25 +72,29 @@ to build every internal system from scratch.
 > [!WARNING]
 > Yuzu is an early-stage project and is **not yet production-ready**.
 
-The initial focus is a reliable foundation: authentication, permissions,
-workspaces, boards, flexible fields, and core collaboration.
+**Current phase: 4 — Automation.** Board rules (slices 1 and 2) are done; email
+notifications are next, then administration and the API. Release readiness
+(Phase 5) comes after.
 
 - [x] Foundation, database, UUIDv7 records, and responsive shadcn UI
 - [x] First installation, sign-in, invitations, and password recovery
 - [x] Global theme editor, dynamic colors/type, and personal light/dark mode
 - [x] Boards, groups, real tasks, and typed custom fields
-- [x] Table and Kanban views with task details, filtering, and sorting
+- [x] Kanban, Table, Calendar, and Timeline views with task details, filtering, and sorting
 - [x] Creator/assignee/editor permissions and scoped board managers
 - [x] Revision conflict protection, task history, archive/restore
 - [x] Task comments, configurable tag/status/priority appearance, and operation toasts
-- [ ] Remaining profile/account and workspace lifecycle administration
 - [x] Approval policies, primary/backup decisions, and a private review queue
 - [x] Realtime board synchronization and persistent assignment/approval notifications
 - [x] Teammate mentions, comment editing with history, and authorized removal
-- [ ] Files and saved views
-- [ ] Dashboards, CSV exchange, and complete OpenAPI documentation
-- [ ] Workflow automation and Blueprint/App Builder exploration
+- [x] Task files and saved views
+- [x] Projects, overview reporting, cross-board search, and CSV import/export
+- [x] Workflow automation: board rules, schedules, task hand-offs, and webhooks
+- [ ] Email notifications and daily digests
+- [ ] Remaining profile/account and workspace lifecycle administration
+- [ ] Complete OpenAPI documentation
 - [ ] Release deployment, recovery, and pilot verification
+- [ ] Blueprint/App Builder exploration
 
 Use **Boards → Create board** or open an existing board and choose **Add task**.
 New boards use direct editing. Configure approvals in **Board details** and
@@ -448,6 +452,26 @@ permission-scoped PostgreSQL aggregates, update from realtime board events, and
 reconcile every 60 seconds while visible and on focus/reconnect. No task data
 from inaccessible workspaces is included in counts or lists.
 
+## Automations
+
+Board managers open **Automations** on a board's toolbar to build rules that
+read as a sentence: **When** something happens, **if** conditions match (all or
+any), **then** run up to ten actions.
+
+- Triggers: a task is created, its status or a field changes, someone is
+  assigned, it's due today or overdue, a comment is added, its checklist is
+  completed, or a schedule (every day, weekday, chosen weekdays, or month).
+- Actions: set fields, statuses and dates; assign people; notify people with a
+  custom message (placeholders like `{task}`, `{status}` and `{due}`), optionally
+  instead of Yuzu's own notice; create a task here or on another board you
+  manage; or send a signed webhook (owners and admins).
+- Rules run in the background as the person who made them, respect approvals,
+  and stop chains after three steps. Each rule shows its run history.
+
+The background worker runs rules, so rebuild it after updating Yuzu:
+`docker compose up -d --build --wait worker`. Owners and admins can allow
+webhooks to local-network addresses under **Settings**.
+
 ## Contributing
 
 Contributions, feedback, bug reports, and thoughtful feature ideas are welcome
@@ -472,7 +496,7 @@ matures.
 |   1   | **Foundation**           | Repository structure, database, validation, and shared components.                               |
 |   2   | **Core work management** | Authentication, workspaces, boards, items, custom fields, and views.                             |
 |   3   | **Collaboration**        | Task details, comments, activity, notifications, and reporting.                                  |
-|   4   | **Automation**           | Triggers, conditions, actions, workflow execution, and monitoring.                               |
+|   4   | **Automation** _(now)_   | Triggers, conditions, actions, workflow execution, and monitoring.                               |
 |   5   | **Beta readiness**       | Permissions testing, deployment documentation, backups, restore testing, and security hardening. |
 |   6   | **Extensibility**        | Yuzu Blueprint, internal App Builder, and integration tooling.                                   |
 
