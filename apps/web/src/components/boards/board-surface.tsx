@@ -28,7 +28,7 @@ import { OperationToast, type BoardNotice } from "./operation-toast";
 import { TaskEditor } from "./task-editor";
 import { useTaskUploads } from "./use-task-uploads";
 import { BoardManagement } from "./board-management";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { needsApproval } from "@/lib/approval-rules";
@@ -50,12 +50,18 @@ import {
   Layers3,
   UserRound,
   CalendarDays,
+  GanttChart,
+  Hourglass,
   GripVertical,
   Archive,
   MessageSquare,
   Flag,
 } from "lucide-react";
 import { BoardCalendarView } from "./board-calendar";
+import { PauseSlice } from "@/components/pause/decor";
+import { PauseAlert } from "@/components/pause/pause-alert";
+import { BoardTimelineView } from "./board-timeline";
+import { timelineWindow } from "@/lib/timeline-contract";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -90,7 +96,13 @@ export function BoardSurface({
   /** From `?layout=`: show this layout for this visit. */
   initialLayout?: ViewConfig["layout"];
   /** Installation calendar settings and the month from `?month=`. */
-  calendar: { today: string; weekStartsOn: 0 | 1; month?: string };
+  calendar: {
+    today: string;
+    weekStartsOn: 0 | 1;
+    month?: string;
+    /** First visible day of the timeline, from `?from=`. */
+    timelineFrom?: string;
+  };
   name: string;
   fields: { id: string; name: string; type?: string }[];
   statuses: string[];
@@ -237,9 +249,6 @@ export function BoardSurface({
       statusFilter !== "__none__" &&
       !savedStatuses.some((status) => status.id === statusFilter)),
   );
-  const [selectedTab, setSelectedTab] = useState<"details" | "comments">(
-    initialCommentsTab ? "comments" : "details",
-  );
   const [creating, setCreating] = useState(false);
   const linkKey = `${initialTaskId ?? ""}:${Boolean(initialCommentsTab)}`;
   const [previousLink, setPreviousLink] = useState(linkKey);
@@ -253,7 +262,6 @@ export function BoardSurface({
     setSelectedId(
       initialTaskId && task?.id === initialTaskId ? initialTaskId : null,
     );
-    setSelectedTab(initialCommentsTab ? "comments" : "details");
     setCreating(false);
     if (initialTaskId && task)
       setViewConfig((current) => ({
@@ -410,7 +418,9 @@ export function BoardSurface({
       changes,
     }: {
       task: BoardTask;
-      changes: Partial<Pick<BoardTask, "statusId" | "priority" | "dueDate">>;
+      changes: Partial<
+        Pick<BoardTask, "statusId" | "priority" | "startDate" | "dueDate">
+      >;
     }) => {
       const result = await saveTaskUpdate(
         state.boardId,
@@ -471,7 +481,9 @@ export function BoardSurface({
   const busy = mutation.isPending || inlineMutation.isPending;
   const patch = (
     task: BoardTask,
-    changes: Partial<Pick<BoardTask, "statusId" | "priority" | "dueDate">>,
+    changes: Partial<
+      Pick<BoardTask, "statusId" | "priority" | "startDate" | "dueDate">
+    >,
   ) => {
     if (!busy) inlineMutation.mutate({ task, changes });
   };
@@ -511,6 +523,24 @@ export function BoardSurface({
   };
   const view = viewConfig.layout;
   // Keep the URL shareable: the board id stays the same across layouts.
+  // Phones default the timeline to Months; saved views keep their own zoom.
+  const narrow = useSyncExternalStore(
+    (notify) => {
+      const media = window.matchMedia("(max-width: 640px)");
+      media.addEventListener("change", notify);
+      return () => media.removeEventListener("change", notify);
+    },
+    () => window.matchMedia("(max-width: 640px)").matches,
+    () => false,
+  );
+  const timelineSettings = viewConfig.timeline ?? {
+    groupBy: "group" as const,
+    zoom: narrow ? ("months" as const) : ("weeks" as const),
+  };
+  // null keeps the window around today for the current zoom.
+  const [timelineFrom, setTimelineFrom] = useState<string | null>(
+    calendar.timelineFrom ?? null,
+  );
   const [calendarMonth, setCalendarMonth] = useState(
     calendar.month ?? calendar.today.slice(0, 7),
   );
@@ -519,8 +549,11 @@ export function BoardSurface({
     layout?: string;
     view?: string | null;
     month?: string;
+    from?: string | null;
   }) => {
     const url = new URL(window.location.href);
+    if (changes.from === null) url.searchParams.delete("from");
+    else if (changes.from) url.searchParams.set("from", changes.from);
     if (changes.month) url.searchParams.set("month", changes.month);
     if (changes.layout) url.searchParams.set("layout", changes.layout);
     if (changes.view === null) url.searchParams.delete("view");
@@ -599,24 +632,29 @@ export function BoardSurface({
           <CalendarDays size={16} />
           Calendar
         </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-pressed={view === "timeline"}
+          onClick={() => setView("timeline")}
+        >
+          <GanttChart size={16} />
+          Timeline
+        </Button>
       </div>
       {(state.pendingApprovalCount ?? state.pendingApprovals.length) > 0 && (
-        <div className="mb-2 flex items-center justify-between gap-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs">
-          <span>
-            {state.pendingApprovalCount ?? state.pendingApprovals.length}{" "}
-            pending approval{" "}
-            {(state.pendingApprovalCount ?? state.pendingApprovals.length) === 1
-              ? "request"
-              : "requests"}
-            . Current task values stay unchanged.
-          </span>
-          <Link
-            className="shrink-0 font-medium text-primary underline-offset-4 hover:underline"
-            href="/approvals"
-          >
-            Review requests
-          </Link>
-        </div>
+        <PauseAlert
+          intent="warning"
+          className="board-approval-alert"
+          action={<Link href="/approvals">Review requests</Link>}
+        >
+          {state.pendingApprovalCount ?? state.pendingApprovals.length} pending
+          approval{" "}
+          {(state.pendingApprovalCount ?? state.pendingApprovals.length) === 1
+            ? "request"
+            : "requests"}
+          . Current task values stay unchanged.
+        </PauseAlert>
       )}
       <div className="board-toolbar">
         <div className="flex flex-wrap items-center gap-2">
@@ -662,7 +700,6 @@ export function BoardSurface({
             disabled={busy}
             onClick={() => {
               mutation.reset();
-              setSelectedTab("details");
               setCreateDueDate(undefined);
               setCreating(true);
             }}
@@ -725,10 +762,47 @@ export function BoardSurface({
           groupActive={!!activeGroupFilter}
           count={total}
           onChange={setViewConfig}
-          hideDue={view === "calendar"}
+          hideDue={view === "calendar" || view === "timeline"}
         />
       )}
-      {view === "calendar" ? (
+      {view === "timeline" ? (
+        <BoardTimelineView
+          boardKey={boardKey}
+          boardId={state.boardId}
+          config={requestConfig}
+          zoom={timelineSettings.zoom}
+          groupBy={timelineSettings.groupBy}
+          onSettings={(settings) => {
+            if (settings.zoom !== timelineSettings.zoom) {
+              setTimelineFrom(null);
+              linkView({ from: null });
+            }
+            configureView("timeline", settings);
+          }}
+          from={
+            timelineFrom ??
+            timelineWindow(
+              calendar.today,
+              timelineSettings.zoom,
+              calendar.weekStartsOn,
+            ).from
+          }
+          onWindowChange={(from) => {
+            setTimelineFrom(from);
+            linkView({ from });
+          }}
+          today={calendar.today}
+          weekStartsOn={calendar.weekStartsOn}
+          statuses={savedStatuses}
+          groups={state.groups}
+          people={state.people}
+          pending={busy}
+          onOpen={(taskId) => {
+            setSelectedId(taskId);
+          }}
+          onChange={(task, dates) => patch(task, dates)}
+        />
+      ) : view === "calendar" ? (
         <BoardCalendarView
           boardKey={boardKey}
           boardId={state.boardId}
@@ -744,13 +818,11 @@ export function BoardSurface({
           people={state.people}
           pending={busy}
           onOpen={(taskId) => {
-            setSelectedTab("details");
             setSelectedId(taskId);
           }}
           onMove={(task, dueDate) => patch(task, { dueDate })}
           onCreate={(dueDate) => {
             mutation.reset();
-            setSelectedTab("details");
             setCreateDueDate(dueDate);
             setCreating(true);
           }}
@@ -855,7 +927,6 @@ export function BoardSurface({
                         )
                           return;
                         mutation.reset();
-                        setSelectedTab("details");
                         setSelectedId(task.id);
                       }}
                       aria-busy={
@@ -900,7 +971,6 @@ export function BoardSurface({
                           className="task-card-title"
                           onClick={() => {
                             mutation.reset();
-                            setSelectedTab("details");
                             setSelectedId(task.id);
                           }}
                         >
@@ -928,10 +998,8 @@ export function BoardSurface({
                       {state.pendingApprovals.some(
                         (proposal) => proposal.taskId === task.id,
                       ) && (
-                        <Link
-                          className="mb-2 block text-xs text-muted-foreground hover:text-primary"
-                          href="/approvals"
-                        >
+                        <Link className="task-card-pending" href="/approvals">
+                          <Hourglass size={12} aria-hidden="true" />
                           Awaiting approval
                         </Link>
                       )}
@@ -1051,7 +1119,6 @@ export function BoardSurface({
                           aria-label={`Comments for ${task.name}`}
                           onClick={() => {
                             mutation.reset();
-                            setSelectedTab("comments");
                             setSelectedId(task.id);
                           }}
                         >
@@ -1176,7 +1243,6 @@ export function BoardSurface({
                           className="text-left font-medium text-primary"
                           onClick={() => {
                             mutation.reset();
-                            setSelectedTab("details");
                             setSelectedId(task.id);
                           }}
                         >
@@ -1283,7 +1349,6 @@ export function BoardSurface({
                         aria-label={`Open checklist for ${task.name}`}
                         onClick={() => {
                           mutation.reset();
-                          setSelectedTab("details");
                           setSelectedId(task.id);
                         }}
                       >
@@ -1324,7 +1389,7 @@ export function BoardSurface({
           </table>
         </div>
       )}
-      {state.pagination && view !== "calendar" && (
+      {state.pagination && view !== "calendar" && view !== "timeline" && (
         <nav
           aria-label="Task pages"
           className="my-4 flex flex-wrap items-center justify-between gap-3 text-xs"
@@ -1519,14 +1584,18 @@ export function BoardSurface({
             event.preventDefault();
             taskSheetRef.current?.focus();
           }}
-          className="board-details-panel task-sheet-panel outline-none"
+          className="board-details-panel task-sheet-panel task-panel outline-none"
         >
+          <span className="task-panel-leaf" aria-hidden="true" />
+          <span className="pause-clip" aria-hidden="true">
+            <PauseSlice />
+          </span>
           <TaskEditor
             key={selected?.id ?? `create-${createDueDate ?? ""}`}
             defaultDueDate={selected ? undefined : createDueDate}
             state={state}
             task={selected}
-            initialTab={selectedTab}
+            boardName={name}
             syncInterval={live.syncInterval}
             onNotice={notify}
             onTransferNotice={transferNotice}

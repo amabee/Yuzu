@@ -1,5 +1,10 @@
 import { taskWhere, taskOrder } from "./task-query";
 import {
+  TIMELINE_TASK_LIMIT,
+  timelineQuerySchema,
+  type BoardTimeline,
+} from "@/lib/timeline-contract";
+import {
   CALENDAR_TASK_LIMIT,
   calendarQuerySchema,
   type BoardCalendar,
@@ -718,6 +723,93 @@ export async function boardCalendar(
         ),
         undated: undatedTasks.map(present),
         undatedTotal,
+      };
+    },
+    { isolationLevel: "RepeatableRead", timeout: 15000 },
+  );
+}
+
+/** Tasks whose start-to-due span overlaps one visible timeline window, plus
+ *  unscheduled tasks, with the board's access check and view filters. */
+export async function boardTimeline(
+  boardId: string,
+  headers: Headers,
+  input: unknown,
+): Promise<BoardTimeline> {
+  const query = timelineQuerySchema.parse(input);
+  const { user, settings } = await requireIdentity(headers);
+  return db().$transaction(
+    async (tx) => {
+      const context = await access(tx, user.id, boardId);
+      const today = new Intl.DateTimeFormat("en-CA", {
+        timeZone: settings.timezone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date());
+      const filters = taskWhere(
+        boardId,
+        { ...query.config, due: "all" },
+        user.id,
+        today,
+      );
+      const from = new Date(`${query.from}T00:00:00Z`);
+      const to = new Date(`${query.to}T00:00:00Z`);
+      // A span runs from startDate ?? dueDate to dueDate ?? startDate.
+      const inWindow = {
+        AND: [
+          filters,
+          {
+            OR: [
+              { startDate: { lte: to }, dueDate: { gte: from } },
+              { startDate: null, dueDate: { gte: from, lte: to } },
+              { dueDate: null, startDate: { gte: from, lte: to } },
+            ],
+          },
+        ],
+      };
+      const unscheduled = {
+        AND: [filters, { startDate: null, dueDate: null }],
+      };
+      const [tasks, total, unscheduledTasks, unscheduledTotal] =
+        await Promise.all([
+          tx.task.findMany({
+            where: inWindow,
+            include: taskInclude,
+            orderBy: [
+              { startDate: { sort: "asc", nulls: "last" } },
+              { dueDate: "asc" },
+              { id: "asc" },
+            ],
+            take: TIMELINE_TASK_LIMIT,
+          }),
+          tx.task.count({ where: inWindow }),
+          tx.task.findMany({
+            where: unscheduled,
+            include: taskInclude,
+            orderBy: taskOrder(query.config.sort),
+            take: 50,
+          }),
+          tx.task.count({ where: unscheduled }),
+        ]);
+      const present = (task: LoadedTask): BoardTask => ({
+        id: task.id,
+        ...snapshot(task),
+        createdById: task.createdById,
+        createdByName: task.createdBy.name,
+        revision: task.revision,
+        canEdit: !task.archivedAt && canEdit(task, context),
+        commentCount: task._count.comments,
+        attachmentCount: task._count.attachments,
+        activity: [],
+      });
+      return {
+        from: query.from,
+        to: query.to,
+        tasks: tasks.map(present),
+        total,
+        unscheduled: unscheduledTasks.map(present),
+        unscheduledTotal,
       };
     },
     { isolationLevel: "RepeatableRead", timeout: 15000 },

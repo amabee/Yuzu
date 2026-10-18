@@ -1,6 +1,10 @@
 import { CsvTransferRuntime } from "@/components/transfers/csv-transfer-runtime";
 import { workspaceContext } from "@/server/workspace-access";
-import { boardScope, workspaceScope } from "@/server/team-access";
+import {
+  boardScope,
+  isAdministrator,
+  workspaceScope,
+} from "@/server/team-access";
 import { getDatabase } from "@yuzu/database";
 import { cookies } from "next/headers";
 import { AppShell } from "@/components/app-shell";
@@ -38,6 +42,35 @@ export default async function WorkspaceLayout({
       })
     ).map((item) => item.id),
   );
+  // Requests from other people that this user may be able to decide.
+  const approvalCount = await getDatabase().boardProposal.count({
+    where: {
+      status: "PENDING",
+      authorId: { not: user.id },
+      board: {
+        AND: [
+          boardScope(user),
+          isAdministrator(user.role)
+            ? {}
+            : {
+                OR: [
+                  { managers: { some: { userId: user.id } } },
+                  {
+                    approvalPolicy: {
+                      is: {
+                        OR: [
+                          { primaryApproverId: user.id },
+                          { backupApproverId: user.id },
+                        ],
+                      },
+                    },
+                  },
+                ],
+              },
+        ],
+      },
+    },
+  });
   const navigationWorkspaces = workspaces.map((item) => ({
     id: item.id,
     name: item.name,
@@ -58,6 +91,7 @@ export default async function WorkspaceLayout({
         role={user.role}
         workspaces={navigationWorkspaces}
         projects={projects}
+        approvalCount={approvalCount}
         creatableWorkspaces={workspaces
           .filter((item) => fullWorkspaceIds.has(item.id))
           .map(({ id, name }) => ({ id, name }))}
