@@ -11,14 +11,18 @@ import { headers } from "next/headers";
 import { boardState } from "@/server/board-service";
 import { z } from "zod";
 import { calendarMonthSchema } from "@/lib/calendar-contract";
+import { timelineFromSchema } from "@/lib/timeline-contract";
 import { ProjectBadge } from "@/components/projects/project-badge";
 
 // "kanban" in URLs; saved view configs keep their original "board" value.
-const urlLayouts = new Map<string, "board" | "table" | "calendar">([
-  ["kanban", "board"],
-  ["table", "table"],
-  ["calendar", "calendar"],
-]);
+const urlLayouts = new Map<string, "board" | "table" | "calendar" | "timeline">(
+  [
+    ["kanban", "board"],
+    ["table", "table"],
+    ["calendar", "calendar"],
+    ["timeline", "timeline"],
+  ],
+);
 
 export default async function BoardPage({
   params,
@@ -31,6 +35,7 @@ export default async function BoardPage({
     view?: string;
     layout?: string;
     month?: string;
+    from?: string;
   }>;
 }) {
   const { user, settings } = await workspaceContext();
@@ -163,6 +168,8 @@ export default async function BoardPage({
           }).format(new Date()),
           weekStartsOn: settings.weekStartsOn === 0 ? 0 : 1,
           month: calendarMonthSchema.safeParse((await searchParams).month).data,
+          timelineFrom: timelineFromSchema.safeParse((await searchParams).from)
+            .data,
         }}
         name={board.name}
         fields={board.columns}

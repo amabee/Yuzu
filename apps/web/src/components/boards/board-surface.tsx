@@ -28,7 +28,7 @@ import { OperationToast, type BoardNotice } from "./operation-toast";
 import { TaskEditor } from "./task-editor";
 import { useTaskUploads } from "./use-task-uploads";
 import { BoardManagement } from "./board-management";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { needsApproval } from "@/lib/approval-rules";
@@ -50,12 +50,15 @@ import {
   Layers3,
   UserRound,
   CalendarDays,
+  GanttChart,
   GripVertical,
   Archive,
   MessageSquare,
   Flag,
 } from "lucide-react";
 import { BoardCalendarView } from "./board-calendar";
+import { BoardTimelineView } from "./board-timeline";
+import { timelineWindow } from "@/lib/timeline-contract";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -90,7 +93,13 @@ export function BoardSurface({
   /** From `?layout=`: show this layout for this visit. */
   initialLayout?: ViewConfig["layout"];
   /** Installation calendar settings and the month from `?month=`. */
-  calendar: { today: string; weekStartsOn: 0 | 1; month?: string };
+  calendar: {
+    today: string;
+    weekStartsOn: 0 | 1;
+    month?: string;
+    /** First visible day of the timeline, from `?from=`. */
+    timelineFrom?: string;
+  };
   name: string;
   fields: { id: string; name: string; type?: string }[];
   statuses: string[];
@@ -410,7 +419,9 @@ export function BoardSurface({
       changes,
     }: {
       task: BoardTask;
-      changes: Partial<Pick<BoardTask, "statusId" | "priority" | "dueDate">>;
+      changes: Partial<
+        Pick<BoardTask, "statusId" | "priority" | "startDate" | "dueDate">
+      >;
     }) => {
       const result = await saveTaskUpdate(
         state.boardId,
@@ -471,7 +482,9 @@ export function BoardSurface({
   const busy = mutation.isPending || inlineMutation.isPending;
   const patch = (
     task: BoardTask,
-    changes: Partial<Pick<BoardTask, "statusId" | "priority" | "dueDate">>,
+    changes: Partial<
+      Pick<BoardTask, "statusId" | "priority" | "startDate" | "dueDate">
+    >,
   ) => {
     if (!busy) inlineMutation.mutate({ task, changes });
   };
@@ -511,6 +524,24 @@ export function BoardSurface({
   };
   const view = viewConfig.layout;
   // Keep the URL shareable: the board id stays the same across layouts.
+  // Phones default the timeline to Months; saved views keep their own zoom.
+  const narrow = useSyncExternalStore(
+    (notify) => {
+      const media = window.matchMedia("(max-width: 640px)");
+      media.addEventListener("change", notify);
+      return () => media.removeEventListener("change", notify);
+    },
+    () => window.matchMedia("(max-width: 640px)").matches,
+    () => false,
+  );
+  const timelineSettings = viewConfig.timeline ?? {
+    groupBy: "group" as const,
+    zoom: narrow ? ("months" as const) : ("weeks" as const),
+  };
+  // null keeps the window around today for the current zoom.
+  const [timelineFrom, setTimelineFrom] = useState<string | null>(
+    calendar.timelineFrom ?? null,
+  );
   const [calendarMonth, setCalendarMonth] = useState(
     calendar.month ?? calendar.today.slice(0, 7),
   );
@@ -519,8 +550,11 @@ export function BoardSurface({
     layout?: string;
     view?: string | null;
     month?: string;
+    from?: string | null;
   }) => {
     const url = new URL(window.location.href);
+    if (changes.from === null) url.searchParams.delete("from");
+    else if (changes.from) url.searchParams.set("from", changes.from);
     if (changes.month) url.searchParams.set("month", changes.month);
     if (changes.layout) url.searchParams.set("layout", changes.layout);
     if (changes.view === null) url.searchParams.delete("view");
@@ -598,6 +632,15 @@ export function BoardSurface({
         >
           <CalendarDays size={16} />
           Calendar
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-pressed={view === "timeline"}
+          onClick={() => setView("timeline")}
+        >
+          <GanttChart size={16} />
+          Timeline
         </Button>
       </div>
       {(state.pendingApprovalCount ?? state.pendingApprovals.length) > 0 && (
@@ -725,10 +768,48 @@ export function BoardSurface({
           groupActive={!!activeGroupFilter}
           count={total}
           onChange={setViewConfig}
-          hideDue={view === "calendar"}
+          hideDue={view === "calendar" || view === "timeline"}
         />
       )}
-      {view === "calendar" ? (
+      {view === "timeline" ? (
+        <BoardTimelineView
+          boardKey={boardKey}
+          boardId={state.boardId}
+          config={requestConfig}
+          zoom={timelineSettings.zoom}
+          groupBy={timelineSettings.groupBy}
+          onSettings={(settings) => {
+            if (settings.zoom !== timelineSettings.zoom) {
+              setTimelineFrom(null);
+              linkView({ from: null });
+            }
+            configureView("timeline", settings);
+          }}
+          from={
+            timelineFrom ??
+            timelineWindow(
+              calendar.today,
+              timelineSettings.zoom,
+              calendar.weekStartsOn,
+            ).from
+          }
+          onWindowChange={(from) => {
+            setTimelineFrom(from);
+            linkView({ from });
+          }}
+          today={calendar.today}
+          weekStartsOn={calendar.weekStartsOn}
+          statuses={savedStatuses}
+          groups={state.groups}
+          people={state.people}
+          pending={busy}
+          onOpen={(taskId) => {
+            setSelectedTab("details");
+            setSelectedId(taskId);
+          }}
+          onChange={(task, dates) => patch(task, dates)}
+        />
+      ) : view === "calendar" ? (
         <BoardCalendarView
           boardKey={boardKey}
           boardId={state.boardId}
@@ -1324,7 +1405,7 @@ export function BoardSurface({
           </table>
         </div>
       )}
-      {state.pagination && view !== "calendar" && (
+      {state.pagination && view !== "calendar" && view !== "timeline" && (
         <nav
           aria-label="Task pages"
           className="my-4 flex flex-wrap items-center justify-between gap-3 text-xs"
