@@ -1,24 +1,22 @@
 # Yuzu development handoff
 
-Snapshot: 2026-10-19 (Asia/Singapore). Read this before older progress notes.
+Snapshot: 2026-10-19, end of day (Asia/Singapore). Read this before older progress notes.
 Verify live Git, process, and Docker state when resuming; this is a snapshot.
 
 ## Where we are
 
 Yuzu is a self-hosted work-management app, initially for a small internal team.
-The user plans to run it on their computer first, then a shared server. Phase 3
-(CSV exchange, large boards, cross-board search, overview reporting) is merged,
-followed by Projects, saved-view layouts, Calendar/Timeline, task start dates,
-the app redesign, the "pause point" design system, the task panel and the Kanban
-redesign. The application remains pre-production.
+The user plans to run it on their computer first, then a shared server. Phases
+1–3 are merged, plus Projects, saved-view layouts, Calendar/Timeline, task start
+dates, the app redesign, the "pause point" design system, the task panel, the
+Kanban redesign and the notification bell dropdown. **Phase 4 (automation)
+slices 1 and 2 are merged.** The application remains pre-production.
 
-Main: merge of PR #19 (`fdf1632`). PRs #11–#18 were merged into their stacked
-parent branches rather than `main`; #19 was retargeted to `main` and carried all of
-them in one merge. The `feat/finish-up` branch follows: remaining dialogs/sheets/notices in the pause
-style, a notification bell dropdown (the Inbox page stays; email delivery is a
-later idea), no theme switcher on sign-in/welcome, and this handoff. The user asked to reset the development database to a fresh
-install; the agent was not permitted to run `prisma migrate reset`, so the user
-runs it from `packages/database`.
+Main: merge of PR #25 (`b66dfbe`). Recent PRs: #20 finish-up pass (pause style
+everywhere, bell dropdown, no theme switcher on sign-in/welcome), #21 automation
+engine, #22 Kanban hydration fix, #23 automations UI, #24 automation slice 2
+engine, #25 slice 2 builder, custom notification messages and the rule
+notification visibility fix.
 
 Unrelated local modifications are usually present in the working tree (many
 files show CRLF-only churn). Stage only files with real changes
@@ -59,6 +57,12 @@ commits or PR bodies. Existing `apps/web/AGENTS.md` remains in force.
   lemon artwork are the toast's (`/toasts/yuzu-leaf-corner.svg`,
   `yuzu-lemon-slice.svg`). Intent colors are fixed tokens (`--intent-*`), cream
   `--pending` marks approvals.
+- Notifications: the header bell opens a dropdown (All/Unread, mark all read,
+  latest 8, link to the Inbox page). Rule notifications (`AUTOMATION`) are whole
+  sentences and visible to every recipient, not only managers.
+- Automation (Phase 4, spec `docs/specs/automation.md`): per-board When / If /
+  Then rules built from Board → Automations (managers only). See the section
+  below.
 - Permissions: workspace-scoped access, creator/assignee/explicit editor writes,
   scoped board managers, owners/admins managing global access. A People custom
   field does not grant task editing permission.
@@ -163,10 +167,11 @@ realtime `:3101`, worker `:3102`, and SMTP `:25250`; fixtures reset test data.
 `YUZU_E2E_S3=1` enables the isolated SeaweedFS test bucket; Redis multi-instance
 tests require `YUZU_TEST_REDIS_URL`. Keep Docker builds separate from browser runs.
 
-Latest code validation (2026-10-19, `feat/finish-up`): build/lint/types pass;
-147 web unit tests pass; the full browser suite ran 85 passed / 1 skipped with one
-failure (the theme test still clicking the removed sign-in switcher), which was
-updated and passes on rerun. A 25,000-task seeded board is covered for paging,
+Latest code validation (2026-10-19, `feat/automation-slice2-ui`): build, lint
+and types pass; 167 web unit tests pass; all 8 automation browser tests and the
+notification/Inbox tests pass. The last full browser run (slice 2 engine) was
+92 passed / 1 skipped; the user stopped the full run on the final UI commit, so
+it was not rerun there. A 25,000-task seeded board is covered for paging,
 search, virtualization and dragging; this is **not** a benchmark of sustained
 multi-user concurrency. Orphaned test servers on `:3101` can block a rerun; stop
 only that test port, never the dev services.
@@ -182,17 +187,50 @@ admins too; admins regain access only via audited `recover`. Gotcha: Prisma
 matches nothing for `{}` inside `OR`, so the scopes return `{}` directly for
 admins. Navigation changes publish a data-free `kind: "navigation"` realtime hint.
 
+## Automation (merged)
+
+Rules are rows in `AutomationRule` (trigger, `match`, conditions, actions JSON).
+Task writes queue `AutomationEvent` rows in the same transaction, only on boards
+with an enabled rule. The worker (`server/automation-service.ts`, started from
+`apps/worker`) polls every 2 s, runs matching rules as their creator through the
+normal task write path, and records `AutomationRun` history (30 days).
+
+- Decisions: managers build rules; rules run as their creator and pause if that
+  person loses access; approval-protected changes become approval requests;
+  chains stop at depth 3 with no self-retrigger; 5 failures in a row pause a
+  rule and notify its creator.
+- Triggers: task created, status changed, assigned, due today, overdue, field
+  changed, schedule (day/weekday/week/month at a time, installation timezone;
+  a missed time runs once within 24 h), comment added, checklist completed.
+- Actions: set status/priority/group/fields/dates, assign/unassign, notify
+  (custom message with `{task}`/`${task}` placeholders, optional "replace Yuzu's
+  own notification"), create a task (here or on a board the creator manages),
+  webhook (owners/admins; HMAC-signed, secret shown once, encrypted with
+  `SETTINGS_ENCRYPTION_KEY`, 3 retries; private-network URLs refused unless the
+  admin setting "Allow local-network webhooks" is on).
+- Pure logic lives in `lib/automation-{contract,engine,schedule,describe,message}.ts`
+  with unit tests; browser coverage is `tests/automation.spec.ts`.
+- Operations: the Docker worker must run the same code as the app and needs
+  `SETTINGS_ENCRYPTION_KEY` (now in `compose.yaml`). After pulling, run
+  `docker compose up -d --build --wait worker`. A worker older than a saved rule
+  reports "options the worker doesn't recognise" in run history.
+
 ## Next session
 
-Phase 4 is automation: triggers, conditions, actions, execution and monitoring.
-The user wants to **plan the first slice thoroughly before any code**. A proposed
-starting point (not approved): per-board rules — when a task changes status, is
-assigned or passes its due date; if simple conditions match; then assign, set a
-field, move status or notify — with an on/off switch, run history, permission and
-approval checks, and loop protection. OpenAPI completion, remaining
-account/workspace lifecycle administration, release deployment, backup/restore
-and pilot/load verification also remain; do not describe Yuzu as
-production-ready or those as complete.
+The user's agreed order (2026-10-19): **email next**, then admin + API
+(account/workspace lifecycle administration, OpenAPI). Go-live work
+(deployment, backup/restore, pilot/load verification) is deferred until asked.
+
+Email was only proposed, not planned. Plan it with the user before any code, as
+was done for automation: notification emails per type with instant / daily
+digest / off settings and unsubscribe links, a timezone-aware daily digest, no
+email for your own actions or for notifications already read in the app, an
+"email" rule action reusing custom messages, and branded HTML plus plain-text
+templates. It builds on the existing SMTP setup (Mailpit locally).
+
+Small leftovers: the theme switcher still shows on setup, invitation and
+password-reset pages (the user only asked to remove it from sign-in/welcome).
+Do not describe Yuzu as production-ready.
 
 Start with this file, `git status`, and the specific source needed for the new
 request. Consult `README.md` for operational detail and `docs/progress.md` only
