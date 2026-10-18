@@ -55,6 +55,7 @@ import {
   groupSchema,
   taskActionSchema,
   updateTaskSchema,
+  reorderTaskSchema,
   dateOnly,
   type BoardState,
   type BoardTask,
@@ -541,6 +542,20 @@ export async function boardState(
         where,
         _count: true,
       });
+      // The pulse covers the whole active board, whatever the filters.
+      const pulseCounts = await tx.task.groupBy({
+        by: ["statusId"],
+        where: { boardId, archivedAt: null },
+        _count: true,
+      });
+      const overdue = await tx.task.count({
+        where: {
+          boardId,
+          archivedAt: null,
+          dueDate: { lt: new Date(`${calendarDate}T00:00:00Z`) },
+          OR: [{ statusId: null }, { statusId: { not: "done" } }],
+        },
+      });
       const groupCounts = await tx.task.groupBy({
         by: ["groupId"],
         where: { boardId, groupId: { not: null } },
@@ -562,6 +577,7 @@ export async function boardState(
         createdById: task.createdById,
         createdByName: task.createdBy.name,
         revision: task.revision,
+        position: task.position,
         canEdit: !task.archivedAt && canEdit(task, context),
         commentCount: task._count.comments,
         attachmentCount: task._count.attachments,
@@ -603,6 +619,15 @@ export async function boardState(
         },
         focusedTask: focused ? presentTask(focused) : null,
         pendingApprovalCount,
+        pulse: {
+          statusCounts: Object.fromEntries(
+            pulseCounts.map((item) => [
+              item.statusId ?? "__none__",
+              item._count,
+            ]),
+          ),
+          overdue,
+        },
         savedViews: savedViews.map((view) => savedViewSchema.parse(view)),
         selectedViewId: savedViews.some((view) => view.id === selection?.viewId)
           ? selection!.viewId
@@ -703,6 +728,7 @@ export async function boardCalendar(
         createdById: task.createdById,
         createdByName: task.createdBy.name,
         revision: task.revision,
+        position: task.position,
         canEdit: !task.archivedAt && canEdit(task, context),
         commentCount: task._count.comments,
         attachmentCount: task._count.attachments,
@@ -798,6 +824,7 @@ export async function boardTimeline(
         createdById: task.createdById,
         createdByName: task.createdBy.name,
         revision: task.revision,
+        position: task.position,
         canEdit: !task.archivedAt && canEdit(task, context),
         commentCount: task._count.comments,
         attachmentCount: task._count.attachments,
@@ -829,9 +856,15 @@ export async function createTaskRecord(
   validateCore(body, context.board, people);
   validateValues(body.fieldValues, context.board, people);
   checkDateOrder(body.startDate ?? null, body.dueDate ?? null);
+  // New tasks join the end of the board's manual order.
+  const last = await tx.task.aggregate({
+    where: { boardId: context.board.id },
+    _max: { position: true },
+  });
   const task = await tx.task.create({
     data: {
       boardId: context.board.id,
+      position: (last._max.position ?? 0) + POSITION_STEP,
       name: body.name,
       description: body.description ?? "",
       checklist: body.checklist ?? [],
@@ -1091,6 +1124,90 @@ export async function createTaskInTransaction(
       eligible: people,
     });
   return createTaskRecord(tx, context, people, initial, actorId, inputDigest);
+}
+
+const POSITION_STEP = 1024;
+
+/**
+ * Moves a task between two neighbours. Order is presentation, not task
+ * content, so it skips revisions, approvals and activity; edit access is
+ * still required.
+ */
+export async function reorderTask(input: unknown, headers: Headers) {
+  const body = reorderTaskSchema.parse(input);
+  const { user } = await requireIdentity(headers);
+  return serial(async (tx) => {
+    const task = await loadTask(tx, body.taskId);
+    if (!task) throw notFound();
+    const context = await access(tx, user.id, task.boardId, true);
+    if (!canEdit(task, context))
+      throw new SetupError(
+        403,
+        "FORBIDDEN",
+        "You do not have permission to change this task.",
+      );
+    if (task.archivedAt)
+      throw new SetupError(
+        409,
+        "TASK_ARCHIVED",
+        "Archived tasks are read-only. Ask a board manager to restore it first.",
+      );
+    const neighbours = async () => {
+      const ids = [body.afterId, body.beforeId].filter((id): id is string =>
+        Boolean(id),
+      );
+      const rows = await tx.task.findMany({
+        where: { id: { in: ids }, boardId: task.boardId },
+        select: { id: true, position: true },
+      });
+      if (rows.length !== ids.length)
+        throw new SetupError(
+          409,
+          "TASK_CHANGED",
+          "The board changed while you were moving this task. Try again.",
+        );
+      return {
+        after: rows.find((row) => row.id === body.afterId)?.position,
+        before: rows.find((row) => row.id === body.beforeId)?.position,
+      };
+    };
+    const place = ({
+      after,
+      before,
+    }: Awaited<ReturnType<typeof neighbours>>) =>
+      after !== undefined && before !== undefined
+        ? (after + before) / 2
+        : after !== undefined
+          ? after + POSITION_STEP
+          : before !== undefined
+            ? before - POSITION_STEP
+            : task.position;
+    let around = await neighbours();
+    if (
+      around.after !== undefined &&
+      around.before !== undefined &&
+      !(around.before - around.after > 1e-6)
+    ) {
+      // Neighbours are out of order or too close: respace the board once.
+      await tx.$executeRaw`
+        UPDATE "Task" AS t SET "position" = ordered.rank * ${POSITION_STEP}
+        FROM (
+          SELECT "id", ROW_NUMBER() OVER (ORDER BY "position", "createdAt", "id") AS rank
+          FROM "Task" WHERE "boardId" = ${task.boardId}
+        ) AS ordered
+        WHERE t."id" = ordered."id"`;
+      around = await neighbours();
+      if (!(around.before! > around.after!))
+        throw new SetupError(
+          409,
+          "TASK_CHANGED",
+          "The board changed while you were moving this task. Try again.",
+        );
+    }
+    const position = place(around);
+    await tx.task.update({ where: { id: task.id }, data: { position } });
+    return { taskId: task.id, boardId: task.boardId, position };
+  });
 }
 
 export async function mutateTask(

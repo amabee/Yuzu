@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { PersonAvatar } from "@/components/boards/board-presentation";
 import { PageCrumbs } from "@/components/page-crumbs";
 import { PauseAlert } from "@/components/pause/pause-alert";
 import { getDatabase } from "@yuzu/database";
@@ -51,7 +52,7 @@ export default async function BoardPage({
       project: {
         select: { id: true, name: true, color: true, archivedAt: true },
       },
-      createdBy: { select: { name: true } },
+      createdBy: { select: { name: true, image: true } },
       managers: { where: { userId: user.id }, select: { userId: true } },
     },
   });
@@ -123,6 +124,10 @@ export default async function BoardPage({
         <div className="min-w-0 flex-1">
           <h1 className="board-title">{board.name}</h1>
           <p className="board-subtitle">
+            <PersonAvatar
+              name={board.createdBy.name}
+              image={board.createdBy.image}
+            />
             {board.project ? `${board.project.name} · ` : ""}
             Created by {board.createdBy.name}
           </p>

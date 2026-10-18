@@ -1978,20 +1978,26 @@ test("board engine creates typed tasks, shares records between views, and restor
       }),
     })
     .getByRole("button", { name: "Drag Ship the board engine", exact: true })
-    .dragTo(doneLane);
+    .dragTo(doneLane, { steps: 12 });
   await expect(
     doneLane.getByRole("button", {
       name: "Ship the board engine",
       exact: true,
     }),
   ).toBeVisible();
-  await expect(page.locator(".task-card")).toHaveAttribute("draggable", "true");
+  await expect(
+    page.getByRole("button", {
+      name: "Drag Ship the board engine",
+      exact: true,
+    }),
+  ).toBeEnabled();
   await page
     .getByRole("button", { name: "Drag Ship the board engine", exact: true })
     .dragTo(
       page.locator(".board-lane").filter({
         has: page.getByRole("heading", { name: "In progress", exact: true }),
       }),
+      { steps: 12 },
     );
   await expect(
     page
@@ -2701,7 +2707,7 @@ test("board moves immediately, rolls back failed saves, and exposes option order
   });
   await page
     .getByRole("button", { name: "Drag Move without refreshing", exact: true })
-    .dragTo(lane("In progress"));
+    .dragTo(lane("In progress"), { steps: 12 });
   // The card moves while its POST is blocked, before any successful refetch.
   await expect(
     lane("In progress").getByRole("button", {
@@ -2709,12 +2715,19 @@ test("board moves immediately, rolls back failed saves, and exposes option order
       exact: true,
     }),
   ).toBeVisible();
-  await expect(page.locator(".task-card")).toHaveAttribute(
-    "draggable",
-    "false",
-  );
+  await expect(
+    page.getByRole("button", {
+      name: "Drag Move without refreshing",
+      exact: true,
+    }),
+  ).toBeDisabled();
   releaseSave();
-  await expect(page.locator(".task-card")).toHaveAttribute("draggable", "true");
+  await expect(
+    page.getByRole("button", {
+      name: "Drag Move without refreshing",
+      exact: true,
+    }),
+  ).toBeEnabled();
   await page.unroute("**/api/v1/boards/update");
   await page.route("**/api/v1/boards/update", async (route) => {
     await route.fulfill({
@@ -2731,7 +2744,7 @@ test("board moves immediately, rolls back failed saves, and exposes option order
   });
   await page
     .getByRole("button", { name: "Drag Move without refreshing", exact: true })
-    .dragTo(lane("Done"));
+    .dragTo(lane("Done"), { steps: 12 });
   await expect(page.locator(".board-surface").getByRole("alert")).toContainText(
     "Task changed",
   );
@@ -2895,7 +2908,7 @@ test("existing auth IDs refresh correctly, whole cards open sheets and drag, tag
     .getByRole("button", { name: "Archive Card interactions", exact: true })
     .boundingBox();
   expect(handle!.x).toBeLessThan(archive!.x);
-  await card.getByText("Click this card body", { exact: true }).click();
+  await card.click({ position: { x: 8, y: 8 } });
   await expect(page.locator('[data-slot="sheet-content"]')).toBeVisible();
   await page.getByRole("button", { name: "Design", exact: true }).click();
   await page.getByRole("button", { name: "Backend", exact: true }).click();
@@ -2919,9 +2932,7 @@ test("existing auth IDs refresh correctly, whole cards open sheets and drag, tag
   await expect(card.locator(".task-custom-tags")).toContainText("Design");
   await expect(card.locator(".task-custom-tags")).toContainText("Backend");
   await expect(card.locator(".task-custom-tags")).not.toContainText("Stage A");
-  await expect(card.locator(".task-checklist-summary")).toContainText(
-    "Checks1/3",
-  );
+  await expect(card.locator(".task-checklist-summary")).toContainText("1/3");
   await page.screenshot({
     path: "../../artifacts/phase-2/stacked-avatars-and-tags.png",
     fullPage: true,
@@ -2930,11 +2941,13 @@ test("existing auth IDs refresh correctly, whole cards open sheets and drag, tag
     .locator(".board-lane")
     .filter({ has: page.getByRole("heading", { name: "Done", exact: true }) });
   // Drag from the entire article, rather than its dedicated handle.
-  await card.dragTo(doneLane);
+  await card.dragTo(doneLane, { steps: 12 });
   await expect(
     doneLane.getByRole("button", { name: "Card interactions", exact: true }),
   ).toBeVisible();
-  await expect(card).toHaveAttribute("draggable", "true");
+  await expect(
+    card.getByRole("button", { name: "Drag Card interactions", exact: true }),
+  ).toBeEnabled();
   await expect(page.locator(".board-surface").getByRole("alert")).toHaveCount(
     0,
   );
@@ -3032,7 +3045,7 @@ test("existing auth IDs refresh correctly, whole cards open sheets and drag, tag
     where: { taskId, fieldId: labels.id },
   });
   expect(preserved.choices).toHaveLength(2);
-  await card.getByText("Click this card body", { exact: true }).click();
+  await card.click({ position: { x: 8, y: 8 } });
   await expect(
     page
       .getByRole("group", { name: "Checks", exact: true })
@@ -3152,21 +3165,23 @@ test("task reference sheet persists option appearance, formats dates and shows r
   await expect(card.locator(".task-custom-tags > span")).toHaveText(
     "Development",
   );
-  await expect(card.locator(".task-custom-tags > span")).toHaveCSS(
+  // Tags show as a colored dot beside the label.
+  await expect(card.locator(".task-custom-tags > span > i")).toHaveCSS(
     "background-color",
     "rgb(168, 85, 247)",
   );
   await expect(
-    card.locator(".task-card-tags > span").filter({ hasText: "High" }),
-  ).toHaveCSS("background-color", "rgb(245, 158, 11)");
+    card.locator(".task-card-priority").filter({ hasText: "High" }),
+  ).toHaveCSS("color", "rgb(245, 158, 11)");
   await expect(card.getByText("Apr 16", { exact: true })).toBeVisible();
   await expect(card.locator("select")).toHaveCount(0);
-  await expect(card.locator(".task-card-heading .task-card-date")).toHaveText(
+  await expect(card.locator(".task-card-meta .task-card-date")).toHaveText(
     "Apr 16",
   );
   const avatarBounds = await card.locator(".task-avatar").first().boundingBox();
-  const commentBounds = await card.locator(".task-comment-count").boundingBox();
-  expect(avatarBounds!.x).toBeLessThan(commentBounds!.x);
+  const commentBounds = await card.locator(".task-card-date").boundingBox();
+  // People sit at the end of the card's meta line.
+  expect(avatarBounds!.x).toBeGreaterThan(commentBounds!.x);
   await card.locator(".task-avatar").first().hover();
   await expect(page.getByRole("tooltip")).toContainText("Team Owner");
   await page.mouse.move(0, 0);
@@ -3175,9 +3190,6 @@ test("task reference sheet persists option appearance, formats dates and shows r
     fullPage: true,
   });
 
-  await expect(
-    card.getByText("Apr 16", { exact: true }).locator("svg"),
-  ).toHaveCount(1);
   await expect(
     page
       .locator(".board-lane-header")
@@ -3705,7 +3717,7 @@ test("boards sync across people, preserve drafts and recover concurrent non-over
     await teammate.getByRole("button", { name: "Close", exact: true }).click();
     await lane(teammate, "To do")
       .locator(".task-card")
-      .dragTo(lane(teammate, "In progress"));
+      .dragTo(lane(teammate, "In progress"), { steps: 12 });
     await expect(lane(page, "In progress").locator(".task-card")).toContainText(
       "Collaborative card",
       { timeout: 10_000 },
@@ -5312,9 +5324,7 @@ test("task checklists belong to each task, save live and disappear from cards wh
     await team.author.page
       .getByRole("button", { name: "Save changes", exact: true })
       .click();
-    await expect(card.locator(".task-checklist-summary")).toContainText(
-      "Checklist1/2",
-    );
+    await expect(card.locator(".task-checklist-summary")).toContainText("1/2");
     await expect(empty.locator(".task-checklist-summary")).toHaveCount(0);
     await page
       .getByRole("button", { name: "Task with its own steps", exact: true })
@@ -5340,9 +5350,7 @@ test("task checklists belong to each task, save live and disappear from cards wh
     await page
       .getByRole("button", { name: "Save changes", exact: true })
       .click();
-    await expect(card.locator(".task-checklist-summary")).toContainText(
-      "Checklist0/1",
-    );
+    await expect(card.locator(".task-checklist-summary")).toContainText("0/1");
     await expect
       .poll(
         async () =>
@@ -5966,7 +5974,9 @@ test("approval UI keeps pending moves off the board and routes owner requests to
       await gate;
       await route.continue();
     });
-    await lane("To do").locator(".task-card").dragTo(lane("In progress"));
+    await lane("To do")
+      .locator(".task-card")
+      .dragTo(lane("In progress"), { steps: 12 });
     await expect(lane("To do").locator(".task-card")).toHaveCount(1);
     await expect(lane("In progress").locator(".task-card")).toHaveCount(0);
     release();

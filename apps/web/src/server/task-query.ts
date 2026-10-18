@@ -57,5 +57,5 @@ export function taskOrder(
     ? [{ name: "asc" }, { id: "asc" }]
     : sort === "due"
       ? [{ dueDate: { sort: "asc", nulls: "last" } }, { id: "asc" }]
-      : [{ createdAt: "asc" }, { id: "asc" }];
+      : [{ position: "asc" }, { createdAt: "asc" }, { id: "asc" }];
 }

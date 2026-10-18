@@ -13,6 +13,7 @@ import {
   createTask,
   manageBoard,
   mutateTask,
+  reorderTask,
 } from "@/server/board-service";
 import { readSetupBody, SetupError } from "@/server/setup/security";
 async function handle(request: Request, action: string) {
@@ -59,6 +60,8 @@ async function handle(request: Request, action: string) {
         data = await changeComment(body, request.headers);
       else if (action === "create-task")
         data = await createTask(body, request.headers);
+      else if (action === "reorder")
+        data = await reorderTask(body, request.headers);
       else if (["update", "archive", "restore", "editor"].includes(action))
         data = await mutateTask(action, body, request.headers);
       else if (

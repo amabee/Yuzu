@@ -3,7 +3,7 @@ import { ExportCsv } from "./export-csv";
 import { ImportCsv } from "./import-csv";
 import { matchesBoardView } from "@/lib/board-view";
 import { mergeBoardState } from "@/lib/board-cache";
-import { VirtualTaskList, VirtualTableBody } from "./virtual-task-list";
+import { VirtualTableBody } from "./virtual-task-list";
 import { BoardFilters, BoardFilterSelect } from "./board-filters";
 import { SavedViewControls } from "./saved-view-controls";
 import {
@@ -19,7 +19,6 @@ import {
   type TaskChanges,
 } from "@/lib/task-sync";
 import {
-  coreKeys,
   type BoardState,
   type BoardTask,
   type BoardField,
@@ -36,7 +35,6 @@ import { taskMutationResultSchema } from "@/lib/approval-contract";
 import { useBoardLiveSync } from "./use-board-live-sync";
 import {
   AssigneeAvatars,
-  StatusIcon,
   optionBadgeStyle,
   formatDueDate,
   priorityOptions,
@@ -51,13 +49,10 @@ import {
   UserRound,
   CalendarDays,
   GanttChart,
-  Hourglass,
-  GripVertical,
-  Archive,
-  MessageSquare,
-  Flag,
 } from "lucide-react";
 import { BoardCalendarView } from "./board-calendar";
+import { BoardKanban, type KanbanPlacement } from "./board-kanban";
+import { BoardPulse } from "./board-pulse";
 import { PauseSlice } from "@/components/pause/decor";
 import { PauseAlert } from "@/components/pause/pause-alert";
 import { BoardTimelineView } from "./board-timeline";
@@ -416,33 +411,58 @@ export function BoardSurface({
     mutationFn: async ({
       task,
       changes,
+      placement,
     }: {
       task: BoardTask;
       changes: Partial<
         Pick<BoardTask, "statusId" | "priority" | "startDate" | "dueDate">
       >;
+      placement?: KanbanPlacement;
     }) => {
-      const result = await saveTaskUpdate(
-        state.boardId,
-        { taskId: task.id, revision: task.revision, changes },
-        task,
-      );
-      return taskMutationResultSchema.parse(result.data);
+      const result = Object.keys(changes).length
+        ? taskMutationResultSchema.parse(
+            (
+              await saveTaskUpdate(
+                state.boardId,
+                { taskId: task.id, revision: task.revision, changes },
+                task,
+              )
+            ).data,
+          )
+        : ({
+            outcome: "APPLIED",
+            taskId: task.id,
+            revision: task.revision,
+          } as const);
+      if (placement && result.outcome === "APPLIED")
+        await apiRequest("/api/v1/boards/reorder", {
+          method: "POST",
+          json: { taskId: task.id, ...placement },
+        });
+      return result;
     },
-    onMutate: async ({ task, changes }) => {
+    onMutate: async ({ task, changes, placement }) => {
       await queryClient.cancelQueries({ queryKey });
       const previous = queryClient.getQueryData<BoardState>(queryKey);
       if (!needsApproval(state.approvalPolicy, "UPDATE", changes, state.fields))
-        queryClient.setQueryData<BoardState>(
-          queryKey,
-          (current) =>
-            current && {
-              ...current,
-              tasks: current.tasks.map((item) =>
-                item.id === task.id ? { ...item, ...changes } : item,
-              ),
-            },
-        );
+        queryClient.setQueryData<BoardState>(queryKey, (current) => {
+          if (!current) return current;
+          const position = placement
+            ? placeBetween(current.tasks, placement)
+            : undefined;
+          return {
+            ...current,
+            tasks: current.tasks.map((item) =>
+              item.id === task.id
+                ? {
+                    ...item,
+                    ...changes,
+                    ...(position !== undefined ? { position } : {}),
+                  }
+                : item,
+            ),
+          };
+        });
       return { previous };
     },
     onSuccess: (result, variables, context) => {
@@ -452,7 +472,10 @@ export function BoardSurface({
         notify("Changes sent for approval", "info");
         return;
       }
-      notify("Task updated", "success");
+      notify(
+        Object.keys(variables.changes).length ? "Task updated" : "Task moved",
+        "success",
+      );
       const update = (task: BoardTask) =>
         task.id === result.taskId && task.revision <= result.revision
           ? { ...task, ...variables.changes, revision: result.revision }
@@ -487,8 +510,31 @@ export function BoardSurface({
   ) => {
     if (!busy) inlineMutation.mutate({ task, changes });
   };
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [dropStatus, setDropStatus] = useState<string | null>(null);
+  const manualOrder = viewConfig.sort === "created";
+  /** Saves a drag: status first (it may need approval), then the new spot. */
+  const moveTask = ({
+    task,
+    lane,
+    statusChanged,
+    placement,
+  }: {
+    task: BoardTask;
+    lane: { statusId: string | null };
+    statusChanged: boolean;
+    placement: KanbanPlacement | null;
+  }) => {
+    if (busy) return false;
+    const changes = statusChanged ? { statusId: lane.statusId } : {};
+    const waits =
+      statusChanged &&
+      needsApproval(state.approvalPolicy, "UPDATE", changes, state.fields);
+    inlineMutation.mutate({
+      task,
+      changes,
+      placement: waits ? undefined : (placement ?? undefined),
+    });
+    return !waits;
+  };
   const selected =
     state.tasks.find((task) => task.id === selectedId) ??
     (state.focusedTask?.id === selectedId ? state.focusedTask : undefined);
@@ -545,6 +591,7 @@ export function BoardSurface({
     calendar.month ?? calendar.today.slice(0, 7),
   );
   const [createDueDate, setCreateDueDate] = useState<string | undefined>();
+  const [createStatusId, setCreateStatusId] = useState<string | undefined>();
   const linkView = (changes: {
     layout?: string;
     view?: string | null;
@@ -579,6 +626,13 @@ export function BoardSurface({
       <OperationToast
         notice={notice}
         pinnedNotices={Object.values(pendingTransfers)}
+      />
+      <BoardPulse
+        state={state}
+        tone={(statusId, index) =>
+          savedStatuses.find((option) => option.id === statusId)?.color ??
+          laneTone(statusId, index)
+        }
       />
       <SavedViewControls
         views={state.savedViews ?? []}
@@ -701,6 +755,7 @@ export function BoardSurface({
             onClick={() => {
               mutation.reset();
               setCreateDueDate(undefined);
+              setCreateStatusId(undefined);
               setCreating(true);
             }}
           >
@@ -828,369 +883,49 @@ export function BoardSurface({
           }}
         />
       ) : view === "board" ? (
-        <div className="board-lanes-scroll">
-          <div
-            className="board-lanes"
-            style={{
-              gridTemplateColumns: `repeat(${Math.max(1, visibleStatuses.length)}, minmax(220px, 1fr))`,
-            }}
-          >
-            {visibleStatuses.map((status, index) => (
-              <section
-                className={`board-lane ${dropStatus === status ? "board-lane-drop" : ""}`}
-                key={status}
-                onDragOver={(event) => {
-                  if (!archived && draggingId && !busy) {
-                    event.preventDefault();
-                    event.dataTransfer.dropEffect = "move";
-                    setDropStatus(status);
-                  }
-                }}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  const task = tasks.find(
-                    (task) =>
-                      task.id === event.dataTransfer.getData("text/plain"),
-                  );
-                  setDraggingId(null);
-                  setDropStatus(null);
-                  if (
-                    task?.canEdit &&
-                    !archived &&
-                    !busy &&
-                    statusLabel(task) !== status
+        <BoardKanban
+          lanes={visibleStatuses.map((status, index) => {
+            const option = savedStatuses.find((item) => item.label === status);
+            const laneTasks = tasks.filter(
+              (task) => statusLabel(task) === status,
+            );
+            return {
+              key: status,
+              label: status,
+              statusId: option?.id ?? null,
+              icon: option?.icon,
+              tone: option?.color ?? laneTone(option?.id ?? null, index),
+              count: totalForStatus(status),
+              tasks: manualOrder
+                ? [...laneTasks].sort(
+                    (a, b) => (a.position ?? 0) - (b.position ?? 0),
                   )
-                    patch(task, {
-                      statusId:
-                        savedStatuses.find((option) => option.label === status)
-                          ?.id ?? null,
-                    });
-                }}
-                style={
-                  {
-                    "--lane-tone":
-                      savedStatuses.find((option) => option.label === status)
-                        ?.color ??
-                      `color-mix(in srgb, var(--primary) ${90 - (index % 4) * 15}%, var(--muted-foreground))`,
-                  } as React.CSSProperties
-                }
-              >
-                <header className="board-lane-header">
-                  <StatusIcon
-                    icon={
-                      savedStatuses.find((option) => option.label === status)
-                        ?.icon
-                    }
-                  />
-                  <h2>{status}</h2>
-                  <span className="board-lane-count">
-                    {totalForStatus(status)}
-                  </span>
-                </header>
-                <VirtualTaskList
-                  items={tasks.filter((task) => statusLabel(task) === status)}
-                  pinnedId={draggingId}
-                >
-                  {(task) => (
-                    <article
-                      key={task.id}
-                      data-task-id={task.id}
-                      className="task-card"
-                      draggable={task.canEdit && !busy}
-                      onDragStart={(event) => {
-                        if (
-                          (event.target as HTMLElement).closest(
-                            "select,input,textarea,[data-no-drag]",
-                          )
-                        ) {
-                          event.preventDefault();
-                          return;
-                        }
-                        event.dataTransfer.setData("text/plain", task.id);
-                        event.dataTransfer.effectAllowed = "move";
-                        event.dataTransfer.setDragImage(
-                          event.currentTarget,
-                          24,
-                          24,
-                        );
-                        setDraggingId(task.id);
-                      }}
-                      onDragEnd={() => {
-                        setDraggingId(null);
-                        setDropStatus(null);
-                      }}
-                      onClick={(event) => {
-                        if (
-                          (event.target as HTMLElement).closest(
-                            "button,select,a,input,textarea",
-                          )
-                        )
-                          return;
-                        mutation.reset();
-                        setSelectedId(task.id);
-                      }}
-                      aria-busy={
-                        inlineMutation.isPending &&
-                        inlineMutation.variables?.task.id === task.id
-                      }
-                    >
-                      <div className="task-card-actions">
-                        {task.canEdit && (
-                          <button
-                            type="button"
-                            className="task-drag-handle"
-                            aria-label={`Drag ${task.name}`}
-                            title="Drag task to another status"
-                            disabled={busy}
-                          >
-                            <GripVertical size={16} />
-                          </button>
-                        )}
-                        {task.canEdit && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-7"
-                            aria-label={`${state.approvalPolicy.enabled && state.approvalPolicy.requireArchive ? "Request archive for" : "Archive"} ${task.name}`}
-                            title="Archive task"
-                            disabled={busy}
-                            data-no-drag
-                            onClick={() =>
-                              act("archive", {
-                                taskId: task.id,
-                                revision: task.revision,
-                              })
-                            }
-                          >
-                            <Archive size={14} />
-                          </Button>
-                        )}
-                      </div>
-                      <div className="task-card-heading">
-                        <button
-                          className="task-card-title"
-                          onClick={() => {
-                            mutation.reset();
-                            setSelectedId(task.id);
-                          }}
-                        >
-                          {task.name}
-                        </button>
-                        {task.dueDate && (
-                          <span className="task-card-target-date">
-                            <span
-                              className="task-title-divider"
-                              aria-hidden="true"
-                            >
-                              ·
-                            </span>
-                            <time
-                              className="task-card-date"
-                              dateTime={task.dueDate}
-                              title={`Target date: ${formatDueDate(task.dueDate, true)}`}
-                            >
-                              <CalendarDays size={12} />
-                              {formatDueDate(task.dueDate)}
-                            </time>
-                          </span>
-                        )}
-                      </div>
-                      {state.pendingApprovals.some(
-                        (proposal) => proposal.taskId === task.id,
-                      ) && (
-                        <Link className="task-card-pending" href="/approvals">
-                          <Hourglass size={12} aria-hidden="true" />
-                          Awaiting approval
-                        </Link>
-                      )}
-                      <div className="task-card-tags">
-                        <span
-                          style={optionBadgeStyle(
-                            priorityOptions(state).find(
-                              (option) => option.id === task.priority,
-                            ),
-                          )}
-                        >
-                          <Flag size={11} />
-                          {priorityOptions(state).find(
-                            (option) => option.id === task.priority,
-                          )?.label ?? task.priority}
-                        </span>
-                        {task.groupId && (
-                          <span title="Task group">
-                            {
-                              state.groups.find(
-                                (item) => item.id === task.groupId,
-                              )?.name
-                            }
-                          </span>
-                        )}
-                      </div>
-                      <div className="task-card-tags task-custom-tags">
-                        {state.fields
-                          .filter(
-                            (field) =>
-                              !coreKeys.includes(field.key) &&
-                              field.type !== "MULTI_SELECT",
-                          )
-                          .flatMap((field) => {
-                            const value = task.fieldValues[field.id];
-                            if (
-                              value == null ||
-                              value === "" ||
-                              (Array.isArray(value) && !value.length)
-                            )
-                              return [];
-                            const labels =
-                              field.type === "TAGS" && Array.isArray(value)
-                                ? value.map(
-                                    (id) =>
-                                      field.options.find(
-                                        (option) => option.id === id,
-                                      )?.label ?? id,
-                                  )
-                                : [formatCustom(task, field)];
-                            return labels.map((label) => (
-                              <span
-                                key={`${field.id}-${label}`}
-                                title={`${field.name}: ${label}`}
-                                style={
-                                  field.type === "TAGS"
-                                    ? optionBadgeStyle(
-                                        field.options.find(
-                                          (option) => option.label === label,
-                                        ),
-                                      )
-                                    : undefined
-                                }
-                              >
-                                {field.type !== "TAGS" && <b>{field.name}: </b>}
-                                {label}
-                              </span>
-                            ));
-                          })}
-                      </div>
-                      {state.fields
-                        .filter(
-                          (field) =>
-                            field.type === "MULTI_SELECT" &&
-                            selectedChoices(task, field.id).length > 0,
-                        )
-                        .map((field) => (
-                          <div
-                            className="task-checklist-summary"
-                            key={field.id}
-                            title={formatCustom(task, field)}
-                          >
-                            <ListChecks size={13} />
-                            <span>{field.name}</span>
-                            <span>
-                              {selectedChoices(task, field.id).length}/
-                              {field.options.length}
-                            </span>
-                          </div>
-                        ))}
-                      {task.checklist.length > 0 && (
-                        <div
-                          className="task-checklist-summary"
-                          aria-label={`Checklist progress for ${task.name}`}
-                        >
-                          <ListChecks size={13} />
-                          <span>Checklist</span>
-                          <span>
-                            {task.checklist.filter((item) => item.done).length}/
-                            {task.checklist.length}
-                          </span>
-                        </div>
-                      )}
-                      {task.description && (
-                        <p className="task-card-description">
-                          {task.description}
-                        </p>
-                      )}
-                      <div className="task-card-bottom">
-                        <AssigneeAvatars
-                          ids={task.assigneeIds}
-                          people={state.people}
-                        />
-                        <button
-                          type="button"
-                          className="task-comment-count"
-                          aria-label={`Comments for ${task.name}`}
-                          onClick={() => {
-                            mutation.reset();
-                            setSelectedId(task.id);
-                          }}
-                        >
-                          <MessageSquare size={13} />
-                          {task.commentCount ?? 0}
-                        </button>
-                      </div>
-                    </article>
-                  )}
-                </VirtualTaskList>
-                {!tasks.some((task) => statusLabel(task) === status) && (
-                  <div className="board-lane-empty">
-                    <div
-                      className="board-empty-illustration"
-                      aria-hidden="true"
-                    >
-                      <span className="board-empty-orbit board-empty-orbit-outer" />
-                      <span className="board-empty-orbit board-empty-orbit-inner" />
-                      <span className="board-empty-symbol">
-                        <svg
-                          width="32"
-                          height="32"
-                          viewBox="0 0 32 32"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <path d="M8 10C5 10 3 13 4 16C3 20 6 25 11 26C17 29 23 25 25 21C29 20 29 16 26 14C24 8 17 6 12 8C10 7 8 8 8 10Z" />
-                          <path d="M17 7C17 3 21 2 26 3C25 7 21 9 17 7Z" />
-                          <path d="M8 16C8 13 10 11 13 11" />
-                          <path d="M11 21L11.1 21M17 23L17.1 23M21 17L21.1 17" />
-                        </svg>
-                      </span>
-                      <span className="board-empty-satellite board-empty-satellite-one">
-                        <LemonSlice />
-                      </span>
-                      <span className="board-empty-satellite board-empty-satellite-two">
-                        <LemonSlice />
-                      </span>
-                      <span className="board-empty-satellite board-empty-satellite-three">
-                        <LemonSlice />
-                      </span>
-                    </div>
-                    {totalForStatus(status) ? (
-                      <>
-                        <p>No tasks from this status on this page.</p>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() =>
-                            configureView(
-                              "statusId",
-                              savedStatuses.find(
-                                (option) => option.label === status,
-                              )?.id ?? "__none__",
-                            )
-                          }
-                        >
-                          Show {status}
-                        </Button>
-                      </>
-                    ) : (
-                      <p>No tasks yet on this status.</p>
-                    )}
-                  </div>
-                )}
-              </section>
-            ))}
-          </div>
-        </div>
+                : laneTasks,
+            };
+          })}
+          state={state}
+          busy={busy || archived}
+          manualOrder={manualOrder}
+          canAdd={!archived}
+          formatCustom={formatCustom}
+          onOpen={(task) => {
+            mutation.reset();
+            setSelectedId(task.id);
+          }}
+          onArchive={(task) =>
+            act("archive", { taskId: task.id, revision: task.revision })
+          }
+          onAdd={(lane) => {
+            mutation.reset();
+            setCreateDueDate(undefined);
+            setCreateStatusId(lane.statusId ?? "");
+            setCreating(true);
+          }}
+          onShowStatus={(lane) =>
+            configureView("statusId", lane.statusId ?? "__none__")
+          }
+          onMove={moveTask}
+        />
       ) : (
         <div className="board-table-scroll max-h-[700px] overflow-auto rounded-xl border bg-card">
           <table
@@ -1448,35 +1183,6 @@ export function BoardSurface({
           </div>
         </nav>
       )}
-      <section className="board-overview" aria-label="Board structure overview">
-        <h2>
-          <Layers3 size={16} />
-          Project overview
-        </h2>
-        <div className="board-overview-grid">
-          <div>
-            <span>Saved fields</span>
-            <strong>{fields.length}</strong>
-            <p>
-              {fields.map((field) => field.name).join(" · ") ||
-                "No fields configured"}
-            </p>
-          </div>
-          <div>
-            <span>Status lanes</span>
-            <strong>{statuses.length}</strong>
-            <p>{statuses.join(" · ") || "No statuses configured"}</p>
-          </div>
-          <div>
-            <span>Groups</span>
-            <strong>{state.groups.length}</strong>
-            <p>
-              {state.groups.map((item) => item.name).join(" · ") ||
-                "No groups configured"}
-            </p>
-          </div>
-        </div>
-      </section>
       <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
         <SheetContent className="board-details-panel">
           <span className="board-detail-eyebrow">Saved board</span>
@@ -1591,8 +1297,12 @@ export function BoardSurface({
             <PauseSlice />
           </span>
           <TaskEditor
-            key={selected?.id ?? `create-${createDueDate ?? ""}`}
+            key={
+              selected?.id ??
+              `create-${createDueDate ?? ""}-${createStatusId ?? ""}`
+            }
             defaultDueDate={selected ? undefined : createDueDate}
+            defaultStatusId={selected ? undefined : createStatusId}
             state={state}
             task={selected}
             boardName={name}
@@ -1613,20 +1323,32 @@ export function BoardSurface({
   );
 }
 
-function LemonSlice() {
+/** Mirrors the server: halfway between neighbours, or a step past one. */
+function placeBetween(tasks: BoardTask[], placement: KanbanPlacement) {
+  const after = tasks.find((task) => task.id === placement.afterId)?.position;
+  const before = tasks.find((task) => task.id === placement.beforeId)?.position;
+  if (after !== undefined && before !== undefined) return (after + before) / 2;
+  if (after !== undefined) return after + 1024;
+  if (before !== undefined) return before - 1024;
+  return undefined;
+}
+
+/** Status colors when a status has none of its own: the defaults read as
+ *  states, the rest cycle through theme-friendly hues. */
+function laneTone(statusId: string | null, index: number) {
+  const defaults: Record<string, string> = {
+    todo: "var(--muted-foreground)",
+    in_progress: "var(--intent-info)",
+    done: "var(--intent-success)",
+  };
+  const cycle = [
+    "var(--primary)",
+    "var(--intent-warning)",
+    "var(--intent-info)",
+    "var(--intent-success)",
+  ];
   return (
-    <svg
-      width="13"
-      height="13"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1"
-      strokeLinecap="round"
-    >
-      <circle cx="8" cy="8" r="6" />
-      <circle cx="8" cy="8" r="4" />
-      <path d="M8 4V12M4 8H12M5.2 5.2L10.8 10.8M5.2 10.8L10.8 5.2" />
-    </svg>
+    (statusId && defaults[statusId]) ??
+    (statusId ? cycle[index % cycle.length]! : "var(--muted-foreground)")
   );
 }

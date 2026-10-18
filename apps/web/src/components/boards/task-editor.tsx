@@ -31,6 +31,7 @@ import {
   AssigneeAvatars,
   StatusIcon,
   optionBadgeStyle,
+  PersonAvatar,
   formatDueDate,
   priorityOptions,
 } from "./board-presentation";
@@ -68,11 +69,14 @@ export function TaskEditor({
   uploads,
   syncInterval = 15_000,
   defaultDueDate,
+  defaultStatusId,
 }: {
   state: BoardState;
   task?: BoardTask;
   /** Prefills the due date of a new task, such as a calendar day. */
   defaultDueDate?: string;
+  /** Prefills the status of a new task, such as the lane it was added from. */
+  defaultStatusId?: string;
   pending: boolean;
   syncInterval?: number;
   error?: string;
@@ -91,8 +95,10 @@ export function TaskEditor({
       checklist: task?.checklist ?? [],
       statusId: task
         ? (task.statusId ?? "")
-        : (state.fields.find((field) => field.key === "status")?.options[0]
-            ?.id ?? ""),
+        : (defaultStatusId ??
+          state.fields.find((field) => field.key === "status")?.options[0]
+            ?.id ??
+          ""),
       priority: task?.priority ?? "NORMAL",
       startDate: task?.startDate ?? "",
       dueDate: task?.dueDate ?? defaultDueDate ?? "",
@@ -189,8 +195,8 @@ export function TaskEditor({
     state.fields.find((field) => field.key === "status")?.options ?? [];
   const canComplete = Boolean(
     task?.canEdit &&
-      statusOptions.some((option) => option.id === "done") &&
-      draft.statusId !== "done",
+    statusOptions.some((option) => option.id === "done") &&
+    draft.statusId !== "done",
   );
   const customFields = state.fields.filter(
     (field) => !coreKeys.includes(field.key) && field.type !== "MULTI_SELECT",
@@ -399,6 +405,15 @@ export function TaskEditor({
           }}
         />
         <SheetDescription className="task-sheet-description">
+          {task && (
+            <PersonAvatar
+              name={task.createdByName}
+              image={
+                state.people.find((person) => person.id === task.createdById)
+                  ?.image
+              }
+            />
+          )}
           {task?.archivedAt
             ? "Archived task · read-only"
             : task

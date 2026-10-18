@@ -75,6 +75,35 @@ export function priorityOptions(state: BoardState): BoardOption[] {
   );
 }
 
+/** A single decorative avatar, for when the name is written beside it. */
+export function PersonAvatar({
+  name,
+  image,
+  className = "",
+}: {
+  name: string;
+  image?: string | null;
+  className?: string;
+}) {
+  return (
+    <AvatarPrimitive.Root
+      className={`person-avatar ${className}`}
+      aria-hidden="true"
+    >
+      {image && <AvatarPrimitive.Image src={image} alt="" />}
+      <AvatarPrimitive.Fallback>
+        {name
+          .trim()
+          .split(/\s+/)
+          .slice(0, 2)
+          .map((part) => part[0])
+          .join("")
+          .toUpperCase()}
+      </AvatarPrimitive.Fallback>
+    </AvatarPrimitive.Root>
+  );
+}
+
 export function AssigneeAvatars({
   ids,
   people,

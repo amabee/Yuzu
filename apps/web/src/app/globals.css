@@ -4433,3 +4433,387 @@ fieldset:disabled .task-prop-value:hover {
   order: 3;
   flex-basis: 100%;
 }
+
+/* ---------- Kanban v2: pulse, lanes, cards and dragging ---------- */
+.board-subtitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.person-avatar {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--secondary);
+  box-shadow: 0 0 0 1px var(--border);
+  color: var(--secondary-foreground);
+  font-size: 9px;
+  font-weight: 700;
+}
+.person-avatar img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.task-sheet-description .person-avatar {
+  display: inline-flex;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.board-pulse {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  margin-top: 16px;
+  padding: 12px 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--yuzu) 10%, transparent),
+      transparent 45%
+    ),
+    var(--card);
+}
+.board-pulse-figure {
+  display: grid;
+  line-height: 1.1;
+}
+.board-pulse-figure:last-child {
+  text-align: right;
+}
+.board-pulse-figure b {
+  font-family: var(--font-display, inherit);
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.board-pulse-figure span {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.board-pulse-figure[data-alert] b {
+  color: var(--intent-danger);
+}
+.board-pulse-bar {
+  display: flex;
+  gap: 3px;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+}
+.board-pulse-bar span {
+  flex-basis: 0;
+  min-width: 6px;
+}
+.board-pulse-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 7px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.board-pulse-legend i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 5px;
+  border-radius: 99px;
+}
+
+.board-lanes {
+  gap: 14px;
+  align-items: start;
+}
+.board-lane {
+  position: relative;
+  min-height: 220px;
+  padding: 8px 10px 10px;
+  border: 1px solid transparent;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--muted) 55%, transparent);
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease;
+}
+.board-lane::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 4px;
+  border-radius: 16px 16px 0 0;
+  background: var(--lane-tone);
+}
+.board-lane[data-target] {
+  border-color: color-mix(in srgb, var(--lane-tone) 45%, transparent);
+  background: color-mix(in srgb, var(--lane-tone) 9%, var(--muted));
+}
+.board-lane-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 4px 12px;
+}
+.board-lane-count {
+  padding: 1px 8px;
+  border-radius: 99px;
+  background: var(--card);
+  font-size: 12px;
+  font-weight: 600;
+}
+.board-lane-add {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-left: auto;
+  border-radius: 8px;
+  color: var(--muted-foreground);
+}
+.board-lane-add:hover,
+.board-lane-add-row:hover,
+.board-lane-more:hover {
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+  color: var(--foreground);
+}
+.board-lane-cards {
+  display: grid;
+  gap: 10px;
+}
+.board-lane-add-row,
+.board-lane-more {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  font-weight: 600;
+}
+.board-lane-more {
+  justify-content: center;
+  font-size: 12px;
+}
+.board-lane-empty {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 18px 8px;
+  border: 1.5px dashed color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 12px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  text-align: center;
+}
+.board-lane-empty button {
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.board-lane .task-card {
+  margin: 0;
+  padding: 12px 13px 11px;
+  border-radius: 14px;
+  background: var(--card);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--foreground) 4%, transparent);
+  cursor: grab;
+}
+.task-card[data-done] {
+  opacity: 0.62;
+}
+.task-card[data-done] .task-card-title {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(
+    in srgb,
+    var(--muted-foreground) 60%,
+    transparent
+  );
+}
+.task-card .task-card-heading {
+  display: block;
+  padding-right: 48px;
+}
+.task-card .task-card-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  text-align: left;
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.task-card-action {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  color: var(--muted-foreground);
+}
+.task-card-action:hover {
+  background: color-mix(in srgb, var(--foreground) 7%, transparent);
+  color: var(--foreground);
+}
+.task-card .task-drag-handle {
+  width: 26px;
+  height: 26px;
+  cursor: grab;
+}
+/* Pending approval: a quiet cream chip, no stripes on the card. */
+.task-card .task-card-pending {
+  display: inline-flex;
+  margin: 0 0 8px;
+  padding: 2px 9px;
+  border: none;
+  border-radius: 99px;
+  background: var(--pending);
+  color: var(--pending-foreground);
+  font-size: 11px;
+  font-weight: 700;
+}
+.task-card .task-card-tags,
+.task-card .task-custom-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0 0 6px;
+  padding-right: 48px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.task-card .task-card-tags > span,
+.task-card .task-custom-tags > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+}
+.task-card .task-card-tags + .task-custom-tags {
+  padding-right: 0;
+}
+.task-custom-tags i {
+  width: 7px;
+  height: 7px;
+  border-radius: 99px;
+  background: var(--muted-foreground);
+}
+.task-card .task-card-tags > .task-card-priority {
+  color: var(--priority, var(--intent-danger));
+}
+.task-card .task-custom-tags:empty {
+  display: none;
+}
+.task-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.task-card-meta .task-card-date {
+  padding: 2px 7px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--muted) 85%, transparent);
+  color: inherit;
+}
+.task-card-date[data-state="soon"] {
+  background: color-mix(in srgb, var(--intent-warning) 15%, transparent);
+  color: var(--intent-warning);
+}
+.task-card-date[data-state="late"] {
+  background: color-mix(in srgb, var(--intent-danger) 13%, transparent);
+  color: var(--intent-danger);
+}
+.task-card-meta .task-checklist-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  background: none;
+  font-size: 12px;
+}
+.ring-track,
+.ring-fill {
+  fill: none;
+  stroke-width: 2.5;
+}
+.ring-track {
+  stroke: var(--border);
+}
+.ring-fill {
+  stroke: var(--intent-success);
+  stroke-linecap: round;
+}
+.task-card-meta .task-comment-count,
+.task-card-files {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  color: inherit;
+}
+.task-card-meta .task-comment-count[data-empty] {
+  opacity: 0.55;
+}
+.task-card-people {
+  margin-left: auto;
+}
+
+/* Dragging: the slot the card left behind is the dashed "lands here" spot. */
+.task-card-slot {
+  position: relative;
+  touch-action: manipulation;
+}
+.task-card-slot[data-placeholder] {
+  border-radius: 14px;
+  outline: 2px dashed color-mix(in srgb, var(--lane-tone) 70%, transparent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--lane-tone) 8%, transparent);
+}
+.task-card-slot[data-placeholder] > .task-card {
+  opacity: 0;
+}
+.task-card-lifted .task-card {
+  cursor: grabbing;
+  border-color: color-mix(in srgb, var(--primary) 30%, var(--border));
+  box-shadow:
+    0 26px 40px -16px color-mix(in srgb, var(--foreground) 40%, transparent),
+    0 4px 10px -4px color-mix(in srgb, var(--foreground) 20%, transparent);
+}
+.task-card-lifted .task-card .task-card-actions {
+  display: none;
+}
+@media (max-width: 640px) {
+  .board-pulse {
+    grid-template-columns: auto 1fr;
+  }
+  .board-pulse-track {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}

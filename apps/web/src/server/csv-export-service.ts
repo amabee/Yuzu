@@ -175,7 +175,7 @@ export async function exportBoardCsvForActor(
             },
             take: 100,
             ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+            orderBy: [{ position: "asc" }, { createdAt: "asc" }, { id: "asc" }],
           });
           if (!batch.length) break;
           scanned += batch.length;

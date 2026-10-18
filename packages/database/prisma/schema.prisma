@@ -331,6 +331,8 @@ model Task {
   dueDate       DateTime?         @db.Date
   groupId       String?
   group         BoardGroup?       @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  /// Manual order on the board; lanes and lists sort by it.
+  position      Float             @default(0)
   createdById   String
   createdBy     User              @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
   createKey     String
@@ -350,6 +352,7 @@ model Task {
 
   @@unique([createdById, createKey])
   @@index([boardId, archivedAt, createdAt, id])
+  @@index([boardId, archivedAt, position, id])
   @@index([boardId, archivedAt, dueDate, id])
   @@index([boardId, archivedAt, startDate, id])
   @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Task_name_trgm_idx")
