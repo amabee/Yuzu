@@ -10,14 +10,21 @@ export async function createNotifications(
     boardId: string;
     taskId?: string | null;
     proposalId?: string;
-    kind: "ASSIGNMENT" | "APPROVAL_REQUEST" | "APPROVAL_DECISION" | "MENTION";
+    kind:
+      | "ASSIGNMENT"
+      | "APPROVAL_REQUEST"
+      | "APPROVAL_DECISION"
+      | "MENTION"
+      | "AUTOMATION";
     message: string;
     eventKey: string;
+    /** Automation acts as its creator but may still notify them. */
+    includeActor?: boolean;
   },
 ) {
-  const { recipientIds, ...data } = input;
+  const { recipientIds, includeActor, ...data } = input;
   const recipients = [...new Set(recipientIds)].filter(
-    (id) => id !== input.actorId,
+    (id) => includeActor || id !== input.actorId,
   );
   if (recipients.length)
     await tx.notification.createMany({

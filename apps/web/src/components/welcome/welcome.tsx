@@ -3,7 +3,6 @@
 import { useLayoutEffect, useRef } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { ModeSwitcher } from "@/components/appearance/theme-runtime";
 import { GetStartedButton } from "./get-started-button";
 import { initWelcomeMotion } from "./motion";
 import { HeroMascot, SplashFruit } from "./yuzu-art";
@@ -60,9 +59,6 @@ export function Welcome({ fontClassName }: { fontClassName: string }) {
             />
             <b>yuzu</b>
           </Link>
-          <div className="welcome-mode">
-            <ModeSwitcher />
-          </div>
           <Link className="to-setup" href="/setup">
             Skip to setup
           </Link>

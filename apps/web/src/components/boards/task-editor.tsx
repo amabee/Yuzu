@@ -1,4 +1,5 @@
 "use client";
+import { PauseAlert } from "@/components/pause/pause-alert";
 import { useState } from "react";
 import { createRecordId } from "@yuzu/database/ids";
 import { needsApproval } from "@/lib/approval-rules";
@@ -444,13 +445,32 @@ export function TaskEditor({
           </section>
         )}
         {conflicts.length > 0 && (
-          <section
+          <PauseAlert
+            intent="warning"
             role="status"
-            aria-label="Task edit conflict"
-            className="mb-4 space-y-3 rounded-md border border-border bg-muted/50 p-3 text-sm"
+            label="Task edit conflict"
+            className="task-conflict-alert"
+            title="Someone changed the same fields"
+            action={
+              <span className="flex flex-wrap gap-4">
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => acceptLatest(false)}
+                >
+                  Load latest task
+                </button>
+                <button
+                  type="button"
+                  disabled={pending || !editable}
+                  onClick={() => acceptLatest(true)}
+                >
+                  Keep my edits
+                </button>
+              </span>
+            }
           >
             <p>
-              Someone changed the same fields:{" "}
               {conflicts
                 .map(
                   (key) =>
@@ -460,33 +480,10 @@ export function TaskEditor({
                     "Removed field",
                 )
                 .join(", ")}
-              . Your edits are preserved.
+              . Your edits are kept: load the latest task, or keep your edits to
+              these fields before saving.
             </p>
-            <p className="text-xs text-muted-foreground">
-              Use the latest values, or keep your edits to these fields before
-              saving.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={pending}
-                onClick={() => acceptLatest(false)}
-              >
-                Load latest task
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={pending || !editable}
-                onClick={() => acceptLatest(true)}
-              >
-                Keep my edits
-              </Button>
-            </div>
-          </section>
+          </PauseAlert>
         )}
         <form
           id="task-editor-form"

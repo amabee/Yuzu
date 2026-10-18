@@ -13,11 +13,11 @@ import { stableJson } from "@/lib/approval-rules";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Sheet,
-  SheetContent,
-  SheetTitle,
-  SheetDescription,
-} from "@/components/ui/sheet";
+  PauseButton,
+  PauseClose,
+  PauseDialog,
+  PauseModal,
+} from "@/components/pause/pause-dialog";
 
 type Editor = {
   id: string;
@@ -219,139 +219,157 @@ export function SavedViewControls({
           </p>
         )}
       </div>
-      <Sheet
-        open={!!editor}
+      <PauseModal
+        open={!!editor && !editor.remove}
         onOpenChange={(open) => {
           if (!open && !mutation.isPending) setEditor(null);
         }}
-      >
-        <SheetContent className="p-6">
-          <SheetTitle>
-            {editor?.remove
-              ? "Remove saved view?"
-              : editor?.revision
-                ? "Manage saved view"
-                : "Save this view"}
-          </SheetTitle>
-          <SheetDescription>
-            {editor?.remove
-              ? "Tasks and board data will stay unchanged. Anyone using this shared view will return to the default view on their next visit."
-              : "Keep this layout, search, filters, and sorting ready for next time."}
-          </SheetDescription>
-          {editor &&
-            (editor.remove ? (
-              <div className="space-y-4">
-                <p className="text-sm">Remove “{editor.name}”?</p>
-                <Button
-                  variant="destructive"
-                  disabled={mutation.isPending}
-                  onClick={() =>
-                    mutation.mutate({
-                      action: "remove-view",
-                      data: {
-                        boardId,
-                        id: editor.id,
-                        revision: editor.revision,
-                      },
-                    })
-                  }
-                >
-                  Confirm remove view
-                </Button>
-                <Button
-                  variant="ghost"
-                  disabled={mutation.isPending}
-                  onClick={() => setEditor({ ...editor, remove: false })}
-                >
-                  Keep view
-                </Button>
-              </div>
-            ) : (
-              <form
-                className="space-y-5"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  mutation.mutate({
-                    action: "save-view",
-                    data: {
-                      boardId,
-                      id: editor.id,
-                      name: editor.name,
-                      revision: editor.revision,
-                      visibility: editor.visibility,
-                      config,
-                    },
-                  });
-                }}
+        title={editor?.revision ? "Manage saved view" : "Save this view"}
+        description="Keep this layout, search, filters, and sorting ready for next time."
+        as="form"
+        footer={
+          editor?.visibility === "SHARED"
+            ? "Board managers can update shared views."
+            : "Personal views stay private."
+        }
+        actions={
+          <>
+            {!!editor?.revision && (
+              <PauseButton
+                tone="text"
+                type="button"
+                disabled={mutation.isPending}
+                onClick={() => editor && setEditor({ ...editor, remove: true })}
               >
-                <label className="grid gap-2 text-sm">
-                  View name
-                  <Input
-                    value={editor.name}
-                    maxLength={80}
-                    required
-                    disabled={mutation.isPending}
-                    onChange={(event) =>
-                      setEditor({ ...editor, name: event.target.value })
-                    }
-                    placeholder="e.g. My upcoming tasks"
-                  />
-                </label>
-                <label className="grid gap-2 text-sm">
-                  Who can see it
-                  <select
-                    aria-label="View visibility"
-                    className="task-select"
-                    value={editor.visibility}
-                    disabled={!!editor.revision || mutation.isPending}
-                    onChange={(event) =>
-                      setEditor({
-                        ...editor,
-                        visibility: event.target.value as Editor["visibility"],
-                      })
-                    }
-                  >
-                    <option value="PERSONAL">Only me</option>
-                    {canManage && (
-                      <option value="SHARED">Everyone on this board</option>
-                    )}
-                  </select>
-                </label>
-                <p className="text-xs text-muted-foreground">
-                  {editor.visibility === "SHARED"
-                    ? "Board managers can update this view. Each teammate keeps their own selected view."
-                    : "Your personal views are private, including from other board managers."}
-                </p>
-                <Button
-                  disabled={mutation.isPending || !editor.name.trim()}
-                  type="submit"
-                >
-                  {mutation.isPending
-                    ? "Saving…"
-                    : editor.revision
-                      ? "Update view"
-                      : "Save new view"}
-                </Button>
-                {!!editor.revision && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    disabled={mutation.isPending}
-                    onClick={() => setEditor({ ...editor, remove: true })}
-                  >
-                    <Trash2 size={14} />
-                    Remove view
-                  </Button>
+                <Trash2 size={14} />
+                Remove view
+              </PauseButton>
+            )}
+            <PauseClose asChild>
+              <PauseButton type="button">Cancel</PauseButton>
+            </PauseClose>
+            <PauseButton
+              tone="primary"
+              type="submit"
+              disabled={mutation.isPending || !editor?.name.trim()}
+            >
+              {mutation.isPending
+                ? "Saving…"
+                : editor?.revision
+                  ? "Update view"
+                  : "Save new view"}
+            </PauseButton>
+          </>
+        }
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!editor) return;
+          mutation.mutate({
+            action: "save-view",
+            data: {
+              boardId,
+              id: editor.id,
+              name: editor.name,
+              revision: editor.revision,
+              visibility: editor.visibility,
+              config,
+            },
+          });
+        }}
+      >
+        {editor && (
+          <>
+            <label className="task-field-label">
+              View name
+              <Input
+                value={editor.name}
+                maxLength={80}
+                required
+                data-autofocus
+                disabled={mutation.isPending}
+                onChange={(event) =>
+                  setEditor({ ...editor, name: event.target.value })
+                }
+                placeholder="e.g. My upcoming tasks"
+              />
+            </label>
+            <label className="task-field-label">
+              Who can see it
+              <select
+                aria-label="View visibility"
+                className="task-select"
+                value={editor.visibility}
+                disabled={!!editor.revision || mutation.isPending}
+                onChange={(event) =>
+                  setEditor({
+                    ...editor,
+                    visibility: event.target.value as Editor["visibility"],
+                  })
+                }
+              >
+                <option value="PERSONAL">Only me</option>
+                {canManage && (
+                  <option value="SHARED">Everyone on this board</option>
                 )}
-              </form>
-            ))}
-          {mutation.error && (
-            <p role="alert" className="text-sm text-destructive">
-              {mutation.error.message}
+              </select>
+            </label>
+            <p className="text-xs text-muted-foreground">
+              {editor.visibility === "SHARED"
+                ? "Each teammate keeps their own selected view."
+                : "Your personal views are private, including from other board managers."}
             </p>
-          )}
-        </SheetContent>
-      </Sheet>
+          </>
+        )}
+        {mutation.error && (
+          <p role="alert" className="text-sm text-destructive">
+            {mutation.error.message}
+          </p>
+        )}
+      </PauseModal>
+      <PauseDialog
+        open={!!editor?.remove}
+        onOpenChange={(open) => {
+          if (!open && !mutation.isPending && editor)
+            setEditor({ ...editor, remove: false });
+        }}
+        intent="danger"
+        destructive
+        title="Remove saved view?"
+        description={`“${editor?.name ?? ""}” goes away. Tasks and board data stay unchanged, and anyone using this shared view returns to the default view on their next visit.`}
+        actions={
+          <>
+            <PauseButton
+              disabled={mutation.isPending}
+              onClick={() => editor && setEditor({ ...editor, remove: false })}
+            >
+              Keep view
+            </PauseButton>
+            <PauseButton
+              tone="primary"
+              disabled={mutation.isPending}
+              onClick={() =>
+                editor &&
+                mutation.mutate({
+                  action: "remove-view",
+                  data: {
+                    boardId,
+                    id: editor.id,
+                    revision: editor.revision,
+                  },
+                })
+              }
+            >
+              {mutation.isPending ? "Removing…" : "Confirm remove view"}
+            </PauseButton>
+          </>
+        }
+      >
+        {mutation.error && (
+          <p role="alert" className="text-sm text-destructive">
+            {mutation.error.message}
+          </p>
+        )}
+      </PauseDialog>
     </>
   );
 }

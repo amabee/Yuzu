@@ -1559,20 +1559,12 @@ test("global themes persist, drafts stay scoped, modes remain personal, and prev
     await visitor.request.get("/api/v1/appearance/published")
   ).json();
   expect(Object.keys(publicTheme.data).sort()).toEqual(["revision", "theme"]);
-  await expect(
-    visitor.getByRole("button", { name: "Follow system theme" }),
-  ).toHaveAttribute("aria-pressed", "true");
+  // Sign-in has no theme switcher; it follows the system preference.
+  await expect(visitor.getByRole("switch", { name: "Dark mode" })).toHaveCount(
+    0,
+  );
   await visitor.emulateMedia({ colorScheme: "dark" });
   await expect(visitor.locator("html")).toHaveAttribute("data-mode", "dark");
-  await visitor.emulateMedia({ colorScheme: "light" });
-  await expect(visitor.locator("html")).toHaveAttribute("data-mode", "light");
-  await visitor.getByRole("switch", { name: "Dark mode" }).click();
-  await expect(
-    visitor.getByRole("switch", { name: "Dark mode" }),
-  ).toBeChecked();
-  await expect(
-    visitor.getByRole("switch", { name: "Dark mode" }),
-  ).toBeEnabled();
   await visitor.screenshot({
     path: "../../artifacts/phase-0.5/applied-sign-in-dark.png",
     fullPage: true,
@@ -1605,7 +1597,7 @@ test("global themes persist, drafts stay scoped, modes remain personal, and prev
   await page.getByRole("button", { name: /^Account menu/ }).click();
   await page.getByRole("menuitem", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/sign-in$/);
-  await expect(page.getByRole("switch", { name: "Dark mode" })).toBeChecked();
+  // The personal mode carries over to sign-in, which has no switcher.
   await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
 });
 
@@ -5603,7 +5595,7 @@ test("comment mentions notify live, edits retain history and manager removal hid
       .getByRole("button", { name: "Post comment", exact: true })
       .click();
     await expect(
-      team.backup.page.getByRole("link", {
+      team.backup.page.getByRole("button", {
         name: "Notifications (1 unread)",
         exact: true,
       }),
@@ -6574,7 +6566,7 @@ test("notification inbox delivers assignments live, persists read state and open
     // Same intent retry must not create another inbox record.
     expect((await postBoard(page, "create-task", input)).status()).toBe(200);
     await expect(
-      team.author.page.getByRole("link", {
+      team.author.page.getByRole("button", {
         name: "Notifications (1 unread)",
         exact: true,
       }),
@@ -6586,7 +6578,7 @@ test("notification inbox delivers assignments live, persists read state and open
     const mirror = await mirrorContext.newPage();
     await mirror.goto("/notifications");
     await expect(
-      mirror.getByRole("link", {
+      mirror.getByRole("button", {
         name: "Notifications (1 unread)",
         exact: true,
       }),
@@ -6621,7 +6613,7 @@ test("notification inbox delivers assignments live, persists read state and open
       .poll(async () => (await readInbox(team.author.page)).unreadCount)
       .toBe(0);
     await expect(
-      mirror.getByRole("link", { name: "Notifications", exact: true }),
+      mirror.getByRole("button", { name: "Notifications", exact: true }),
     ).toBeVisible();
     await expect(
       team.author.page.getByRole("button", {

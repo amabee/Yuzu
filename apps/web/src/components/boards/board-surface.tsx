@@ -1,4 +1,5 @@
 "use client";
+import { PauseSheetDecor } from "@/components/pause/pause-sheet";
 import { ExportCsv } from "./export-csv";
 import { ImportCsv } from "./import-csv";
 import { matchesBoardView } from "@/lib/board-view";
@@ -53,6 +54,7 @@ import {
 import { BoardCalendarView } from "./board-calendar";
 import { BoardKanban, type KanbanPlacement } from "./board-kanban";
 import { BoardPulse } from "./board-pulse";
+import { BoardAutomations } from "./board-automations";
 import { PauseSlice } from "@/components/pause/decor";
 import { PauseAlert } from "@/components/pause/pause-alert";
 import { BoardTimelineView } from "./board-timeline";
@@ -792,6 +794,7 @@ export function BoardSurface({
             <Info size={15} />
             <span>Board details</span>
           </Button>
+          <BoardAutomations state={state} />
         </div>
       </div>
       {mutation.error && !selected && !creating && (
@@ -1184,91 +1187,95 @@ export function BoardSurface({
         </nav>
       )}
       <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
-        <SheetContent className="board-details-panel">
-          <span className="board-detail-eyebrow">Saved board</span>
-          <SheetTitle>{name}</SheetTitle>
-          <SheetDescription>
-            {info?.workspace ?? "Your workspace"}
-          </SheetDescription>
-          <div className="board-details-meta">
-            <div>
-              <UserRound size={16} />
-              <span>
-                Created by<b>{info?.creator ?? "Your team"}</b>
-              </span>
-            </div>
-            {info && (
+        <SheetContent className="pause-sheet board-details-sheet">
+          <PauseSheetDecor />
+          <div className="pause-sheet-body board-details-body">
+            <span className="board-detail-eyebrow">Saved board</span>
+            <SheetTitle>{name}</SheetTitle>
+            <SheetDescription>
+              {info?.workspace ?? "Your workspace"}
+            </SheetDescription>
+            <div className="board-details-meta">
               <div>
-                <CalendarDays size={16} />
+                <UserRound size={16} />
                 <span>
-                  Created
-                  <b>
-                    {new Date(info.createdAt).toLocaleDateString("en-GB", {
-                      timeZone: "UTC",
-                      year: "numeric",
-                      month: "short",
-                      day: "numeric",
-                    })}
-                  </b>
+                  Created by<b>{info?.creator ?? "Your team"}</b>
                 </span>
               </div>
-            )}
-          </div>
-          <section>
-            <h3>
-              <ListChecks size={16} />
-              Board structure
-            </h3>
-            <p className="mt-2 text-xs leading-6 text-muted-foreground">
-              Configure fields and status order here. Open a task to edit its
-              values.
-            </p>
-            <dl className="board-field-list">
-              {fields.map((field) => (
-                <div key={field.id}>
-                  <dt>{field.name}</dt>
-                  <dd>
-                    {field.type?.toLowerCase().replaceAll("_", " ") ?? "Field"}
-                  </dd>
+              {info && (
+                <div>
+                  <CalendarDays size={16} />
+                  <span>
+                    Created
+                    <b>
+                      {new Date(info.createdAt).toLocaleDateString("en-GB", {
+                        timeZone: "UTC",
+                        year: "numeric",
+                        month: "short",
+                        day: "numeric",
+                      })}
+                    </b>
+                  </span>
                 </div>
-              ))}
-              {!fields.length && (
-                <p className="text-sm text-muted-foreground">
-                  No fields configured.
-                </p>
-              )}
-            </dl>
-          </section>
-          <section>
-            <h3>
-              <Layers3 size={16} />
-              Status lanes
-            </h3>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {statuses.map((status) => (
-                <span key={status} className="board-detail-tag">
-                  {status}
-                </span>
-              ))}
-              {!statuses.length && (
-                <p className="text-sm text-muted-foreground">
-                  No statuses configured.
-                </p>
               )}
             </div>
-          </section>
-          {mutation.error && (
-            <p role="alert" className="text-sm text-destructive">
-              {mutation.error.message}
-            </p>
-          )}
-          {state.canManage && (
-            <BoardManagement state={state} pending={busy} onAction={act} />
-          )}
-          <div className="mt-auto border-t pt-5">
-            <Button className="w-full" onClick={() => setDetailsOpen(false)}>
-              Back to board
-            </Button>
+            <section>
+              <h3>
+                <ListChecks size={16} />
+                Board structure
+              </h3>
+              <p className="mt-2 text-xs leading-6 text-muted-foreground">
+                Configure fields and status order here. Open a task to edit its
+                values.
+              </p>
+              <dl className="board-field-list">
+                {fields.map((field) => (
+                  <div key={field.id}>
+                    <dt>{field.name}</dt>
+                    <dd>
+                      {field.type?.toLowerCase().replaceAll("_", " ") ??
+                        "Field"}
+                    </dd>
+                  </div>
+                ))}
+                {!fields.length && (
+                  <p className="text-sm text-muted-foreground">
+                    No fields configured.
+                  </p>
+                )}
+              </dl>
+            </section>
+            <section>
+              <h3>
+                <Layers3 size={16} />
+                Status lanes
+              </h3>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {statuses.map((status) => (
+                  <span key={status} className="board-detail-tag">
+                    {status}
+                  </span>
+                ))}
+                {!statuses.length && (
+                  <p className="text-sm text-muted-foreground">
+                    No statuses configured.
+                  </p>
+                )}
+              </div>
+            </section>
+            {mutation.error && (
+              <p role="alert" className="text-sm text-destructive">
+                {mutation.error.message}
+              </p>
+            )}
+            {state.canManage && (
+              <BoardManagement state={state} pending={busy} onAction={act} />
+            )}
+            <div className="mt-auto border-t pt-5">
+              <Button className="w-full" onClick={() => setDetailsOpen(false)}>
+                Back to board
+              </Button>
+            </div>
           </div>
         </SheetContent>
       </Sheet>

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import {
   DndContext,
@@ -106,6 +106,9 @@ export function BoardKanban({
     placement: KanbanPlacement | null;
   }) => boolean;
 }) {
+  // dnd-kit numbers its accessibility ids with a module counter, which differs
+  // between the server and browser renders; a React id keeps them in step.
+  const dndId = useId();
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, {
@@ -292,6 +295,7 @@ export function BoardKanban({
 
   return (
     <DndContext
+      id={dndId}
       sensors={sensors}
       collisionDetection={closestCorners}
       onDragStart={handleStart}

@@ -51,6 +51,8 @@ export function PauseAlert({
   onDismiss,
   dismissLabel = "Dismiss",
   className = "",
+  role,
+  label,
 }: {
   intent?: PauseIntent;
   title?: string;
@@ -60,11 +62,19 @@ export function PauseAlert({
   onDismiss?: () => void;
   dismissLabel?: string;
   className?: string;
+  /** Overrides the default: alert for warnings and dangers, status otherwise. */
+  role?: "alert" | "status";
+  /** An accessible name when the title alone doesn't identify the alert. */
+  label?: string;
 }) {
   const Icon = icons[intent];
   return (
     <div
-      role={intent === "danger" || intent === "warning" ? "alert" : "status"}
+      role={
+        role ??
+        (intent === "danger" || intent === "warning" ? "alert" : "status")
+      }
+      aria-label={label}
       className={`pause-alert ${className}`}
       data-intent={intent}
       data-compact={!title || undefined}
