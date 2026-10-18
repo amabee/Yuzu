@@ -530,8 +530,9 @@ const columns = [
   },
   { key: "assignees", name: "Assignees", type: "PEOPLE", position: 2 },
   { key: "priority", name: "Priority", type: "PRIORITY", position: 3 },
-  { key: "due_date", name: "Due date", type: "DATE", position: 4 },
-  { key: "description", name: "Description", type: "LONG_TEXT", position: 5 },
+  { key: "start_date", name: "Start date", type: "DATE", position: 4 },
+  { key: "due_date", name: "Due date", type: "DATE", position: 5 },
+  { key: "description", name: "Description", type: "LONG_TEXT", position: 6 },
 ];
 export async function completeSetup(input: unknown, headers: Headers) {
   const data = namesSchema.parse(input);

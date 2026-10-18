@@ -186,6 +186,18 @@ function options(board: { columns: { key: string; config: unknown }[] }) {
     board.columns.find((field) => field.key === "status")?.config,
   );
 }
+/** A task can't start after it is due; the database enforces the same rule. */
+function checkDateOrder(startDate: string | null, dueDate: string | null) {
+  if (startDate && dueDate && startDate > dueDate)
+    throw new SetupError(
+      422,
+      "START_AFTER_DUE",
+      "The start date must be on or before the due date.",
+    );
+}
+const toDate = (value: string | null | undefined) =>
+  value ? new Date(`${value}T00:00:00Z`) : null;
+
 export function validateCore(
   changes: {
     statusId?: string | null;
@@ -396,6 +408,7 @@ export function snapshot(task: LoadedTask) {
       checklist: checklistSchema.parse(task.checklist),
       statusId: task.statusId,
       priority: task.priority,
+      startDate: task.startDate?.toISOString().slice(0, 10) ?? null,
       dueDate: task.dueDate?.toISOString().slice(0, 10) ?? null,
       groupId: task.groupId,
       assigneeIds: task.assignees.map((person) => person.userId),
@@ -723,6 +736,7 @@ export async function createTaskRecord(
 ) {
   validateCore(body, context.board, people);
   validateValues(body.fieldValues, context.board, people);
+  checkDateOrder(body.startDate ?? null, body.dueDate ?? null);
   const task = await tx.task.create({
     data: {
       boardId: context.board.id,
@@ -731,7 +745,8 @@ export async function createTaskRecord(
       checklist: body.checklist ?? [],
       statusId: body.statusId,
       priority: body.priority ?? "NORMAL",
-      dueDate: body.dueDate ? new Date(`${body.dueDate}T00:00:00Z`) : null,
+      startDate: toDate(body.startDate),
+      dueDate: toDate(body.dueDate),
       groupId: body.groupId,
       createdById: authorId,
       createKey: body.createKey,
@@ -781,15 +796,20 @@ export async function applyTaskRecord(
   if (changes) {
     validateCore(changes, context.board, people);
     validateValues(changes.fieldValues, context.board, people);
+    // Compare against the saved value of whichever date isn't changing.
+    checkDateOrder(
+      changes.startDate !== undefined ? changes.startDate : before.startDate,
+      changes.dueDate !== undefined ? changes.dueDate : before.dueDate,
+    );
   }
-  const { assigneeIds, fieldValues, dueDate, ...scalar } = changes ?? {};
+  const { assigneeIds, fieldValues, dueDate, startDate, ...scalar } =
+    changes ?? {};
   const updated = await tx.task.updateMany({
     where: { id: task.id, revision: task.revision },
     data: {
       ...scalar,
-      ...(dueDate !== undefined
-        ? { dueDate: dueDate ? new Date(`${dueDate}T00:00:00Z`) : null }
-        : {}),
+      ...(dueDate !== undefined ? { dueDate: toDate(dueDate) } : {}),
+      ...(startDate !== undefined ? { startDate: toDate(startDate) } : {}),
       ...(action === "archive"
         ? { archivedAt: new Date() }
         : action === "restore"
@@ -950,6 +970,7 @@ export async function createTaskInTransaction(
     description: body.description ?? "",
     checklist: body.checklist ?? [],
     priority: body.priority ?? "NORMAL",
+    startDate: body.startDate ?? null,
     dueDate: body.dueDate ?? null,
     assigneeIds: body.assigneeIds ?? [],
     fieldValues: body.fieldValues ?? {},
@@ -1141,12 +1162,13 @@ export async function manageBoard(
         },
         { key: "assignees", name: "Assignees", type: "PEOPLE", position: 2 },
         { key: "priority", name: "Priority", type: "PRIORITY", position: 3 },
-        { key: "due_date", name: "Due date", type: "DATE", position: 4 },
+        { key: "start_date", name: "Start date", type: "DATE", position: 4 },
+        { key: "due_date", name: "Due date", type: "DATE", position: 5 },
         {
           key: "description",
           name: "Description",
           type: "LONG_TEXT",
-          position: 5,
+          position: 6,
         },
       ];
       return tx.board.create({

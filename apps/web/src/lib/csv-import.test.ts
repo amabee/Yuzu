@@ -39,6 +39,41 @@ const context: ImportContext = {
   people: [{ id, name: "Angel" }],
 };
 describe("CSV import parsing and mapping", () => {
+  it("imports start dates and rejects rows that start after they're due", () => {
+    const columns = [
+      { column: 0, target: "name" },
+      { column: 1, target: "start_date" },
+      { column: 2, target: "due_date" },
+    ];
+    const ok = mapImportRow(
+      ["Plan", "2026-10-01", "2026-10-05"],
+      columns,
+      context,
+      id,
+      () => id,
+    );
+    expect(ok.issues).toEqual([]);
+    expect(ok.input).toMatchObject({
+      startDate: "2026-10-01",
+      dueDate: "2026-10-05",
+    });
+    const late = mapImportRow(
+      ["Plan", "2026-10-09", "2026-10-05"],
+      columns,
+      context,
+      id,
+      () => id,
+    );
+    expect(late.issues).toContain(
+      "Start date: Must be on or before the due date.",
+    );
+    expect(
+      suggestImportMapping(["Start date", "Due date"], context).map(
+        (item) => item.target,
+      ),
+    ).toEqual(["start_date", "due_date"]);
+  });
+
   it("uses saved priority labels and preserves custom text whitespace", () => {
     const model = {
       ...context,

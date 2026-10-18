@@ -221,7 +221,8 @@ test("owner setup resumes, verifies actual receipt, and completes exactly once",
   expect(await db.user.count()).toBe(1);
   expect(await db.workspace.count()).toBe(1);
   expect(await db.board.count()).toBe(1);
-  expect(await db.boardColumn.count()).toBe(6);
+  // Name, status, assignees, priority, start date, due date, description.
+  expect(await db.boardColumn.count()).toBe(7);
   const uuid7 =
     /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
   const generatedRecords = await Promise.all([

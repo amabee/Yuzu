@@ -1229,6 +1229,15 @@ export function BoardSurface({
                             ),
                           )}
                         </select>
+                      ) : field.key === "start_date" ? (
+                        task.startDate ? (
+                          <span className="inline-flex items-center gap-2">
+                            <CalendarDays size={14} />
+                            {formatDueDate(task.startDate)}
+                          </span>
+                        ) : (
+                          "—"
+                        )
                       ) : field.key === "due_date" ? (
                         task.dueDate ? (
                           <span className="inline-flex items-center gap-2">

@@ -152,6 +152,7 @@ export async function exportBoardCsvForActor(
               description: true,
               statusId: true,
               priority: true,
+              startDate: true,
               dueDate: true,
               groupId: true,
               archivedAt: true,
@@ -186,6 +187,7 @@ export async function exportBoardCsvForActor(
             const task: CsvTask = {
               ...record,
               archivedAt: record.archivedAt?.toISOString() ?? null,
+              startDate: record.startDate?.toISOString().slice(0, 10) ?? null,
               dueDate: record.dueDate?.toISOString().slice(0, 10) ?? null,
               createdByName: record.createdBy.name,
               assigneeIds: record.assignees.map((person) => person.userId),

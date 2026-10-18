@@ -39,6 +39,7 @@ export const coreKeys = [
   "status",
   "assignees",
   "priority",
+  "start_date",
   "due_date",
 ];
 const names = z.string().trim().min(1).max(200);
@@ -72,6 +73,7 @@ const changes = z
     checklist: checklistSchema,
     statusId: z.string().max(100).nullable(),
     priority: z.enum(priorities),
+    startDate: dateOnly.nullable(),
     dueDate: dateOnly.nullable(),
     groupId: recordId.nullable(),
     assigneeIds: ids,
@@ -177,6 +179,7 @@ export type BoardTask = {
   checklist: TaskChecklist;
   statusId: string | null;
   priority: string;
+  startDate: string | null;
   dueDate: string | null;
   groupId: string | null;
   createdById: string;
@@ -251,6 +254,8 @@ const baseBoardStateSchema = z.object({
       checklist: checklistSchema.default([]),
       statusId: z.string().nullable(),
       priority: z.string(),
+      // Older cached payloads and fixtures may lack the field.
+      startDate: z.string().nullable().default(null),
       dueDate: z.string().nullable(),
       groupId: recordId.nullable(),
       createdById: personId,

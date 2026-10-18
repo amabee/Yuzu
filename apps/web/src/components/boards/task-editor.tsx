@@ -78,6 +78,7 @@ export function TaskEditor({
         : (state.fields.find((field) => field.key === "status")?.options[0]
             ?.id ?? ""),
       priority: task?.priority ?? "NORMAL",
+      startDate: task?.startDate ?? "",
       dueDate: task?.dueDate ?? defaultDueDate ?? "",
       groupId: task ? (task.groupId ?? "") : (state.groups[0]?.id ?? ""),
       assigneeIds: task?.assigneeIds ?? ([] as string[]),
@@ -95,6 +96,7 @@ export function TaskEditor({
           {
             ...localDraft,
             statusId: localDraft.statusId || null,
+            startDate: localDraft.startDate || null,
             dueDate: localDraft.dueDate || null,
             groupId: localDraft.groupId || null,
           },
@@ -105,11 +107,15 @@ export function TaskEditor({
     ? {
         ...merged.draft,
         statusId: merged.draft.statusId ?? "",
+        startDate: merged.draft.startDate ?? "",
         dueDate: merged.draft.dueDate ?? "",
         groupId: merged.draft.groupId ?? "",
       }
     : localDraft;
   const conflicts = merged?.conflicts ?? [];
+  const dateOrderInvalid = Boolean(
+    draft.startDate && draft.dueDate && draft.startDate > draft.dueDate,
+  );
   const requiresApproval = needsApproval(
     state.approvalPolicy,
     task ? "UPDATE" : "CREATE",
@@ -128,6 +134,7 @@ export function TaskEditor({
     checklist: "Checklist",
     statusId: "Status",
     priority: "Priority",
+    startDate: "Start date",
     dueDate: "Target date",
     groupId: "Group",
     assigneeIds: "Assignees",
@@ -140,6 +147,7 @@ export function TaskEditor({
     store.setState({
       ...next,
       statusId: next.statusId ?? "",
+      startDate: next.startDate ?? "",
       dueDate: next.dueDate ?? "",
       groupId: next.groupId ?? "",
     });
@@ -170,6 +178,7 @@ export function TaskEditor({
     ...draft,
     statusId: draft.statusId || null,
     groupId: draft.groupId || null,
+    startDate: draft.startDate || null,
     dueDate: draft.dueDate || null,
   });
   const editDraft = (patch: Partial<typeof localDraft>) => {
@@ -180,6 +189,7 @@ export function TaskEditor({
         {
           ...current,
           statusId: current.statusId || null,
+          startDate: current.startDate || null,
           dueDate: current.dueDate || null,
           groupId: current.groupId || null,
         },
@@ -187,6 +197,9 @@ export function TaskEditor({
         {
           ...patch,
           ...("statusId" in patch ? { statusId: patch.statusId || null } : {}),
+          ...("startDate" in patch
+            ? { startDate: patch.startDate || null }
+            : {}),
           ...("dueDate" in patch ? { dueDate: patch.dueDate || null } : {}),
           ...("groupId" in patch ? { groupId: patch.groupId || null } : {}),
         },
@@ -195,6 +208,7 @@ export function TaskEditor({
       store.setState({
         ...edited.local,
         statusId: edited.local.statusId ?? "",
+        startDate: edited.local.startDate ?? "",
         dueDate: edited.local.dueDate ?? "",
         groupId: edited.local.groupId ?? "",
       });
@@ -680,16 +694,42 @@ export function TaskEditor({
                 </select>
               </label>
               <label className="task-field-label">
+                Start date
+                <Input
+                  aria-label="Task start date"
+                  type="date"
+                  value={draft.startDate}
+                  max={draft.dueDate || undefined}
+                  aria-invalid={dateOrderInvalid || undefined}
+                  aria-describedby={
+                    dateOrderInvalid ? "task-date-order" : undefined
+                  }
+                  onChange={(event) =>
+                    editDraft({ startDate: event.target.value })
+                  }
+                />
+              </label>
+              <label className="task-field-label">
                 Due date
                 <Input
                   aria-label="Task due date"
                   type="date"
                   value={draft.dueDate}
+                  min={draft.startDate || undefined}
                   onChange={(event) =>
                     editDraft({ dueDate: event.target.value })
                   }
                 />
               </label>
+              {dateOrderInvalid && (
+                <p
+                  id="task-date-order"
+                  role="alert"
+                  className="text-sm text-destructive sm:col-span-2"
+                >
+                  The start date must be on or before the due date.
+                </p>
+              )}
               <label className="task-field-label">
                 Group
                 <select
@@ -1034,6 +1074,7 @@ export function TaskEditor({
             disabled={
               pending ||
               conflicts.length > 0 ||
+              dateOrderInvalid ||
               Boolean(task && !Object.keys(merged?.changes ?? {}).length)
             }
             className="flex-1"
@@ -1054,7 +1095,7 @@ export function TaskEditor({
           statusOptions.some((option) => option.id === "done") &&
           draft.statusId !== "done" && (
             <Button
-              disabled={pending || conflicts.length > 0}
+              disabled={pending || conflicts.length > 0 || dateOrderInvalid}
               variant="outline"
               onClick={() =>
                 onSubmit({
