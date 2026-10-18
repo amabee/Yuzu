@@ -51,6 +51,7 @@ import {
   UserRound,
   CalendarDays,
   GanttChart,
+  Hourglass,
   GripVertical,
   Archive,
   MessageSquare,
@@ -644,7 +645,7 @@ export function BoardSurface({
         </Button>
       </div>
       {(state.pendingApprovalCount ?? state.pendingApprovals.length) > 0 && (
-        <div className="mb-2 flex items-center justify-between gap-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs">
+        <div className="approval-banner">
           <span>
             {state.pendingApprovalCount ?? state.pendingApprovals.length}{" "}
             pending approval{" "}
@@ -1009,10 +1010,8 @@ export function BoardSurface({
                       {state.pendingApprovals.some(
                         (proposal) => proposal.taskId === task.id,
                       ) && (
-                        <Link
-                          className="mb-2 block text-xs text-muted-foreground hover:text-primary"
-                          href="/approvals"
-                        >
+                        <Link className="task-card-pending" href="/approvals">
+                          <Hourglass size={12} aria-hidden="true" />
                           Awaiting approval
                         </Link>
                       )}

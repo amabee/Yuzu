@@ -3304,3 +3304,182 @@ body:has(:is(.task-sheet-panel, .export-sheet-panel)[data-state="open"])
     display: none;
   }
 }
+
+/* ---------- Board page (redesign) ---------- */
+.board-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 16px;
+  margin-bottom: 18px;
+}
+.board-title {
+  font-family: var(--theme-heading, inherit);
+  font-size: clamp(1.8rem, 3.4vw, 2.6rem);
+  font-weight: 800;
+  letter-spacing: -0.045em;
+  line-height: 1.04;
+  overflow-wrap: anywhere;
+}
+.board-subtitle {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+/* View tabs: quiet underlined text, one weight heavier when chosen. */
+.board-view-tabs {
+  gap: 2px;
+  margin-top: 14px;
+  padding-bottom: 0;
+}
+.board-view-tabs button {
+  height: 40px;
+  margin-bottom: -1px;
+  padding-inline: 12px;
+  border-bottom-width: 2px;
+  color: var(--muted-foreground);
+  font-size: 14px;
+}
+.board-view-tabs button:hover {
+  background: transparent;
+  color: var(--foreground);
+}
+.board-view-tabs button[aria-pressed="true"] {
+  border-bottom-color: var(--foreground);
+  color: var(--foreground);
+  font-weight: 600;
+}
+.board-toolbar {
+  padding: 14px 0;
+}
+/* Pending approvals share the cream caution-tape signature. */
+.approval-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-top: 14px;
+  padding: 9px 14px;
+  border-radius: 999px;
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--pending) 0 10px,
+    color-mix(in srgb, var(--pending) 75%, var(--pending-foreground)) 10px 12px
+  );
+  color: var(--pending-foreground);
+  font-size: 13px;
+  font-weight: 600;
+}
+.approval-banner a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+/* Lanes sit directly on the panel; the status color lives in the header. */
+.board-lanes {
+  gap: 16px;
+}
+.board-lane {
+  padding: 4px 2px;
+  border: none;
+  background: transparent;
+}
+.board-lane-header {
+  padding: 4px 6px 12px;
+}
+.board-lane-header h2 {
+  font-size: 15px;
+}
+.board-lane-header > svg {
+  color: var(--lane-tone);
+}
+.board-lane-count {
+  margin-left: 2px;
+  padding: 0;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 500;
+}
+.board-lane-drop {
+  border-radius: calc(var(--radius) + 2px);
+  background: color-mix(in srgb, var(--primary) 6%, transparent);
+}
+.task-card {
+  margin-bottom: 10px;
+  padding: 14px 14px 12px;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 2px);
+  overflow: hidden;
+}
+.task-card:hover {
+  border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+}
+.task-card:focus-within {
+  border-color: var(--primary);
+}
+.task-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+/* A change waiting for approval: a striped footer across the card. */
+.task-card-pending {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px -14px -12px;
+  padding: 8px 14px;
+  border-top: 1px solid
+    color-mix(in srgb, var(--pending-foreground) 15%, var(--pending));
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--pending) 0 10px,
+    color-mix(in srgb, var(--pending) 75%, var(--pending-foreground)) 10px 12px
+  );
+  color: var(--pending-foreground);
+  font-size: 12px;
+  font-weight: 600;
+}
+.task-card-pending:hover {
+  text-decoration: underline;
+}
+@media (max-width: 640px) {
+  .board-view-tabs {
+    overflow-x: auto;
+  }
+  .board-view-tabs button {
+    flex-shrink: 0;
+  }
+}
+/* Card tools float in the corner and appear on hover or keyboard focus, so
+   the title leads; touch screens always show them. */
+.task-card {
+  position: relative;
+}
+.task-card .task-card-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  gap: 2px;
+  margin: 0;
+  min-height: 0;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--card);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.task-card:hover .task-card-actions,
+.task-card:focus-within .task-card-actions {
+  opacity: 1;
+}
+.task-card .task-card-heading {
+  padding-right: 52px;
+}
+@media (hover: none) {
+  .task-card .task-card-actions {
+    opacity: 1;
+  }
+}

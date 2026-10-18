@@ -6,7 +6,6 @@ import { boardScope, isAdministrator } from "@/server/team-access";
 import { visibleProjects } from "@/server/project-service";
 import { MoveBoard } from "@/components/projects/move-board";
 import { BoardSurface } from "@/components/boards/board-surface";
-import { Rocket } from "lucide-react";
 import { headers } from "next/headers";
 import { boardState } from "@/server/board-service";
 import { z } from "zod";
@@ -119,14 +118,12 @@ export default async function BoardPage({
           Archived project, read-only
         </p>
       )}
-      <div className="project-heading">
-        <div className="project-symbol">
-          <Rocket size={27} />
-        </div>
+      <div className="board-heading">
         <div className="min-w-0 flex-1">
-          <h1 className="text-2xl sm:text-3xl">{board.name}</h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            Plan, organize, and keep your team’s work in view.
+          <h1 className="board-title">{board.name}</h1>
+          <p className="board-subtitle">
+            {board.project ? `${board.project.name} · ` : ""}
+            Created by {board.createdBy.name}
           </p>
         </div>
         {canMove && (
@@ -136,13 +133,6 @@ export default async function BoardPage({
             targets={moveTargets}
           />
         )}
-        <div className="project-owner">
-          <span>{board.createdBy.name.charAt(0).toUpperCase()}</span>
-          <div>
-            <small>Created by</small>
-            <b>{board.createdBy.name}</b>
-          </div>
-        </div>
       </div>
       <BoardSurface
         key={board.id}
