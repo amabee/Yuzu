@@ -257,7 +257,8 @@ test("owner setup resumes, verifies actual receipt, and completes exactly once",
   const publicState = await anonymous.json();
   expect(publicState.data.authorized).toBe(false);
   expect(publicState.data.settings).toBeUndefined();
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: /^Account menu/ }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/sign-in$/);
   await page.getByLabel("Email address").fill("owner@example.test");
   await page
@@ -265,7 +266,7 @@ test("owner setup resumes, verifies actual receipt, and completes exactly once",
     .fill("test-owner-password-123");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Good work starts here." }),
+    page.getByRole("heading", { name: /^Good (morning|afternoon|evening), / }),
   ).toBeVisible();
   expect(errors).toEqual([]);
 });
@@ -817,7 +818,7 @@ test("password recovery works from email and revokes every existing session", as
       .getByRole("button", { name: "Sign in", exact: true })
       .click();
     await expect(
-      recoveryPage.getByRole("heading", { name: "Good work starts here." }),
+      recoveryPage.getByRole("heading", { name: /^Good (morning|afternoon|evening), / }),
     ).toBeVisible();
     expect(
       (await db.user.findUniqueOrThrow({ where: { id: owner.id } })).role,
@@ -1597,7 +1598,10 @@ test("global themes persist, drafts stay scoped, modes remain personal, and prev
     path: "../../artifacts/phase-0.5/applied-editor-mobile.png",
     fullPage: true,
   });
-  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  // On phones the account menu lives in the navigation drawer.
+  await page.getByRole("button", { name: "Toggle navigation" }).click();
+  await page.getByRole("button", { name: /^Account menu/ }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/sign-in$/);
   await expect(page.getByRole("switch", { name: "Dark mode" })).toBeChecked();
   await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
@@ -1693,7 +1697,7 @@ test("appearance writes reject members, malformed themes, cross-origin requests 
   expect((await post("publish", { revision: 1, theme })).status()).toBe(200);
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "Good work starts here." }),
+    page.getByRole("heading", { name: /^Good (morning|afternoon|evening), / }),
   ).toBeVisible();
   const computed = await page.evaluate(() => ({
     blur: getComputedStyle(document.querySelector(".yuzu-topbar")!)
@@ -1718,7 +1722,7 @@ test("shadcn sidebar collapses and theme switch animates with accessible fallbac
   await readyTeam(page);
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "Good work starts here." }),
+    page.getByRole("heading", { name: /^Good (morning|afternoon|evening), / }),
   ).toBeVisible();
   const sidebar = page.locator("[data-collapsible]");
   await expect(sidebar).toHaveAttribute("data-state", "expanded");
@@ -4008,7 +4012,7 @@ test("standalone offline recovery shares one server probe and returns to the wor
     .click();
   await expect(page).toHaveURL("http://127.0.0.1:3100/");
   await expect(
-    page.getByRole("heading", { name: "Good work starts here." }),
+    page.getByRole("heading", { name: /^Good (morning|afternoon|evening), / }),
   ).toBeVisible();
   expect(probes).toBe(1);
 });
@@ -4050,7 +4054,7 @@ test("maintenance routes members to recovery, blocks API access, and keeps admin
     await team.author.page.getByRole("link", { name: "Check again" }).click();
     await expect(team.author.page).toHaveURL("http://127.0.0.1:3100/");
     await expect(
-      team.author.page.getByRole("heading", { name: "Good work starts here." }),
+      team.author.page.getByRole("heading", { name: /^Good (morning|afternoon|evening), / }),
     ).toBeVisible();
   } finally {
     await db.installationSettings.update({

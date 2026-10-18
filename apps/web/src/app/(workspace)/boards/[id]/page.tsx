@@ -1,12 +1,12 @@
 import { notFound } from "next/navigation";
+import { PageCrumbs } from "@/components/page-crumbs";
 import { getDatabase } from "@yuzu/database";
 import { workspaceContext } from "@/server/workspace-access";
 import { boardScope, isAdministrator } from "@/server/team-access";
 import { visibleProjects } from "@/server/project-service";
 import { MoveBoard } from "@/components/projects/move-board";
 import { BoardSurface } from "@/components/boards/board-surface";
-import Link from "next/link";
-import { Rocket, ChevronRight } from "lucide-react";
+import { Rocket } from "lucide-react";
 import { headers } from "next/headers";
 import { boardState } from "@/server/board-service";
 import { z } from "zod";
@@ -92,31 +92,33 @@ export default async function BoardPage({
   });
   return (
     <div>
-      <nav aria-label="Breadcrumb" className="workspace-breadcrumb">
-        <Link href="/boards">{board.workspace.name}</Link>
-        <ChevronRight size={13} />
-        {board.project && (
-          <>
-            <Link
-              href={`/projects/${board.project.id}`}
-              className="flex items-center gap-1.5"
-            >
-              <ProjectBadge
-                name={board.project.name}
-                color={board.project.color}
-              />
-              {board.project.name}
-            </Link>
-            <ChevronRight size={13} />
-          </>
-        )}
-        <span aria-current="page">{board.name}</span>
-        {board.project?.archivedAt && (
-          <span className="rounded-full bg-muted px-2 py-0.5">
-            Archived project, read-only
-          </span>
-        )}
-      </nav>
+      <PageCrumbs
+        items={[
+          { label: board.workspace.name, href: "/boards" },
+          ...(board.project
+            ? [
+                {
+                  label: (
+                    <span className="flex items-center gap-1.5">
+                      <ProjectBadge
+                        name={board.project.name}
+                        color={board.project.color}
+                      />
+                      {board.project.name}
+                    </span>
+                  ),
+                  href: `/projects/${board.project.id}`,
+                },
+              ]
+            : []),
+          { label: board.name },
+        ]}
+      />
+      {board.project?.archivedAt && (
+        <p className="mb-4 inline-flex rounded-full bg-muted px-3 py-1 text-xs">
+          Archived project, read-only
+        </p>
+      )}
       <div className="project-heading">
         <div className="project-symbol">
           <Rocket size={27} />

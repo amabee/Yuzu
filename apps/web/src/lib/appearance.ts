@@ -35,6 +35,9 @@ export function themeVariables(
       : "#101820";
   return {
     "--destructive": mode === "dark" ? "#FDA4AF" : "#B42335",
+    // Waiting for approval is a state, like destructive, not a brand color.
+    "--pending": mode === "dark" ? "#4A3C12" : "#FFEFC4",
+    "--pending-foreground": mode === "dark" ? "#FBE3A1" : "#6B4A00",
     "--background": c.canvas,
     "--foreground": c.ink,
     "--card": c.paper,
