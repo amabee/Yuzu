@@ -156,9 +156,33 @@ paging, literal search, virtualization, scrolling and native dragging. The exact
 25 MB / 25,000-row preview and 300-task crash recovery were tested; this is **not**
 a benchmark of writing all 25,000 tasks or sustained multi-user concurrency.
 
+## Projects (in progress, 2026-10)
+
+The user reprioritized Projects ahead of automation. Hierarchy: Organization
+(the installation; reserved for a future page builder) → Workspace → Project
+(optional, PUBLIC/PRIVATE) → Board → Groups → Items → Subitems. Standalone boards
+remain. Views (kanban/table/calendar/timeline) are views of one board, not a
+level. Spec: `docs/specs/projects.md` on branch `docs/projects-spec` (no PR yet).
+
+- `feat/projects-data`, PR #10 (https://github.com/amabee/Yuzu/pull/10): schema,
+  `/api/v1/projects/[action]`, and `boardScope`/`projectScope`/
+  `visibleWorkspaceScope` in `server/team-access.ts`, used by every board read.
+  Private projects are hidden from admins too; admins regain access only via
+  audited `recover`. Outsiders join a project by invitation (`projectOnly`).
+  Gotcha: Prisma matches nothing for `{}` inside `OR`, so the scopes return
+  `{}` directly for admins.
+- `feat/projects-ui`, PR #11 (https://github.com/amabee/Yuzu/pull/11), stacked
+  on #10 (merge #10 first). Sidebar Projects/Boards groups, `/projects/[id]`,
+  create/members/edit/move/archive flows. Still open from the spec: project-page
+  deadlines and approvals sections, admin recovery screen, collapsed-sidebar
+  board popover, realtime project-list hints, `projectName` in search and
+  notifications, and the dashboard project filter.
+- After that: saved-view layouts, then the app redesign (mockups in
+  `docs/mockups/app-redesign-*`).
+
 ## Next session
 
-There is no unfinished feature from this batch. Phase 4 on the roadmap is
+Continue the Projects work above. Phase 4 on the roadmap is
 automation: triggers, conditions, actions, execution and monitoring. **Plan its
 first slice with the user before coding**; its precise implementation scope has
 not been approved. OpenAPI completion, remaining account/workspace lifecycle

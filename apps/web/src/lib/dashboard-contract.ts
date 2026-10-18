@@ -7,7 +7,10 @@ export const DASHBOARD_BOARD_PAGE_SIZE = 12;
 export const dashboardQuerySchema = z
   .object({
     workspaceId: z.string().uuid().optional(),
+    projectId: z.string().uuid().optional(),
     page: z.coerce.number().int().min(1).max(1_000_000).default(1),
+    // Limits the week's deadline lists to tasks assigned to the viewer.
+    scope: z.enum(["all", "mine"]).default("all"),
   })
   .strict();
 const count = z.number().int().nonnegative();
@@ -18,6 +21,18 @@ const deadline = z.object({
   boardName: z.string(),
   workspaceName: z.string(),
   dueDate: z.string(),
+  status: z
+    .object({
+      id: z.string(),
+      label: z.string(),
+      color: z.string().optional(),
+    })
+    .nullable()
+    .default(null),
+  assignees: z
+    .array(z.object({ id: z.string(), name: z.string() }))
+    .max(3)
+    .default([]),
 });
 export const dashboardSchema = z.object({
   calendarDate: z.string(),
@@ -28,6 +43,10 @@ export const dashboardSchema = z.object({
   overdue: count,
   upcomingCount: count,
   unassigned: count,
+  /** The viewer's own open, due-this-week and overdue tasks. */
+  mine: z
+    .object({ open: count, upcoming: count, overdue: count })
+    .default({ open: 0, upcoming: 0, overdue: 0 }),
   boardCount: count,
   page: z.number().int().positive(),
   pageCount: z.number().int().positive(),

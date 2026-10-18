@@ -59,6 +59,10 @@ function useInbox(
     refetchOnReconnect: "always",
   });
 }
+/** Unread count for navigation badges; shares the bell's cached query. */
+export function useUnreadCount(principalId: string) {
+  return useInbox(principalId).data?.unreadCount ?? 0;
+}
 export function NotificationBell({ principalId }: { principalId: string }) {
   const live = useApprovalLiveSync(principalId);
   const query = useInbox(
@@ -291,6 +295,7 @@ export function NotificationInboxView({
                     {item.name}
                   </span>
                   <span className="mt-1.5 block text-xs text-muted-foreground">
+                    {item.projectName ? `${item.projectName} / ` : ""}
                     {item.boardName}
                   </span>
                   <time

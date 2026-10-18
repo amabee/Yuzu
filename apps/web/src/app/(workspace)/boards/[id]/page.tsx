@@ -1,22 +1,45 @@
 import { notFound } from "next/navigation";
+import { PersonAvatar } from "@/components/boards/board-presentation";
+import { PageCrumbs } from "@/components/page-crumbs";
+import { PauseAlert } from "@/components/pause/pause-alert";
 import { getDatabase } from "@yuzu/database";
 import { workspaceContext } from "@/server/workspace-access";
-import { boardScope } from "@/server/team-access";
+import { boardScope, isAdministrator } from "@/server/team-access";
+import { visibleProjects } from "@/server/project-service";
+import { MoveBoard } from "@/components/projects/move-board";
 import { BoardSurface } from "@/components/boards/board-surface";
-import Link from "next/link";
-import { Rocket, ChevronRight } from "lucide-react";
 import { headers } from "next/headers";
 import { boardState } from "@/server/board-service";
 import { z } from "zod";
+import { calendarMonthSchema } from "@/lib/calendar-contract";
+import { timelineFromSchema } from "@/lib/timeline-contract";
+import { ProjectBadge } from "@/components/projects/project-badge";
+
+// "kanban" in URLs; saved view configs keep their original "board" value.
+const urlLayouts = new Map<string, "board" | "table" | "calendar" | "timeline">(
+  [
+    ["kanban", "board"],
+    ["table", "table"],
+    ["calendar", "calendar"],
+    ["timeline", "timeline"],
+  ],
+);
 
 export default async function BoardPage({
   params,
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ task?: string; tab?: string }>;
+  searchParams: Promise<{
+    task?: string;
+    tab?: string;
+    view?: string;
+    layout?: string;
+    month?: string;
+    from?: string;
+  }>;
 }) {
-  const { user } = await workspaceContext();
+  const { user, settings } = await workspaceContext();
   const board = await getDatabase().board.findFirst({
     where: {
       id: (await params).id,
@@ -26,10 +49,36 @@ export default async function BoardPage({
       columns: { orderBy: { position: "asc" } },
       groups: { orderBy: { position: "asc" } },
       workspace: { select: { name: true } },
-      createdBy: { select: { name: true } },
+      project: {
+        select: { id: true, name: true, color: true, archivedAt: true },
+      },
+      createdBy: { select: { name: true, image: true } },
+      managers: { where: { userId: user.id }, select: { userId: true } },
     },
   });
   if (!board) notFound();
+  // Offer "Move to…" only where the server would allow at least one move.
+  const projects = await visibleProjects(user, {
+    workspaceId: board.workspaceId,
+    archived: false,
+  });
+  const manageBoard = isAdministrator(user.role) || board.managers.length > 0;
+  const manageSource = board.projectId
+    ? Boolean(projects.find((item) => item.id === board.projectId)?.canManage)
+    : manageBoard;
+  const moveTargets = projects
+    .filter((item) => item.canManage || item.id === board.projectId)
+    .map(({ id, name, color, visibility }) => ({
+      id,
+      name,
+      color,
+      visibility,
+    }));
+  const canMove =
+    manageSource &&
+    !board.project?.archivedAt &&
+    (moveTargets.some((item) => item.id !== board.projectId) ||
+      (board.projectId !== null && manageBoard));
   const status = z
     .object({ options: z.array(z.object({ label: z.string() })) })
     .safeParse(
@@ -44,28 +93,52 @@ export default async function BoardPage({
   });
   return (
     <div>
-      <div className="workspace-breadcrumb">
-        <Link href="/boards">Workspaces</Link>
-        <ChevronRight size={13} />
-        <span>{board.workspace.name}</span>
-      </div>
-      <div className="project-heading">
-        <div className="project-symbol">
-          <Rocket size={27} />
-        </div>
+      <PageCrumbs
+        items={[
+          { label: board.workspace.name, href: "/boards" },
+          ...(board.project
+            ? [
+                {
+                  label: (
+                    <span className="flex items-center gap-1.5">
+                      <ProjectBadge
+                        name={board.project.name}
+                        color={board.project.color}
+                      />
+                      {board.project.name}
+                    </span>
+                  ),
+                  href: `/projects/${board.project.id}`,
+                },
+              ]
+            : []),
+          { label: board.name },
+        ]}
+      />
+      {board.project?.archivedAt && (
+        <PauseAlert intent="warning" className="mb-4">
+          Archived project, read-only. Restore the project to make edits.
+        </PauseAlert>
+      )}
+      <div className="board-heading">
         <div className="min-w-0 flex-1">
-          <h1 className="text-2xl sm:text-3xl">{board.name}</h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            Plan, organize, and keep your team’s work in view.
+          <h1 className="board-title">{board.name}</h1>
+          <p className="board-subtitle">
+            <PersonAvatar
+              name={board.createdBy.name}
+              image={board.createdBy.image}
+            />
+            {board.project ? `${board.project.name} · ` : ""}
+            Created by {board.createdBy.name}
           </p>
         </div>
-        <div className="project-owner">
-          <span>{board.createdBy.name.charAt(0).toUpperCase()}</span>
-          <div>
-            <small>Created by</small>
-            <b>{board.createdBy.name}</b>
-          </div>
-        </div>
+        {canMove && (
+          <MoveBoard
+            board={{ id: board.id, name: board.name }}
+            currentProjectId={board.projectId}
+            targets={moveTargets}
+          />
+        )}
       </div>
       <BoardSurface
         key={board.id}
@@ -77,6 +150,25 @@ export default async function BoardPage({
             .safeParse((await searchParams).task).data
         }
         initialState={initialState}
+        initialViewId={
+          z
+            .string()
+            .uuid()
+            .safeParse((await searchParams).view).data
+        }
+        initialLayout={urlLayouts.get((await searchParams).layout ?? "")}
+        calendar={{
+          today: new Intl.DateTimeFormat("en-CA", {
+            timeZone: settings.timezone,
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+          }).format(new Date()),
+          weekStartsOn: settings.weekStartsOn === 0 ? 0 : 1,
+          month: calendarMonthSchema.safeParse((await searchParams).month).data,
+          timelineFrom: timelineFromSchema.safeParse((await searchParams).from)
+            .data,
+        }}
         name={board.name}
         fields={board.columns}
         statuses={

@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const viewConfigSchema = z
   .object({
-    layout: z.enum(["board", "table"]),
+    layout: z.enum(["board", "table", "calendar", "timeline"]),
     search: z.string().max(200),
     groupId: z.string().uuid().nullable(),
     statusId: z.string().min(1).max(100).nullable(),
@@ -11,6 +11,14 @@ export const viewConfigSchema = z
     assignee: z.enum(["all", "me", "unassigned"]),
     priority: z.enum(["all", "LOW", "NORMAL", "HIGH", "URGENT"]),
     due: z.enum(["all", "overdue", "next-week", "none"]),
+    // Timeline rows and zoom; optional so older saved views still load.
+    timeline: z
+      .object({
+        groupBy: z.enum(["group", "status", "assignee"]),
+        zoom: z.enum(["weeks", "months"]),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export type ViewConfig = z.infer<typeof viewConfigSchema>;

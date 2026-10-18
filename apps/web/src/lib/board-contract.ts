@@ -39,6 +39,7 @@ export const coreKeys = [
   "status",
   "assignees",
   "priority",
+  "start_date",
   "due_date",
 ];
 const names = z.string().trim().min(1).max(200);
@@ -72,6 +73,7 @@ const changes = z
     checklist: checklistSchema,
     statusId: z.string().max(100).nullable(),
     priority: z.enum(priorities),
+    startDate: dateOnly.nullable(),
     dueDate: dateOnly.nullable(),
     groupId: recordId.nullable(),
     assigneeIds: ids,
@@ -102,6 +104,21 @@ export const taskActionSchema = z
     requestKey: recordId.optional(),
   })
   .strict();
+/** Places a task between two neighbours in a lane; either may be absent. */
+export const reorderTaskSchema = z
+  .object({
+    taskId: recordId,
+    afterId: recordId.nullable(),
+    beforeId: recordId.nullable(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.afterId !== value.taskId &&
+      value.beforeId !== value.taskId &&
+      (value.afterId === null || value.afterId !== value.beforeId),
+    "Choose a different place for this task.",
+  );
 export const editorGrantSchema = taskActionSchema
   .extend({ userId: personId, grant: z.boolean() })
   .strict();
@@ -177,11 +194,14 @@ export type BoardTask = {
   checklist: TaskChecklist;
   statusId: string | null;
   priority: string;
+  startDate: string | null;
   dueDate: string | null;
   groupId: string | null;
   createdById: string;
   createdByName: string;
   revision: number;
+  /** Manual order on the board. */
+  position?: number;
   archivedAt: string | null;
   assigneeIds: string[];
   editorIds: string[];
@@ -195,6 +215,8 @@ export type BoardState = {
   pagination?: BoardPagination;
   focusedTask?: BoardTask | null;
   pendingApprovalCount?: number;
+  /** Whole-board totals for the pulse bar, ignoring filters. */
+  pulse?: { statusCounts: Record<string, number>; overdue: number };
   groupTaskCounts?: Record<string, number>;
   calendarDate?: string;
   savedViews?: SavedView[];
@@ -251,11 +273,14 @@ const baseBoardStateSchema = z.object({
       checklist: checklistSchema.default([]),
       statusId: z.string().nullable(),
       priority: z.string(),
+      // Older cached payloads and fixtures may lack the field.
+      startDate: z.string().nullable().default(null),
       dueDate: z.string().nullable(),
       groupId: recordId.nullable(),
       createdById: personId,
       createdByName: z.string(),
       revision: z.number().int().positive(),
+      position: z.number().optional(),
       archivedAt: z.string().nullable(),
       assigneeIds: z.array(personId),
       editorIds: z.array(personId),
@@ -287,6 +312,12 @@ export const boardStateSchema = baseBoardStateSchema.extend({
     .optional(),
   focusedTask: baseBoardStateSchema.shape.tasks.element.nullable().optional(),
   pendingApprovalCount: z.number().int().nonnegative().optional(),
+  pulse: z
+    .object({
+      statusCounts: z.record(z.string(), z.number().int().nonnegative()),
+      overdue: z.number().int().nonnegative(),
+    })
+    .optional(),
 });
 
 export const configureFieldSchema = z

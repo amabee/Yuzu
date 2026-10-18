@@ -137,6 +137,35 @@ export const presets: PreviewTheme[] = [
       muted: "#A2AAB5",
     },
   },
+  {
+    ...shared,
+    // The app redesign palette: the sidebar blends into the canvas and pages
+    // sit on a raised paper panel.
+    name: "Yuzu paper",
+    headingWeight: 700,
+    radius: 14,
+    shadow: 6,
+    light: {
+      canvas: "#F3F6F7",
+      ink: "#0A2633",
+      paper: "#FFFFFF",
+      primary: "#086288",
+      border: "#E2E9EC",
+      sidebar: "#F3F6F7",
+      sidebarInk: "#0A2633",
+      muted: "#4F6570",
+    },
+    dark: {
+      canvas: "#0B171D",
+      ink: "#E6F0F4",
+      paper: "#122129",
+      primary: "#6CC3EA",
+      border: "#223741",
+      sidebar: "#0B171D",
+      sidebarInk: "#DCE9EF",
+      muted: "#93A9B3",
+    },
+  },
 ];
 type Palette = [string, string, string, string, string, string, string, string];
 function palette([

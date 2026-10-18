@@ -22,7 +22,7 @@ import { taskSearchResultSchema } from "@/lib/task-search-contract";
 export type NavigationWorkspace = {
   id: string;
   name: string;
-  boards: { id: string; name: string }[];
+  boards: { id: string; name: string; projectId?: string | null }[];
 };
 export function WorkspaceSearch({
   workspaces,
@@ -35,6 +35,21 @@ export function WorkspaceSearch({
   const [query, setQuery] = useState("");
   const [archived, setArchived] = useState(false);
   const [term, setTerm] = useState("");
+  // Ctrl+K (or Cmd+K) opens search from anywhere in the workspace.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (
+        event.key.toLowerCase() === "k" &&
+        (event.ctrlKey || event.metaKey) &&
+        !event.altKey
+      ) {
+        event.preventDefault();
+        setOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   useEffect(() => {
     const timer = setTimeout(() => setTerm(query.trim()), 250);
     return () => clearTimeout(timer);
@@ -81,10 +96,12 @@ export function WorkspaceSearch({
         variant="ghost"
         className="workspace-search-trigger"
         aria-label="Search workspace"
+        aria-keyshortcuts="Control+K Meta+K"
         onClick={() => setOpen(true)}
       >
-        <Search size={17} />
-        <span>Search tasks, boards and workspaces…</span>
+        <Search size={16} />
+        <span>Search tasks and boards</span>
+        <kbd className="workspace-search-key">Ctrl K</kbd>
       </Button>
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent className="workspace-search-panel flex w-full flex-col sm:max-w-xl">
@@ -164,7 +181,9 @@ export function WorkspaceSearch({
                           {task.name}
                         </p>
                         <p className="mt-1 text-xs text-muted-foreground">
-                          {task.workspaceName} / {task.boardName}
+                          {task.workspaceName} /{" "}
+                          {task.projectName ? `${task.projectName} / ` : ""}
+                          {task.boardName}
                           {task.archived ? " / Archived" : ""}
                         </p>
                         {task.description && (

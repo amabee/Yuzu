@@ -1,9 +1,11 @@
 import { mutateSavedView } from "@/server/saved-view-service";
 import { z } from "zod";
-import { notifyBoardMutation } from "@/server/realtime";
+import { notifyBoardMutation, notifyNavigationChange } from "@/server/realtime";
 import { recordId } from "@/lib/board-contract";
 import {
   boardState,
+  boardCalendar,
+  boardTimeline,
   taskComments,
   createComment,
   changeComment,
@@ -11,6 +13,7 @@ import {
   createTask,
   manageBoard,
   mutateTask,
+  reorderTask,
 } from "@/server/board-service";
 import { readSetupBody, SetupError } from "@/server/setup/security";
 async function handle(request: Request, action: string) {
@@ -24,6 +27,18 @@ async function handle(request: Request, action: string) {
         new URL(request.url).searchParams.has("query")
           ? JSON.parse(new URL(request.url).searchParams.get("query")!)
           : {},
+      );
+    else if (request.method === "GET" && action === "timeline")
+      data = await boardTimeline(
+        recordId.parse(new URL(request.url).searchParams.get("boardId")),
+        request.headers,
+        JSON.parse(new URL(request.url).searchParams.get("query") ?? "{}"),
+      );
+    else if (request.method === "GET" && action === "calendar")
+      data = await boardCalendar(
+        recordId.parse(new URL(request.url).searchParams.get("boardId")),
+        request.headers,
+        JSON.parse(new URL(request.url).searchParams.get("query") ?? "{}"),
       );
     else if (request.method === "GET" && action === "comments")
       data = await taskComments(
@@ -45,6 +60,8 @@ async function handle(request: Request, action: string) {
         data = await changeComment(body, request.headers);
       else if (action === "create-task")
         data = await createTask(body, request.headers);
+      else if (action === "reorder")
+        data = await reorderTask(body, request.headers);
       else if (["update", "archive", "restore", "editor"].includes(action))
         data = await mutateTask(action, body, request.headers);
       else if (
@@ -65,6 +82,12 @@ async function handle(request: Request, action: string) {
         { ...(body as object), ...(data as object) },
         data,
       );
+      // A new board appears in other people's sidebars.
+      if (action === "create-board") {
+        const created = data as { id?: unknown };
+        if (typeof created?.id === "string")
+          void notifyNavigationChange({ boardId: created.id });
+      }
     } else throw new SetupError(404, "NOT_FOUND", "Board action not found.");
     return Response.json(
       { data, requestId },

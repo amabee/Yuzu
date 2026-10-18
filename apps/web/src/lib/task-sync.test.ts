@@ -16,6 +16,7 @@ const task: BoardTask = {
   checklist: [],
   statusId: "todo",
   priority: "NORMAL",
+  startDate: null,
   dueDate: null,
   groupId: null,
   assigneeIds: ["member-a", "member-b"],

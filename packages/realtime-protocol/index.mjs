@@ -7,6 +7,10 @@ export function signRealtimeToken(payload, secret) {
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
   return `${encoded}.${createHmac("sha256", secret).update(encoded).digest("base64url")}`;
 }
+// Navigation events carry no board: they only tell named users to reload
+// their navigation, which the server scopes again on the next request.
+const navigationEvent = (payload, purpose) =>
+  purpose === "event" && payload.kind === "navigation";
 export function verifyRealtimeToken(token, secret, purpose, now = Date.now()) {
   if (
     typeof token !== "string" ||
@@ -31,7 +35,9 @@ export function verifyRealtimeToken(token, secret, purpose, now = Date.now()) {
   const ttl = purpose === "event" ? 15_000 : 65_000;
   if (
     payload.purpose !== purpose ||
-    (purpose !== "user" && !uuid.test(payload.boardId)) ||
+    (purpose !== "user" &&
+      !navigationEvent(payload, purpose) &&
+      !uuid.test(payload.boardId)) ||
     !Number.isSafeInteger(payload.expiresAt) ||
     payload.expiresAt <= now ||
     payload.expiresAt > now + ttl
@@ -59,6 +65,14 @@ export function verifyRealtimeToken(token, secret, purpose, now = Date.now()) {
       ))
   )
     throw new Error("Invalid event recipients.");
+  if (
+    purpose === "event" &&
+    payload.kind !== undefined &&
+    (payload.kind !== "navigation" ||
+      payload.boardId !== undefined ||
+      !Array.isArray(payload.userIds))
+  )
+    throw new Error("Invalid realtime event kind.");
   if (
     purpose === "event" &&
     payload.notifyBoard !== undefined &&

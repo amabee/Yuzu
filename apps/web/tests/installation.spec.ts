@@ -221,7 +221,8 @@ test("owner setup resumes, verifies actual receipt, and completes exactly once",
   expect(await db.user.count()).toBe(1);
   expect(await db.workspace.count()).toBe(1);
   expect(await db.board.count()).toBe(1);
-  expect(await db.boardColumn.count()).toBe(6);
+  // Name, status, assignees, priority, start date, due date, description.
+  expect(await db.boardColumn.count()).toBe(7);
   const uuid7 =
     /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
   const generatedRecords = await Promise.all([
@@ -256,7 +257,8 @@ test("owner setup resumes, verifies actual receipt, and completes exactly once",
   const publicState = await anonymous.json();
   expect(publicState.data.authorized).toBe(false);
   expect(publicState.data.settings).toBeUndefined();
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: /^Account menu/ }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/sign-in$/);
   await page.getByLabel("Email address").fill("owner@example.test");
   await page
@@ -264,7 +266,7 @@ test("owner setup resumes, verifies actual receipt, and completes exactly once",
     .fill("test-owner-password-123");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Good work starts here." }),
+    page.getByRole("heading", { name: /^Good (morning|afternoon|evening), / }),
   ).toBeVisible();
   expect(errors).toEqual([]);
 });
@@ -816,7 +818,9 @@ test("password recovery works from email and revokes every existing session", as
       .getByRole("button", { name: "Sign in", exact: true })
       .click();
     await expect(
-      recoveryPage.getByRole("heading", { name: "Good work starts here." }),
+      recoveryPage.getByRole("heading", {
+        name: /^Good (morning|afternoon|evening), /,
+      }),
     ).toBeVisible();
     expect(
       (await db.user.findUniqueOrThrow({ where: { id: owner.id } })).role,
@@ -1596,7 +1600,10 @@ test("global themes persist, drafts stay scoped, modes remain personal, and prev
     path: "../../artifacts/phase-0.5/applied-editor-mobile.png",
     fullPage: true,
   });
-  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  // On phones the account menu lives in the navigation drawer.
+  await page.getByRole("button", { name: "Toggle navigation" }).click();
+  await page.getByRole("button", { name: /^Account menu/ }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/sign-in$/);
   await expect(page.getByRole("switch", { name: "Dark mode" })).toBeChecked();
   await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
@@ -1692,7 +1699,7 @@ test("appearance writes reject members, malformed themes, cross-origin requests 
   expect((await post("publish", { revision: 1, theme })).status()).toBe(200);
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "Good work starts here." }),
+    page.getByRole("heading", { name: /^Good (morning|afternoon|evening), / }),
   ).toBeVisible();
   const computed = await page.evaluate(() => ({
     blur: getComputedStyle(document.querySelector(".yuzu-topbar")!)
@@ -1717,7 +1724,7 @@ test("shadcn sidebar collapses and theme switch animates with accessible fallbac
   await readyTeam(page);
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "Good work starts here." }),
+    page.getByRole("heading", { name: /^Good (morning|afternoon|evening), / }),
   ).toBeVisible();
   const sidebar = page.locator("[data-collapsible]");
   await expect(sidebar).toHaveAttribute("data-state", "expanded");
@@ -1971,20 +1978,26 @@ test("board engine creates typed tasks, shares records between views, and restor
       }),
     })
     .getByRole("button", { name: "Drag Ship the board engine", exact: true })
-    .dragTo(doneLane);
+    .dragTo(doneLane, { steps: 12 });
   await expect(
     doneLane.getByRole("button", {
       name: "Ship the board engine",
       exact: true,
     }),
   ).toBeVisible();
-  await expect(page.locator(".task-card")).toHaveAttribute("draggable", "true");
+  await expect(
+    page.getByRole("button", {
+      name: "Drag Ship the board engine",
+      exact: true,
+    }),
+  ).toBeEnabled();
   await page
     .getByRole("button", { name: "Drag Ship the board engine", exact: true })
     .dragTo(
       page.locator(".board-lane").filter({
         has: page.getByRole("heading", { name: "In progress", exact: true }),
       }),
+      { steps: 12 },
     );
   await expect(
     page
@@ -2694,7 +2707,7 @@ test("board moves immediately, rolls back failed saves, and exposes option order
   });
   await page
     .getByRole("button", { name: "Drag Move without refreshing", exact: true })
-    .dragTo(lane("In progress"));
+    .dragTo(lane("In progress"), { steps: 12 });
   // The card moves while its POST is blocked, before any successful refetch.
   await expect(
     lane("In progress").getByRole("button", {
@@ -2702,12 +2715,19 @@ test("board moves immediately, rolls back failed saves, and exposes option order
       exact: true,
     }),
   ).toBeVisible();
-  await expect(page.locator(".task-card")).toHaveAttribute(
-    "draggable",
-    "false",
-  );
+  await expect(
+    page.getByRole("button", {
+      name: "Drag Move without refreshing",
+      exact: true,
+    }),
+  ).toBeDisabled();
   releaseSave();
-  await expect(page.locator(".task-card")).toHaveAttribute("draggable", "true");
+  await expect(
+    page.getByRole("button", {
+      name: "Drag Move without refreshing",
+      exact: true,
+    }),
+  ).toBeEnabled();
   await page.unroute("**/api/v1/boards/update");
   await page.route("**/api/v1/boards/update", async (route) => {
     await route.fulfill({
@@ -2724,7 +2744,7 @@ test("board moves immediately, rolls back failed saves, and exposes option order
   });
   await page
     .getByRole("button", { name: "Drag Move without refreshing", exact: true })
-    .dragTo(lane("Done"));
+    .dragTo(lane("Done"), { steps: 12 });
   await expect(page.locator(".board-surface").getByRole("alert")).toContainText(
     "Task changed",
   );
@@ -2888,7 +2908,7 @@ test("existing auth IDs refresh correctly, whole cards open sheets and drag, tag
     .getByRole("button", { name: "Archive Card interactions", exact: true })
     .boundingBox();
   expect(handle!.x).toBeLessThan(archive!.x);
-  await card.getByText("Click this card body", { exact: true }).click();
+  await card.click({ position: { x: 8, y: 8 } });
   await expect(page.locator('[data-slot="sheet-content"]')).toBeVisible();
   await page.getByRole("button", { name: "Design", exact: true }).click();
   await page.getByRole("button", { name: "Backend", exact: true }).click();
@@ -2912,9 +2932,7 @@ test("existing auth IDs refresh correctly, whole cards open sheets and drag, tag
   await expect(card.locator(".task-custom-tags")).toContainText("Design");
   await expect(card.locator(".task-custom-tags")).toContainText("Backend");
   await expect(card.locator(".task-custom-tags")).not.toContainText("Stage A");
-  await expect(card.locator(".task-checklist-summary")).toContainText(
-    "Checks1/3",
-  );
+  await expect(card.locator(".task-checklist-summary")).toContainText("1/3");
   await page.screenshot({
     path: "../../artifacts/phase-2/stacked-avatars-and-tags.png",
     fullPage: true,
@@ -2923,11 +2941,13 @@ test("existing auth IDs refresh correctly, whole cards open sheets and drag, tag
     .locator(".board-lane")
     .filter({ has: page.getByRole("heading", { name: "Done", exact: true }) });
   // Drag from the entire article, rather than its dedicated handle.
-  await card.dragTo(doneLane);
+  await card.dragTo(doneLane, { steps: 12 });
   await expect(
     doneLane.getByRole("button", { name: "Card interactions", exact: true }),
   ).toBeVisible();
-  await expect(card).toHaveAttribute("draggable", "true");
+  await expect(
+    card.getByRole("button", { name: "Drag Card interactions", exact: true }),
+  ).toBeEnabled();
   await expect(page.locator(".board-surface").getByRole("alert")).toHaveCount(
     0,
   );
@@ -3025,7 +3045,7 @@ test("existing auth IDs refresh correctly, whole cards open sheets and drag, tag
     where: { taskId, fieldId: labels.id },
   });
   expect(preserved.choices).toHaveLength(2);
-  await card.getByText("Click this card body", { exact: true }).click();
+  await card.click({ position: { x: 8, y: 8 } });
   await expect(
     page
       .getByRole("group", { name: "Checks", exact: true })
@@ -3145,21 +3165,23 @@ test("task reference sheet persists option appearance, formats dates and shows r
   await expect(card.locator(".task-custom-tags > span")).toHaveText(
     "Development",
   );
-  await expect(card.locator(".task-custom-tags > span")).toHaveCSS(
+  // Tags show as a colored dot beside the label.
+  await expect(card.locator(".task-custom-tags > span > i")).toHaveCSS(
     "background-color",
     "rgb(168, 85, 247)",
   );
   await expect(
-    card.locator(".task-card-tags > span").filter({ hasText: "High" }),
-  ).toHaveCSS("background-color", "rgb(245, 158, 11)");
+    card.locator(".task-card-priority").filter({ hasText: "High" }),
+  ).toHaveCSS("color", "rgb(245, 158, 11)");
   await expect(card.getByText("Apr 16", { exact: true })).toBeVisible();
   await expect(card.locator("select")).toHaveCount(0);
-  await expect(card.locator(".task-card-heading .task-card-date")).toHaveText(
+  await expect(card.locator(".task-card-meta .task-card-date")).toHaveText(
     "Apr 16",
   );
   const avatarBounds = await card.locator(".task-avatar").first().boundingBox();
-  const commentBounds = await card.locator(".task-comment-count").boundingBox();
-  expect(avatarBounds!.x).toBeLessThan(commentBounds!.x);
+  const commentBounds = await card.locator(".task-card-date").boundingBox();
+  // People sit at the end of the card's meta line.
+  expect(avatarBounds!.x).toBeGreaterThan(commentBounds!.x);
   await card.locator(".task-avatar").first().hover();
   await expect(page.getByRole("tooltip")).toContainText("Team Owner");
   await page.mouse.move(0, 0);
@@ -3168,9 +3190,6 @@ test("task reference sheet persists option appearance, formats dates and shows r
     fullPage: true,
   });
 
-  await expect(
-    card.getByText("Apr 16", { exact: true }).locator("svg"),
-  ).toHaveCount(1);
   await expect(
     page
       .locator(".board-lane-header")
@@ -3181,11 +3200,9 @@ test("task reference sheet persists option appearance, formats dates and shows r
     .getByRole("button", { name: "Develop core features", exact: true })
     .click();
   await expect(
-    page.getByRole("tab", { name: "Details", exact: true }),
+    page.getByRole("tab", { name: "Comments 0", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  await expect(page.locator(".task-sheet-header")).toContainText(
-    "Apr 16, 2026",
-  );
+  await expect(page.getByLabel("Task due date")).toHaveValue("2026-04-16");
   await expect(page.locator(".task-sheet-header .lucide-clock")).toHaveCount(1);
   await expect(
     page.getByRole("progressbar", { name: "Checklist progress" }),
@@ -3268,7 +3285,7 @@ test("task reference sheet persists option appearance, formats dates and shows r
   ).toHaveAttribute("aria-selected", "true");
   await page.getByRole("tab", { name: "Activity", exact: true }).press("Home");
   await expect(
-    page.getByRole("tab", { name: "Details", exact: true }),
+    page.getByRole("tab", { name: "Comments 1", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await page.setViewportSize({ width: 390, height: 844 });
   expect(
@@ -3280,9 +3297,10 @@ test("task reference sheet persists option appearance, formats dates and shows r
     element.scrollTop = element.scrollHeight;
   });
   await expect(page.locator(".task-sheet-header")).toBeVisible();
+  // The reply box stays pinned to the bottom of the panel.
   await expect(
-    page.getByRole("button", { name: "Save changes", exact: true }),
-  ).toBeVisible();
+    page.getByLabel("New comment", { exact: true }),
+  ).toBeInViewport();
   await page.screenshot({
     path: "../../artifacts/phase-2/reference-task-sheet-mobile.png",
     fullPage: true,
@@ -3699,7 +3717,7 @@ test("boards sync across people, preserve drafts and recover concurrent non-over
     await teammate.getByRole("button", { name: "Close", exact: true }).click();
     await lane(teammate, "To do")
       .locator(".task-card")
-      .dragTo(lane(teammate, "In progress"));
+      .dragTo(lane(teammate, "In progress"), { steps: 12 });
     await expect(lane(page, "In progress").locator(".task-card")).toContainText(
       "Collaborative card",
       { timeout: 10_000 },
@@ -3752,7 +3770,6 @@ test("boards sync across people, preserve drafts and recover concurrent non-over
       "A live teammate comment",
       { timeout: 10_000 },
     );
-    await page.getByRole("tab", { name: "Details", exact: true }).click();
     await page.getByLabel("Task description").fill("My conflicting notes");
     await remote({ description: "Teammate's notes" });
     await expect(
@@ -3850,7 +3867,7 @@ test("boards sync across people, preserve drafts and recover concurrent non-over
     );
     await expect(
       page.getByRole("button", { name: "Save changes", exact: true }),
-    ).toBeDisabled();
+    ).toHaveCount(0);
     await remote({ description: "New visible notes" });
     await expect(page.getByLabel("Task description")).toHaveValue(
       "New visible notes",
@@ -4007,7 +4024,7 @@ test("standalone offline recovery shares one server probe and returns to the wor
     .click();
   await expect(page).toHaveURL("http://127.0.0.1:3100/");
   await expect(
-    page.getByRole("heading", { name: "Good work starts here." }),
+    page.getByRole("heading", { name: /^Good (morning|afternoon|evening), / }),
   ).toBeVisible();
   expect(probes).toBe(1);
 });
@@ -4049,7 +4066,9 @@ test("maintenance routes members to recovery, blocks API access, and keeps admin
     await team.author.page.getByRole("link", { name: "Check again" }).click();
     await expect(team.author.page).toHaveURL("http://127.0.0.1:3100/");
     await expect(
-      team.author.page.getByRole("heading", { name: "Good work starts here." }),
+      team.author.page.getByRole("heading", {
+        name: /^Good (morning|afternoon|evening), /,
+      }),
     ).toBeVisible();
   } finally {
     await db.installationSettings.update({
@@ -5193,13 +5212,16 @@ test("task sheet avoids automatic avatar tooltips and table shows live task chec
       .click();
     await expect(page.getByRole("dialog")).toBeFocused();
     await expect(page.getByRole("tooltip")).toHaveCount(0);
+    // The first stop is the copy-link action, not an avatar tooltip.
     await page.keyboard.press("Tab");
-    await expect(page.getByRole("tooltip")).toContainText("Request Author");
-    await page.keyboard.press("Escape");
+    await expect(
+      page.getByRole("button", { name: "Copy task link", exact: true }),
+    ).toBeFocused();
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
     // Hover tooltips still work after deliberately moving onto the avatar.
     await page
       .getByRole("dialog")
-      .locator('.task-sheet-metadata [role="img"][aria-label="Request Author"]')
+      .locator('.task-props summary [role="img"][aria-label="Request Author"]')
       .hover();
     await expect(page.getByRole("tooltip")).toContainText("Request Author");
     await page.mouse.move(0, 0);
@@ -5302,9 +5324,7 @@ test("task checklists belong to each task, save live and disappear from cards wh
     await team.author.page
       .getByRole("button", { name: "Save changes", exact: true })
       .click();
-    await expect(card.locator(".task-checklist-summary")).toContainText(
-      "Checklist1/2",
-    );
+    await expect(card.locator(".task-checklist-summary")).toContainText("1/2");
     await expect(empty.locator(".task-checklist-summary")).toHaveCount(0);
     await page
       .getByRole("button", { name: "Task with its own steps", exact: true })
@@ -5330,9 +5350,7 @@ test("task checklists belong to each task, save live and disappear from cards wh
     await page
       .getByRole("button", { name: "Save changes", exact: true })
       .click();
-    await expect(card.locator(".task-checklist-summary")).toContainText(
-      "Checklist0/1",
-    );
+    await expect(card.locator(".task-checklist-summary")).toContainText("0/1");
     await expect
       .poll(
         async () =>
@@ -5956,7 +5974,9 @@ test("approval UI keeps pending moves off the board and routes owner requests to
       await gate;
       await route.continue();
     });
-    await lane("To do").locator(".task-card").dragTo(lane("In progress"));
+    await lane("To do")
+      .locator(".task-card")
+      .dragTo(lane("In progress"), { steps: 12 });
     await expect(lane("To do").locator(".task-card")).toHaveCount(1);
     await expect(lane("In progress").locator(".task-card")).toHaveCount(0);
     release();

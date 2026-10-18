@@ -56,6 +56,7 @@ export const csvCoreHeaders = [
   "Description",
   "Status",
   "Priority",
+  "Start date",
   "Due date",
   "Group",
   "Assignees",
@@ -84,6 +85,7 @@ export function csvHeaders(fields: BoardField[]) {
 }
 
 export type CsvTask = ViewTask & {
+  startDate: string | null;
   revision: number;
   createdByName: string;
   checklist: TaskChecklist;
@@ -112,6 +114,7 @@ export function csvTaskCells(task: CsvTask, context: CsvContext): CsvCell[] {
     task.description,
     option("status", task.statusId),
     option("priority", task.priority),
+    task.startDate,
     task.dueDate,
     context.groups.find((group) => group.id === task.groupId)?.name ?? "",
     JSON.stringify(ids.map(person)),

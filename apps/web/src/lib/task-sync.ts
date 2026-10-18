@@ -14,6 +14,7 @@ export type TaskDraft = Pick<
   | "checklist"
   | "statusId"
   | "priority"
+  | "startDate"
   | "dueDate"
   | "groupId"
   | "assigneeIds"
@@ -26,6 +27,7 @@ const scalarKeys = [
   "checklist",
   "statusId",
   "priority",
+  "startDate",
   "dueDate",
   "groupId",
   "assigneeIds",

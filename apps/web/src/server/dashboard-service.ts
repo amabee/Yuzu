@@ -25,6 +25,8 @@ export async function workspaceDashboard(
   const visibleBoards: Prisma.BoardWhereInput = {
     ...boardScope(user),
     ...(query.workspaceId ? { workspaceId: query.workspaceId } : {}),
+    // boardScope above still applies, so a hidden project matches nothing.
+    ...(query.projectId ? { projectId: query.projectId } : {}),
   };
   const active: Prisma.TaskWhereInput = {
     board: visibleBoards,
@@ -66,6 +68,18 @@ export async function workspaceDashboard(
       const unassigned = await tx.task.count({
         where: { ...open, assignees: { none: {} } },
       });
+      const assignedToMe = { assignees: { some: { userId: user.id } } };
+      const mine = {
+        open: await tx.task.count({ where: { ...open, ...assignedToMe } }),
+        upcoming: await tx.task.count({
+          where: { ...upcoming, ...assignedToMe },
+        }),
+        overdue: await tx.task.count({
+          where: { ...overdue, ...assignedToMe },
+        }),
+      };
+      // "Mine" narrows only the week's lists; totals stay workspace-wide.
+      const listScope = query.scope === "mine" ? assignedToMe : {};
       const boardIds = boards.map((board) => board.id);
       const counts = await tx.task.groupBy({
         by: ["boardId", "statusId"],
@@ -81,22 +95,32 @@ export async function workspaceDashboard(
         id: true,
         name: true,
         dueDate: true,
+        statusId: true,
+        assignees: {
+          take: 3,
+          orderBy: { userId: "asc" },
+          select: { user: { select: { id: true, name: true } } },
+        },
         board: {
           select: {
             id: true,
             name: true,
             workspace: { select: { name: true } },
+            columns: {
+              where: { key: "status", archivedAt: null },
+              select: { config: true },
+            },
           },
         },
       } as const;
       const upcomingRows = await tx.task.findMany({
-        where: upcoming,
+        where: { ...upcoming, ...listScope },
         select: deadlineSelect,
         orderBy: [{ dueDate: "asc" }, { id: "asc" }],
         take: 10,
       });
       const overdueRows = await tx.task.findMany({
-        where: overdue,
+        where: { ...overdue, ...listScope },
         select: deadlineSelect,
         orderBy: [{ dueDate: "asc" }, { id: "asc" }],
         take: 10,
@@ -124,6 +148,18 @@ export async function workspaceDashboard(
         boardId: task.board.id,
         boardName: task.board.name,
         workspaceName: task.board.workspace.name,
+        status: (() => {
+          if (!task.statusId) return null;
+          const option = fieldOptions(task.board.columns[0]?.config).find(
+            (item) => item.id === task.statusId,
+          );
+          return {
+            id: task.statusId,
+            label: option?.label ?? task.statusId,
+            ...(option?.color ? { color: option.color } : {}),
+          };
+        })(),
+        assignees: task.assignees.map((person) => person.user),
         dueDate: task.dueDate!.toISOString().slice(0, 10),
       });
       return {
@@ -135,6 +171,7 @@ export async function workspaceDashboard(
         overdue: overdueCount,
         upcomingCount,
         unassigned,
+        mine,
         boardCount,
         page,
         pageCount,

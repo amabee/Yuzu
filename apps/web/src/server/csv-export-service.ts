@@ -152,6 +152,7 @@ export async function exportBoardCsvForActor(
               description: true,
               statusId: true,
               priority: true,
+              startDate: true,
               dueDate: true,
               groupId: true,
               archivedAt: true,
@@ -174,7 +175,7 @@ export async function exportBoardCsvForActor(
             },
             take: 100,
             ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+            orderBy: [{ position: "asc" }, { createdAt: "asc" }, { id: "asc" }],
           });
           if (!batch.length) break;
           scanned += batch.length;
@@ -186,6 +187,7 @@ export async function exportBoardCsvForActor(
             const task: CsvTask = {
               ...record,
               archivedAt: record.archivedAt?.toISOString() ?? null,
+              startDate: record.startDate?.toISOString().slice(0, 10) ?? null,
               dueDate: record.dueDate?.toISOString().slice(0, 10) ?? null,
               createdByName: record.createdBy.name,
               assigneeIds: record.assignees.map((person) => person.userId),

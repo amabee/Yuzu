@@ -1,5 +1,6 @@
 "use client";
 import { useState, useRef, useId } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api-client";
 import {
@@ -11,7 +12,7 @@ import {
 import { mentionPresent, activeMention } from "@/lib/comment-mentions";
 import { Button } from "@/components/ui/button";
 import { AssigneeAvatars } from "./board-presentation";
-import { History, Pencil, Trash2, X } from "lucide-react";
+import { History, Pencil, SendHorizontal, Trash2, X } from "lucide-react";
 type Person = { id: string; name: string };
 function Composer({
   people,
@@ -21,6 +22,8 @@ function Composer({
   setIds,
   disabled,
   label,
+  pinned = false,
+  placeholder,
 }: {
   people: Person[];
   body: string;
@@ -29,6 +32,9 @@ function Composer({
   setIds: (ids: string[]) => void;
   disabled: boolean;
   label: string;
+  /** The one-line reply box pinned to the bottom of the task panel. */
+  pinned?: boolean;
+  placeholder?: string;
 }) {
   const textarea = useRef<HTMLTextAreaElement>(null);
   const listId = useId();
@@ -84,7 +90,7 @@ function Composer({
   return (
     <div className="space-y-3">
       <label className="task-field-label">
-        {label}
+        <span className={pinned ? "sr-only" : undefined}>{label}</span>
         <div className="relative">
           <textarea
             ref={textarea}
@@ -98,8 +104,9 @@ function Composer({
             }
             className="task-textarea"
             aria-label={label}
+            placeholder={placeholder}
             maxLength={5000}
-            rows={3}
+            rows={pinned ? 1 : 3}
             required
             value={body}
             disabled={disabled}
@@ -272,12 +279,15 @@ export function TaskComments({
   active,
   onNotice,
   syncInterval,
+  composerTarget,
 }: {
   state: BoardState;
   task: BoardTask;
   active: boolean;
   syncInterval: number;
   onNotice: (message: string, kind: "success" | "error") => void;
+  /** Where the reply box renders; the task panel pins it to its footer. */
+  composerTarget?: HTMLElement | null;
 }) {
   const [body, setBody] = useState("");
   const [ids, setIds] = useState<string[]>([]);
@@ -380,6 +390,54 @@ export function TaskComments({
       ids: comment.mentions.map((person) => person.id),
     });
   };
+  const composer = (
+    <form
+      className={composerTarget ? "task-composer" : undefined}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (body.trim() && !mutation.isPending)
+          mutation.mutate({ action: "create", body, mentionIds: ids });
+      }}
+    >
+      <Composer
+        label="New comment"
+        people={state.people}
+        body={body}
+        setBody={(body) => {
+          setBody(body);
+          createKey.current = crypto.randomUUID();
+        }}
+        ids={ids}
+        setIds={(ids) => {
+          setIds(ids);
+          createKey.current = crypto.randomUUID();
+        }}
+        disabled={mutation.isPending}
+        pinned={Boolean(composerTarget)}
+        placeholder={composerTarget ? "Reply or mention someone…" : undefined}
+      />
+      {mutation.error && (
+        <p role="alert" className="text-sm text-destructive">
+          {mutation.error.message}
+        </p>
+      )}
+      {composerTarget ? (
+        <Button
+          size="icon"
+          aria-label="Post comment"
+          title="Post comment"
+          disabled={!body.trim() || mutation.isPending}
+          className="task-composer-send"
+        >
+          <SendHorizontal size={16} />
+        </Button>
+      ) : (
+        <Button disabled={!body.trim() || mutation.isPending} className="mt-3">
+          {mutation.isPending ? "Saving…" : "Post comment"}
+        </Button>
+      )}
+    </form>
+  );
   return (
     <section
       hidden={!active}
@@ -570,42 +628,10 @@ export function TaskComments({
           </li>
         ))}
       </ul>
-      {!task.archivedAt && (
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (body.trim() && !mutation.isPending)
-              mutation.mutate({ action: "create", body, mentionIds: ids });
-          }}
-        >
-          <Composer
-            label="New comment"
-            people={state.people}
-            body={body}
-            setBody={(body) => {
-              setBody(body);
-              createKey.current = crypto.randomUUID();
-            }}
-            ids={ids}
-            setIds={(ids) => {
-              setIds(ids);
-              createKey.current = crypto.randomUUID();
-            }}
-            disabled={mutation.isPending}
-          />
-          {mutation.error && (
-            <p role="alert" className="text-sm text-destructive">
-              {mutation.error.message}
-            </p>
-          )}
-          <Button
-            disabled={!body.trim() || mutation.isPending}
-            className="mt-3"
-          >
-            {mutation.isPending ? "Saving…" : "Post comment"}
-          </Button>
-        </form>
-      )}
+      {!task.archivedAt &&
+        (composerTarget
+          ? active && createPortal(composer, composerTarget)
+          : composer)}
       {task.archivedAt && (
         <p className="text-sm text-muted-foreground">
           Archived tasks are read-only.

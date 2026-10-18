@@ -206,6 +206,11 @@ export function importTargets(context: ImportContext) {
     { id: "status", name: "Status", aliases: ["status"] },
     { id: "priority", name: "Priority", aliases: ["priority"] },
     {
+      id: "start_date",
+      name: "Start date",
+      aliases: ["start date", "start_date", "start"],
+    },
+    {
       id: "due_date",
       name: "Due date",
       aliases: ["due date", "due_date", "target date"],
@@ -304,6 +309,7 @@ export function mapImportRow(
           ),
         );
       } else if (target === "due_date") input.dueDate = dateOnly.parse(value);
+      else if (target === "start_date") input.startDate = dateOnly.parse(value);
       else if (target === "group")
         input.groupId = resolve(value, choices(context.groups));
       else if (target === "assignees")
@@ -364,6 +370,12 @@ export function mapImportRow(
       );
     }
   }
+  if (
+    typeof input.startDate === "string" &&
+    typeof input.dueDate === "string" &&
+    input.startDate > input.dueDate
+  )
+    issues.push("Start date: Must be on or before the due date.");
   const parsed = createTaskSchema.safeParse(input);
   if (!parsed.success)
     issues.push(

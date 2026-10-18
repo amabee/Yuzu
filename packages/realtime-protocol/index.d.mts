@@ -14,8 +14,15 @@ export type BoardEvent = {
   notifyBoard?: boolean;
   expiresAt: number;
 };
+export type NavigationEvent = {
+  purpose: "event";
+  kind: "navigation";
+  eventId: string;
+  userIds: string[];
+  expiresAt: number;
+};
 export function signRealtimeToken(
-  payload: BoardTicket | UserTicket | BoardEvent,
+  payload: BoardTicket | UserTicket | BoardEvent | NavigationEvent,
   secret: string,
 ): string;
 export function verifyRealtimeToken(
@@ -29,7 +36,7 @@ export function verifyRealtimeToken(
   secret: string,
   purpose: "event",
   now?: number,
-): BoardEvent;
+): BoardEvent | NavigationEvent;
 
 export function verifyRealtimeToken(
   token: unknown,

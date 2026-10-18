@@ -1,5 +1,15 @@
 import { taskWhere, taskOrder } from "./task-query";
 import {
+  TIMELINE_TASK_LIMIT,
+  timelineQuerySchema,
+  type BoardTimeline,
+} from "@/lib/timeline-contract";
+import {
+  CALENDAR_TASK_LIMIT,
+  calendarQuerySchema,
+  type BoardCalendar,
+} from "@/lib/calendar-contract";
+import {
   boardQuerySchema,
   BOARD_PAGE_SIZE,
   type BoardQuery,
@@ -45,6 +55,7 @@ import {
   groupSchema,
   taskActionSchema,
   updateTaskSchema,
+  reorderTaskSchema,
   dateOnly,
   type BoardState,
   type BoardTask,
@@ -181,6 +192,18 @@ function options(board: { columns: { key: string; config: unknown }[] }) {
     board.columns.find((field) => field.key === "status")?.config,
   );
 }
+/** A task can't start after it is due; the database enforces the same rule. */
+function checkDateOrder(startDate: string | null, dueDate: string | null) {
+  if (startDate && dueDate && startDate > dueDate)
+    throw new SetupError(
+      422,
+      "START_AFTER_DUE",
+      "The start date must be on or before the due date.",
+    );
+}
+const toDate = (value: string | null | undefined) =>
+  value ? new Date(`${value}T00:00:00Z`) : null;
+
 export function validateCore(
   changes: {
     statusId?: string | null;
@@ -391,6 +414,7 @@ export function snapshot(task: LoadedTask) {
       checklist: checklistSchema.parse(task.checklist),
       statusId: task.statusId,
       priority: task.priority,
+      startDate: task.startDate?.toISOString().slice(0, 10) ?? null,
       dueDate: task.dueDate?.toISOString().slice(0, 10) ?? null,
       groupId: task.groupId,
       assigneeIds: task.assignees.map((person) => person.userId),
@@ -518,6 +542,20 @@ export async function boardState(
         where,
         _count: true,
       });
+      // The pulse covers the whole active board, whatever the filters.
+      const pulseCounts = await tx.task.groupBy({
+        by: ["statusId"],
+        where: { boardId, archivedAt: null },
+        _count: true,
+      });
+      const overdue = await tx.task.count({
+        where: {
+          boardId,
+          archivedAt: null,
+          dueDate: { lt: new Date(`${calendarDate}T00:00:00Z`) },
+          OR: [{ statusId: null }, { statusId: { not: "done" } }],
+        },
+      });
       const groupCounts = await tx.task.groupBy({
         by: ["groupId"],
         where: { boardId, groupId: { not: null } },
@@ -539,6 +577,7 @@ export async function boardState(
         createdById: task.createdById,
         createdByName: task.createdBy.name,
         revision: task.revision,
+        position: task.position,
         canEdit: !task.archivedAt && canEdit(task, context),
         commentCount: task._count.comments,
         attachmentCount: task._count.attachments,
@@ -580,6 +619,15 @@ export async function boardState(
         },
         focusedTask: focused ? presentTask(focused) : null,
         pendingApprovalCount,
+        pulse: {
+          statusCounts: Object.fromEntries(
+            pulseCounts.map((item) => [
+              item.statusId ?? "__none__",
+              item._count,
+            ]),
+          ),
+          overdue,
+        },
         savedViews: savedViews.map((view) => savedViewSchema.parse(view)),
         selectedViewId: savedViews.some((view) => view.id === selection?.viewId)
           ? selection!.viewId
@@ -621,6 +669,180 @@ export async function boardState(
     { isolationLevel: "RepeatableRead", timeout: 15000 },
   );
 }
+/** Tasks due inside one visible calendar range, plus undated tasks, with the
+ *  board's normal access check and view filters (except the "Due" filter,
+ *  which the calendar replaces with the range). */
+export async function boardCalendar(
+  boardId: string,
+  headers: Headers,
+  input: unknown,
+): Promise<BoardCalendar> {
+  const query = calendarQuerySchema.parse(input);
+  const { user, settings } = await requireIdentity(headers);
+  return db().$transaction(
+    async (tx) => {
+      const context = await access(tx, user.id, boardId);
+      const today = new Intl.DateTimeFormat("en-CA", {
+        timeZone: settings.timezone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date());
+      const filters = taskWhere(
+        boardId,
+        { ...query.config, due: "all" },
+        user.id,
+        today,
+      );
+      const inRange = {
+        AND: [
+          filters,
+          {
+            dueDate: {
+              gte: new Date(`${query.from}T00:00:00Z`),
+              lte: new Date(`${query.to}T00:00:00Z`),
+            },
+          },
+        ],
+      };
+      const undated = { AND: [filters, { dueDate: null }] };
+      const [dated, perDay, undatedTasks, undatedTotal] = await Promise.all([
+        tx.task.findMany({
+          where: inRange,
+          include: taskInclude,
+          orderBy: [{ dueDate: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+          take: CALENDAR_TASK_LIMIT,
+        }),
+        tx.task.groupBy({ by: ["dueDate"], where: inRange, _count: true }),
+        tx.task.findMany({
+          where: undated,
+          include: taskInclude,
+          orderBy: taskOrder(query.config.sort),
+          take: 50,
+        }),
+        tx.task.count({ where: undated }),
+      ]);
+      const present = (task: LoadedTask): BoardTask => ({
+        id: task.id,
+        ...snapshot(task),
+        createdById: task.createdById,
+        createdByName: task.createdBy.name,
+        revision: task.revision,
+        position: task.position,
+        canEdit: !task.archivedAt && canEdit(task, context),
+        commentCount: task._count.comments,
+        attachmentCount: task._count.attachments,
+        // The task sheet loads full activity when a task is opened.
+        activity: [],
+      });
+      return {
+        from: query.from,
+        to: query.to,
+        today,
+        weekStartsOn: settings.weekStartsOn === 0 ? 0 : 1,
+        tasks: dated.map(present),
+        dayCounts: Object.fromEntries(
+          perDay.map((row) => [
+            row.dueDate!.toISOString().slice(0, 10),
+            row._count,
+          ]),
+        ),
+        undated: undatedTasks.map(present),
+        undatedTotal,
+      };
+    },
+    { isolationLevel: "RepeatableRead", timeout: 15000 },
+  );
+}
+
+/** Tasks whose start-to-due span overlaps one visible timeline window, plus
+ *  unscheduled tasks, with the board's access check and view filters. */
+export async function boardTimeline(
+  boardId: string,
+  headers: Headers,
+  input: unknown,
+): Promise<BoardTimeline> {
+  const query = timelineQuerySchema.parse(input);
+  const { user, settings } = await requireIdentity(headers);
+  return db().$transaction(
+    async (tx) => {
+      const context = await access(tx, user.id, boardId);
+      const today = new Intl.DateTimeFormat("en-CA", {
+        timeZone: settings.timezone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date());
+      const filters = taskWhere(
+        boardId,
+        { ...query.config, due: "all" },
+        user.id,
+        today,
+      );
+      const from = new Date(`${query.from}T00:00:00Z`);
+      const to = new Date(`${query.to}T00:00:00Z`);
+      // A span runs from startDate ?? dueDate to dueDate ?? startDate.
+      const inWindow = {
+        AND: [
+          filters,
+          {
+            OR: [
+              { startDate: { lte: to }, dueDate: { gte: from } },
+              { startDate: null, dueDate: { gte: from, lte: to } },
+              { dueDate: null, startDate: { gte: from, lte: to } },
+            ],
+          },
+        ],
+      };
+      const unscheduled = {
+        AND: [filters, { startDate: null, dueDate: null }],
+      };
+      const [tasks, total, unscheduledTasks, unscheduledTotal] =
+        await Promise.all([
+          tx.task.findMany({
+            where: inWindow,
+            include: taskInclude,
+            orderBy: [
+              { startDate: { sort: "asc", nulls: "last" } },
+              { dueDate: "asc" },
+              { id: "asc" },
+            ],
+            take: TIMELINE_TASK_LIMIT,
+          }),
+          tx.task.count({ where: inWindow }),
+          tx.task.findMany({
+            where: unscheduled,
+            include: taskInclude,
+            orderBy: taskOrder(query.config.sort),
+            take: 50,
+          }),
+          tx.task.count({ where: unscheduled }),
+        ]);
+      const present = (task: LoadedTask): BoardTask => ({
+        id: task.id,
+        ...snapshot(task),
+        createdById: task.createdById,
+        createdByName: task.createdBy.name,
+        revision: task.revision,
+        position: task.position,
+        canEdit: !task.archivedAt && canEdit(task, context),
+        commentCount: task._count.comments,
+        attachmentCount: task._count.attachments,
+        activity: [],
+      });
+      return {
+        from: query.from,
+        to: query.to,
+        tasks: tasks.map(present),
+        total,
+        unscheduled: unscheduledTasks.map(present),
+        unscheduledTotal,
+      };
+    },
+    { isolationLevel: "RepeatableRead", timeout: 15000 },
+  );
+}
+
 export async function createTaskRecord(
   tx: DatabaseTransaction,
   context: Awaited<ReturnType<typeof access>>,
@@ -633,15 +855,23 @@ export async function createTaskRecord(
 ) {
   validateCore(body, context.board, people);
   validateValues(body.fieldValues, context.board, people);
+  checkDateOrder(body.startDate ?? null, body.dueDate ?? null);
+  // New tasks join the end of the board's manual order.
+  const last = await tx.task.aggregate({
+    where: { boardId: context.board.id },
+    _max: { position: true },
+  });
   const task = await tx.task.create({
     data: {
       boardId: context.board.id,
+      position: (last._max.position ?? 0) + POSITION_STEP,
       name: body.name,
       description: body.description ?? "",
       checklist: body.checklist ?? [],
       statusId: body.statusId,
       priority: body.priority ?? "NORMAL",
-      dueDate: body.dueDate ? new Date(`${body.dueDate}T00:00:00Z`) : null,
+      startDate: toDate(body.startDate),
+      dueDate: toDate(body.dueDate),
       groupId: body.groupId,
       createdById: authorId,
       createKey: body.createKey,
@@ -691,15 +921,20 @@ export async function applyTaskRecord(
   if (changes) {
     validateCore(changes, context.board, people);
     validateValues(changes.fieldValues, context.board, people);
+    // Compare against the saved value of whichever date isn't changing.
+    checkDateOrder(
+      changes.startDate !== undefined ? changes.startDate : before.startDate,
+      changes.dueDate !== undefined ? changes.dueDate : before.dueDate,
+    );
   }
-  const { assigneeIds, fieldValues, dueDate, ...scalar } = changes ?? {};
+  const { assigneeIds, fieldValues, dueDate, startDate, ...scalar } =
+    changes ?? {};
   const updated = await tx.task.updateMany({
     where: { id: task.id, revision: task.revision },
     data: {
       ...scalar,
-      ...(dueDate !== undefined
-        ? { dueDate: dueDate ? new Date(`${dueDate}T00:00:00Z`) : null }
-        : {}),
+      ...(dueDate !== undefined ? { dueDate: toDate(dueDate) } : {}),
+      ...(startDate !== undefined ? { startDate: toDate(startDate) } : {}),
       ...(action === "archive"
         ? { archivedAt: new Date() }
         : action === "restore"
@@ -860,6 +1095,7 @@ export async function createTaskInTransaction(
     description: body.description ?? "",
     checklist: body.checklist ?? [],
     priority: body.priority ?? "NORMAL",
+    startDate: body.startDate ?? null,
     dueDate: body.dueDate ?? null,
     assigneeIds: body.assigneeIds ?? [],
     fieldValues: body.fieldValues ?? {},
@@ -888,6 +1124,90 @@ export async function createTaskInTransaction(
       eligible: people,
     });
   return createTaskRecord(tx, context, people, initial, actorId, inputDigest);
+}
+
+const POSITION_STEP = 1024;
+
+/**
+ * Moves a task between two neighbours. Order is presentation, not task
+ * content, so it skips revisions, approvals and activity; edit access is
+ * still required.
+ */
+export async function reorderTask(input: unknown, headers: Headers) {
+  const body = reorderTaskSchema.parse(input);
+  const { user } = await requireIdentity(headers);
+  return serial(async (tx) => {
+    const task = await loadTask(tx, body.taskId);
+    if (!task) throw notFound();
+    const context = await access(tx, user.id, task.boardId, true);
+    if (!canEdit(task, context))
+      throw new SetupError(
+        403,
+        "FORBIDDEN",
+        "You do not have permission to change this task.",
+      );
+    if (task.archivedAt)
+      throw new SetupError(
+        409,
+        "TASK_ARCHIVED",
+        "Archived tasks are read-only. Ask a board manager to restore it first.",
+      );
+    const neighbours = async () => {
+      const ids = [body.afterId, body.beforeId].filter((id): id is string =>
+        Boolean(id),
+      );
+      const rows = await tx.task.findMany({
+        where: { id: { in: ids }, boardId: task.boardId },
+        select: { id: true, position: true },
+      });
+      if (rows.length !== ids.length)
+        throw new SetupError(
+          409,
+          "TASK_CHANGED",
+          "The board changed while you were moving this task. Try again.",
+        );
+      return {
+        after: rows.find((row) => row.id === body.afterId)?.position,
+        before: rows.find((row) => row.id === body.beforeId)?.position,
+      };
+    };
+    const place = ({
+      after,
+      before,
+    }: Awaited<ReturnType<typeof neighbours>>) =>
+      after !== undefined && before !== undefined
+        ? (after + before) / 2
+        : after !== undefined
+          ? after + POSITION_STEP
+          : before !== undefined
+            ? before - POSITION_STEP
+            : task.position;
+    let around = await neighbours();
+    if (
+      around.after !== undefined &&
+      around.before !== undefined &&
+      !(around.before - around.after > 1e-6)
+    ) {
+      // Neighbours are out of order or too close: respace the board once.
+      await tx.$executeRaw`
+        UPDATE "Task" AS t SET "position" = ordered.rank * ${POSITION_STEP}
+        FROM (
+          SELECT "id", ROW_NUMBER() OVER (ORDER BY "position", "createdAt", "id") AS rank
+          FROM "Task" WHERE "boardId" = ${task.boardId}
+        ) AS ordered
+        WHERE t."id" = ordered."id"`;
+      around = await neighbours();
+      if (!(around.before! > around.after!))
+        throw new SetupError(
+          409,
+          "TASK_CHANGED",
+          "The board changed while you were moving this task. Try again.",
+        );
+    }
+    const position = place(around);
+    await tx.task.update({ where: { id: task.id }, data: { position } });
+    return { taskId: task.id, boardId: task.boardId, position };
+  });
 }
 
 export async function mutateTask(
@@ -1051,12 +1371,13 @@ export async function manageBoard(
         },
         { key: "assignees", name: "Assignees", type: "PEOPLE", position: 2 },
         { key: "priority", name: "Priority", type: "PRIORITY", position: 3 },
-        { key: "due_date", name: "Due date", type: "DATE", position: 4 },
+        { key: "start_date", name: "Start date", type: "DATE", position: 4 },
+        { key: "due_date", name: "Due date", type: "DATE", position: 5 },
         {
           key: "description",
           name: "Description",
           type: "LONG_TEXT",
-          position: 5,
+          position: 6,
         },
       ];
       return tx.board.create({

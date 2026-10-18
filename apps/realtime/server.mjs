@@ -52,14 +52,20 @@ export async function startRealtimeServer({
       }
       if (!seen.has(event.eventId)) {
         seen.set(event.eventId, event.expiresAt);
-        io.to([
-          ...(event.notifyBoard !== false ? [`board:${event.boardId}`] : []),
-          ...(event.userIds ?? []).map((id) => `user:${id}`),
-        ]).emit("board:changed", {
-          boardId: event.boardId,
-          eventId: event.eventId,
-          ...(event.taskId ? { taskId: event.taskId } : {}),
-        });
+        if (event.kind === "navigation")
+          io.to(event.userIds.map((id) => `user:${id}`)).emit(
+            "navigation:changed",
+            { eventId: event.eventId },
+          );
+        else
+          io.to([
+            ...(event.notifyBoard !== false ? [`board:${event.boardId}`] : []),
+            ...(event.userIds ?? []).map((id) => `user:${id}`),
+          ]).emit("board:changed", {
+            boardId: event.boardId,
+            eventId: event.eventId,
+            ...(event.taskId ? { taskId: event.taskId } : {}),
+          });
       }
       response.writeHead(204);
       response.end();

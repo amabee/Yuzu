@@ -78,6 +78,7 @@ describe("CSV spreadsheet compatibility and safety", () => {
       description: "",
       statusId: "doing",
       priority: "HIGH",
+      startDate: "2026-10-14",
       dueDate: "2026-10-16",
       archivedAt: null,
       groupId: "group",
@@ -104,6 +105,8 @@ describe("CSV spreadsheet compatibility and safety", () => {
     const cells = csvTaskCells(task, context);
     const row = Object.fromEntries(headers.map((name, i) => [name, cells[i]]));
     expect(row).toMatchObject({
+      "Start date": "2026-10-14",
+      "Due date": "2026-10-16",
       Status: "In progress",
       Group: "Sprint",
       Assignees: '["Jane, Doe"]',

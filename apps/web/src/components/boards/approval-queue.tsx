@@ -35,6 +35,7 @@ const operations = {
 const coreKeys: Record<string, string> = {
   statusId: "status",
   assigneeIds: "assignees",
+  startDate: "start_date",
   dueDate: "due_date",
 };
 function displayValue(value: unknown, key: string, proposal: Proposal): string {
@@ -44,7 +45,7 @@ function displayValue(value: unknown, key: string, proposal: Proposal): string {
       : "No checklist items";
   if (value == null || value === "") return "None";
   if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (key === "dueDate" && typeof value === "string")
+  if ((key === "dueDate" || key === "startDate") && typeof value === "string")
     return formatDueDate(value, true);
   if (key === "groupId")
     return (

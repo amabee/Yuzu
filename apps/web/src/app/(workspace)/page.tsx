@@ -1,57 +1,112 @@
 import Link from "next/link";
-import { ArrowRight, CheckCheck, Settings2 } from "lucide-react";
 import { headers } from "next/headers";
+import { LayoutGrid } from "lucide-react";
+import { PageCrumbs } from "@/components/page-crumbs";
 import { workspaceContext } from "@/server/workspace-access";
 import { workspaceDashboard } from "@/server/dashboard-service";
-import { WorkspaceDashboard } from "@/components/dashboard/workspace-dashboard";
+import { approvalQueue } from "@/server/approval-service";
+import {
+  WorkspaceDashboard,
+  type WaitingApproval,
+} from "@/components/dashboard/workspace-dashboard";
+import { visibleProjects } from "@/server/project-service";
+
+const changeLabels: Record<string, string> = {
+  name: "name",
+  description: "description",
+  checklist: "checklist",
+  statusId: "status",
+  priority: "priority",
+  startDate: "start date",
+  dueDate: "due date",
+  groupId: "group",
+  assigneeIds: "assignees",
+  fieldValues: "fields",
+};
+
+function greeting(timezone: string) {
+  const hour = Number(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      hour: "numeric",
+      hourCycle: "h23",
+    }).format(new Date()),
+  );
+  return hour < 12
+    ? "Good morning"
+    : hour < 18
+      ? "Good afternoon"
+      : "Good evening";
+}
+
 export default async function OverviewPage() {
-  const { user, workspace, workspaces } = await workspaceContext();
-  const data = await workspaceDashboard(await headers());
+  const { user, settings, workspace, workspaces } = await workspaceContext();
+  const requestHeaders = await headers();
+  const [data, queue, projects] = await Promise.all([
+    workspaceDashboard(requestHeaders),
+    approvalQueue(requestHeaders, "PENDING"),
+    visibleProjects(user, {
+      workspaceId: { in: workspaces.map((item) => item.id) },
+      archived: false,
+    }),
+  ]);
+  // Requests this person can decide, as the Approvals page lists them.
+  const decidable = queue.proposals.filter(
+    (proposal) => proposal.canDecide && proposal.authorId !== user.id,
+  );
+  const waiting: WaitingApproval[] = decidable.slice(0, 3).map((proposal) => ({
+    id: proposal.id,
+    authorName: proposal.authorName,
+    taskName: proposal.name,
+    boardName: proposal.boardName,
+    operation: proposal.operation,
+    changes: Object.keys(proposal.changes)
+      .map((key) => changeLabels[key])
+      .filter(Boolean),
+  }));
+  const firstName = user.name.trim().split(/\s+/)[0] || user.name;
+  const summary = [
+    data.mine.upcoming
+      ? `${data.mine.upcoming} of your ${data.mine.upcoming === 1 ? "tasks is" : "tasks are"} due this week`
+      : "Nothing of yours is due this week",
+    decidable.length
+      ? `${decidable.length} ${decidable.length === 1 ? "approval is" : "approvals are"} waiting on you`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(", and ");
   return (
     <div>
-      <div className="workspace-breadcrumb">
-        <span>Workspaces</span>
-        <span>/</span>
-        <span>{workspace?.name ?? "Overview"}</span>
-      </div>
-      <div className="workspace-page-heading">
-        <div>
-          <h1 className="text-2xl sm:text-3xl">Good work starts here.</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            See what needs attention and how your team’s work is moving.
-          </p>
+      <PageCrumbs
+        items={[
+          { label: workspace?.name ?? "Workspace" },
+          { label: "Overview" },
+        ]}
+      />
+      <header className="overview-hero">
+        <div className="min-w-0">
+          <h1>
+            {greeting(settings.timezone)}, {firstName}.
+          </h1>
+          <p>{summary}.</p>
         </div>
-        <Link
-          href="/boards"
-          className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm text-primary-foreground"
-        >
-          View boards
-          <ArrowRight size={15} />
+        <Link href="/boards" className="overview-hero-link">
+          <LayoutGrid size={16} />
+          All boards
         </Link>
-      </div>
+      </header>
       <WorkspaceDashboard
         principalId={user.id}
         initialData={data}
+        waiting={waiting}
+        waitingTotal={decidable.length}
         workspaces={workspaces.map(({ id, name }) => ({ id, name }))}
+        projects={projects.map(({ id, name, workspaceId }) => ({
+          id,
+          name,
+          workspaceId,
+        }))}
       />
-      <div className="workspace-quick-links">
-        <Link href="/approvals">
-          <CheckCheck size={20} />
-          <div>
-            <h2>Approvals</h2>
-            <p>Keep decisions connected to the work.</p>
-          </div>
-          <ArrowRight size={16} />
-        </Link>
-        <Link href="/settings">
-          <Settings2 size={20} />
-          <div>
-            <h2>Workspace settings</h2>
-            <p>Shape the way your team works.</p>
-          </div>
-          <ArrowRight size={16} />
-        </Link>
-      </div>
     </div>
   );
 }
