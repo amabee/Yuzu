@@ -59,6 +59,7 @@ import {
 } from "lucide-react";
 import { BoardCalendarView } from "./board-calendar";
 import { PauseSlice } from "@/components/pause/decor";
+import { PauseAlert } from "@/components/pause/pause-alert";
 import { BoardTimelineView } from "./board-timeline";
 import { timelineWindow } from "@/lib/timeline-contract";
 import { Button } from "@/components/ui/button";
@@ -642,22 +643,18 @@ export function BoardSurface({
         </Button>
       </div>
       {(state.pendingApprovalCount ?? state.pendingApprovals.length) > 0 && (
-        <div className="approval-banner">
-          <span>
-            {state.pendingApprovalCount ?? state.pendingApprovals.length}{" "}
-            pending approval{" "}
-            {(state.pendingApprovalCount ?? state.pendingApprovals.length) === 1
-              ? "request"
-              : "requests"}
-            . Current task values stay unchanged.
-          </span>
-          <Link
-            className="shrink-0 font-medium text-primary underline-offset-4 hover:underline"
-            href="/approvals"
-          >
-            Review requests
-          </Link>
-        </div>
+        <PauseAlert
+          intent="warning"
+          className="board-approval-alert"
+          action={<Link href="/approvals">Review requests</Link>}
+        >
+          {state.pendingApprovalCount ?? state.pendingApprovals.length} pending
+          approval{" "}
+          {(state.pendingApprovalCount ?? state.pendingApprovals.length) === 1
+            ? "request"
+            : "requests"}
+          . Current task values stay unchanged.
+        </PauseAlert>
       )}
       <div className="board-toolbar">
         <div className="flex flex-wrap items-center gap-2">

@@ -3352,29 +3352,8 @@ body:has(:is(.task-sheet-panel, .export-sheet-panel)[data-state="open"])
 .board-toolbar {
   padding: 14px 0;
 }
-/* Pending approvals share the cream caution-tape signature. */
-.approval-banner {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px 12px;
+.board-approval-alert {
   margin-top: 14px;
-  padding: 9px 14px;
-  border-radius: 999px;
-  background: repeating-linear-gradient(
-    -45deg,
-    var(--pending) 0 10px,
-    color-mix(in srgb, var(--pending) 75%, var(--pending-foreground)) 10px 12px
-  );
-  color: var(--pending-foreground);
-  font-size: 13px;
-  font-weight: 600;
-}
-.approval-banner a {
-  color: inherit;
-  text-decoration: underline;
-  text-underline-offset: 3px;
 }
 /* Lanes sit directly on the panel; the status color lives in the header. */
 .board-lanes {
@@ -3664,6 +3643,17 @@ body:has(:is(.task-sheet-panel, .export-sheet-panel)[data-state="open"])
   margin-top: 6px;
   font-size: 13px;
   font-weight: 700;
+}
+/* Compact alerts keep their next step on the same line. */
+.pause-alert[data-compact] .pause-alert-body {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+}
+.pause-alert[data-compact] .pause-alert-action {
+  margin: 0 0 0 auto;
 }
 .pause-alert-action :is(a, button) {
   color: var(--tint);
