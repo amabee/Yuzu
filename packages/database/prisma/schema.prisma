@@ -76,6 +76,10 @@ model User {
   attachments             TaskAttachment[]
   commentRevisions        CommentRevision[]
   accessEvents            AccessEvent[]
+  projectsCreated         Project[]             @relation("ProjectCreator")
+  projectMemberships      ProjectMember[]       @relation("ProjectMemberUser")
+  projectGrants           ProjectMember[]       @relation("ProjectMemberGrantor")
+  projectInvitations      ProjectInvitation[]   @relation("ProjectInviter")
   primaryApprovalPolicies BoardApprovalPolicy[] @relation("PrimaryApprover")
   backupApprovalPolicies  BoardApprovalPolicy[] @relation("BackupApprover")
   proposalsAuthored       BoardProposal[]       @relation("ProposalAuthor")
@@ -152,10 +156,70 @@ model Workspace {
   createdBy    User              @relation(fields: [createdById], references: [id], onDelete: Restrict)
   members      WorkspaceMember[]
   boards       Board[]
+  projects     Project[]
   invitations  Invitation[]
   accessEvents AccessEvent[]
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
+}
+
+// A specific initiative inside a workspace. PUBLIC projects are visible to every
+// workspace member; PRIVATE projects only to their members (not even to admins,
+// who can only recover access through an audited action).
+model Project {
+  id          String              @id @default(uuid(7))
+  workspaceId String
+  workspace   Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  name        String
+  color       String
+  visibility  String              @default("PUBLIC")
+  position    Int
+  archivedAt  DateTime?           @db.Timestamptz(3)
+  revision    Int                 @default(1)
+  createdById String
+  createdBy   User                @relation("ProjectCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  members     ProjectMember[]
+  invitations ProjectInvitation[]
+  boards      Board[]
+  createdAt   DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime            @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId, archivedAt, position])
+}
+
+// Project members may also be project-only people invited from outside the workspace.
+model ProjectMember {
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation("ProjectMemberUser", fields: [userId], references: [id], onDelete: Cascade)
+  role        String   @default("MEMBER")
+  projectOnly Boolean  @default(false)
+  grantedById String
+  grantedBy   User     @relation("ProjectMemberGrantor", fields: [grantedById], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+
+  @@id([projectId, userId])
+  @@index([userId])
+}
+
+model ProjectInvitation {
+  id          String    @id @default(uuid(7))
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  email       String
+  role        String    @default("MEMBER")
+  invitedById String
+  invitedBy   User      @relation("ProjectInviter", fields: [invitedById], references: [id], onDelete: Restrict)
+  tokenDigest String    @unique
+  expiresAt   DateTime  @db.Timestamptz(3)
+  sentAt      DateTime? @db.Timestamptz(3)
+  acceptedAt  DateTime? @db.Timestamptz(3)
+  revokedAt   DateTime? @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@unique([projectId, email])
 }
 
 model WorkspaceMember {
@@ -202,6 +266,10 @@ model Board {
   name           String
   workspaceId    String
   workspace      Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  // Null means a standalone board directly in the workspace.
+  projectId      String?
+  project        Project?             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  position       Int                  @default(0)
   createdById    String
   createdBy      User                 @relation(fields: [createdById], references: [id], onDelete: Restrict)
   managers       BoardManager[]
@@ -219,6 +287,7 @@ model Board {
   updatedAt      DateTime             @updatedAt
 
   @@index([workspaceId])
+  @@index([projectId, position])
 }
 
 model BoardColumn {

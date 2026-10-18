@@ -1,7 +1,7 @@
 import { getDatabase } from "@yuzu/database";
 import { signRealtimeToken } from "@yuzu/realtime-protocol";
 import { recordId } from "@/lib/board-contract";
-import { requireIdentity, workspaceScope } from "./team-access";
+import { boardScope, requireIdentity } from "./team-access";
 import { SetupError } from "./setup/security";
 import { z } from "zod";
 export async function authorizeBoardRealtime(
@@ -11,7 +11,7 @@ export async function authorizeBoardRealtime(
   const { user } = await requireIdentity(headers);
   if (boardId) {
     const board = await getDatabase().board.findFirst({
-      where: { id: boardId, workspace: workspaceScope(user) },
+      where: { id: boardId, ...boardScope(user) },
       select: { id: true },
     });
     if (!board)
@@ -94,6 +94,12 @@ export async function notifyBoardMutation(input: unknown, result?: unknown) {
       select: {
         managers: { select: { userId: true } },
         workspace: { select: { members: { select: { userId: true } } } },
+        project: {
+          select: {
+            visibility: true,
+            members: { select: { userId: true } },
+          },
+        },
         approvalPolicy: {
           select: { primaryApproverId: true, backupApproverId: true },
         },
@@ -138,6 +144,12 @@ export async function notifyBoardMutation(input: unknown, result?: unknown) {
       distinct: ["recipientId"],
       select: { recipientId: true },
     });
+    // Boards in a private project only ever notify that project's members:
+    // even a hint that the board changed would reveal that it exists.
+    const privateAudience =
+      board?.project?.visibility === "PRIVATE"
+        ? new Set(board.project.members.map((member) => member.userId))
+        : null;
     const recipients = [
       ...new Set(
         [
@@ -154,7 +166,7 @@ export async function notifyBoardMutation(input: unknown, result?: unknown) {
           ...inboxRecipients.map((item) => item.recipientId),
         ].filter((id): id is string => Boolean(id)),
       ),
-    ];
+    ].filter((id) => !privateAudience || privateAudience.has(id));
     const batches = recipients.length
       ? Array.from({ length: Math.ceil(recipients.length / 20) }, (_, i) =>
           recipients.slice(i * 20, (i + 1) * 20),

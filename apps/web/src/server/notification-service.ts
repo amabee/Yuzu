@@ -5,18 +5,14 @@ import {
   type NotificationInbox,
 } from "@/lib/notification-contract";
 import { recordId } from "@/lib/id-contract";
-import {
-  requireIdentity,
-  workspaceScope,
-  isAdministrator,
-} from "./team-access";
+import { requireIdentity, boardScope, isAdministrator } from "./team-access";
 import { SetupError } from "./setup/security";
 import { serial } from "./board-service";
 
 function visibility(user: { id: string; role: string }) {
   return {
     recipientId: user.id,
-    board: { workspace: workspaceScope(user) },
+    board: boardScope(user),
     ...(isAdministrator(user.role)
       ? {}
       : {

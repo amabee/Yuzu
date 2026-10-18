@@ -2,7 +2,7 @@ import { z } from "zod";
 import { createRecordId, getDatabase } from "@yuzu/database";
 import { putCsvObject, getCsvObject } from "@yuzu/database/csv-objects";
 import { access, serial } from "./board-service";
-import { requireIdentity } from "./team-access";
+import { boardScope, requireIdentity } from "./team-access";
 import { readTicket } from "./csv-import-service";
 import { SetupError, digest } from "./setup/security";
 import {
@@ -32,12 +32,7 @@ export async function listTransfers(headers: Headers) {
       ownerId: user.id,
       dismissedAt: null,
       expiresAt: { gt: new Date() },
-      board: {
-        workspace:
-          user.role === "OWNER" || user.role === "ADMIN"
-            ? {}
-            : { members: { some: { userId: user.id } } },
-      },
+      board: boardScope(user),
     },
     orderBy: { createdAt: "desc" },
     take: 30,

@@ -54,6 +54,7 @@ test.beforeEach(async () => {
   await db.setupClaim.deleteMany();
   await db.task.deleteMany();
   await db.board.deleteMany();
+  await db.project.deleteMany();
   await db.workspaceMember.deleteMany();
   await db.workspace.deleteMany();
   await db.user.deleteMany();

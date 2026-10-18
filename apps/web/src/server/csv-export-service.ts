@@ -99,7 +99,7 @@ export async function exportBoardCsvForActor(
         const context = {
           fields,
           groups: board.groups,
-          people: await eligiblePeople(tx, board.workspaceId),
+          people: await eligiblePeople(tx, board),
         };
         const prefix = "\ufeff" + csvLine(csvHeaders(fields));
         let bytes = Buffer.byteLength(prefix);
