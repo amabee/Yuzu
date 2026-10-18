@@ -1,5 +1,10 @@
 import { taskWhere, taskOrder } from "./task-query";
 import {
+  CALENDAR_TASK_LIMIT,
+  calendarQuerySchema,
+  type BoardCalendar,
+} from "@/lib/calendar-contract";
+import {
   boardQuerySchema,
   BOARD_PAGE_SIZE,
   type BoardQuery,
@@ -621,6 +626,91 @@ export async function boardState(
     { isolationLevel: "RepeatableRead", timeout: 15000 },
   );
 }
+/** Tasks due inside one visible calendar range, plus undated tasks, with the
+ *  board's normal access check and view filters (except the "Due" filter,
+ *  which the calendar replaces with the range). */
+export async function boardCalendar(
+  boardId: string,
+  headers: Headers,
+  input: unknown,
+): Promise<BoardCalendar> {
+  const query = calendarQuerySchema.parse(input);
+  const { user, settings } = await requireIdentity(headers);
+  return db().$transaction(
+    async (tx) => {
+      const context = await access(tx, user.id, boardId);
+      const today = new Intl.DateTimeFormat("en-CA", {
+        timeZone: settings.timezone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date());
+      const filters = taskWhere(
+        boardId,
+        { ...query.config, due: "all" },
+        user.id,
+        today,
+      );
+      const inRange = {
+        AND: [
+          filters,
+          {
+            dueDate: {
+              gte: new Date(`${query.from}T00:00:00Z`),
+              lte: new Date(`${query.to}T00:00:00Z`),
+            },
+          },
+        ],
+      };
+      const undated = { AND: [filters, { dueDate: null }] };
+      const [dated, perDay, undatedTasks, undatedTotal] = await Promise.all([
+        tx.task.findMany({
+          where: inRange,
+          include: taskInclude,
+          orderBy: [{ dueDate: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+          take: CALENDAR_TASK_LIMIT,
+        }),
+        tx.task.groupBy({ by: ["dueDate"], where: inRange, _count: true }),
+        tx.task.findMany({
+          where: undated,
+          include: taskInclude,
+          orderBy: taskOrder(query.config.sort),
+          take: 50,
+        }),
+        tx.task.count({ where: undated }),
+      ]);
+      const present = (task: LoadedTask): BoardTask => ({
+        id: task.id,
+        ...snapshot(task),
+        createdById: task.createdById,
+        createdByName: task.createdBy.name,
+        revision: task.revision,
+        canEdit: !task.archivedAt && canEdit(task, context),
+        commentCount: task._count.comments,
+        attachmentCount: task._count.attachments,
+        // The task sheet loads full activity when a task is opened.
+        activity: [],
+      });
+      return {
+        from: query.from,
+        to: query.to,
+        today,
+        weekStartsOn: settings.weekStartsOn === 0 ? 0 : 1,
+        tasks: dated.map(present),
+        dayCounts: Object.fromEntries(
+          perDay.map((row) => [
+            row.dueDate!.toISOString().slice(0, 10),
+            row._count,
+          ]),
+        ),
+        undated: undatedTasks.map(present),
+        undatedTotal,
+      };
+    },
+    { isolationLevel: "RepeatableRead", timeout: 15000 },
+  );
+}
+
 export async function createTaskRecord(
   tx: DatabaseTransaction,
   context: Awaited<ReturnType<typeof access>>,

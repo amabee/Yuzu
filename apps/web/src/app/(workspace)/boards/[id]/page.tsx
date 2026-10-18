@@ -10,12 +10,14 @@ import { Rocket, ChevronRight } from "lucide-react";
 import { headers } from "next/headers";
 import { boardState } from "@/server/board-service";
 import { z } from "zod";
+import { calendarMonthSchema } from "@/lib/calendar-contract";
 import { ProjectBadge } from "@/components/projects/project-badge";
 
 // "kanban" in URLs; saved view configs keep their original "board" value.
-const urlLayouts = new Map<string, "board" | "table">([
+const urlLayouts = new Map<string, "board" | "table" | "calendar">([
   ["kanban", "board"],
   ["table", "table"],
+  ["calendar", "calendar"],
 ]);
 
 export default async function BoardPage({
@@ -28,9 +30,10 @@ export default async function BoardPage({
     tab?: string;
     view?: string;
     layout?: string;
+    month?: string;
   }>;
 }) {
-  const { user } = await workspaceContext();
+  const { user, settings } = await workspaceContext();
   const board = await getDatabase().board.findFirst({
     where: {
       id: (await params).id,
@@ -151,6 +154,16 @@ export default async function BoardPage({
             .safeParse((await searchParams).view).data
         }
         initialLayout={urlLayouts.get((await searchParams).layout ?? "")}
+        calendar={{
+          today: new Intl.DateTimeFormat("en-CA", {
+            timeZone: settings.timezone,
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+          }).format(new Date()),
+          weekStartsOn: settings.weekStartsOn === 0 ? 0 : 1,
+          month: calendarMonthSchema.safeParse((await searchParams).month).data,
+        }}
         name={board.name}
         fields={board.columns}
         statuses={

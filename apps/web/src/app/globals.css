@@ -2163,3 +2163,256 @@ body:has(:is(.task-sheet-panel, .export-sheet-panel)[data-state="open"])
 .project-panels small {
   flex-shrink: 0;
 }
+
+/* ---------- Board calendar ---------- */
+.board-calendar {
+  display: grid;
+  gap: 12px;
+}
+.calendar-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.calendar-toolbar h2 {
+  font-family: var(--font-display, inherit);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.calendar-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 240px;
+  gap: 16px;
+  align-items: start;
+}
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--border);
+  gap: 1px;
+}
+.calendar-weekday {
+  padding: 8px 10px;
+  background: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.calendar-day {
+  display: flex;
+  min-height: 118px;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: var(--card);
+}
+.calendar-day[data-outside] {
+  background: color-mix(in srgb, var(--muted) 55%, var(--card));
+}
+.calendar-day[data-outside] .calendar-day-number {
+  color: var(--muted-foreground);
+}
+.calendar-day[data-drop] {
+  background: color-mix(in srgb, var(--primary) 9%, var(--card));
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+.calendar-day-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.calendar-day-number {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.calendar-day[data-today] .calendar-day-number {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+.calendar-add {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--muted-foreground);
+  opacity: 0;
+}
+.calendar-day:hover .calendar-add,
+.calendar-add:focus-visible {
+  opacity: 1;
+}
+.calendar-add:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+@media (hover: none) {
+  .calendar-add {
+    opacity: 1;
+  }
+}
+.calendar-day-tasks {
+  display: grid;
+  gap: 3px;
+}
+.calendar-chip {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+.calendar-chip:hover {
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+}
+.calendar-chip:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.calendar-chip[draggable="true"] {
+  cursor: grab;
+}
+.calendar-chip[data-done] {
+  opacity: 0.55;
+}
+.calendar-chip[data-done] .calendar-chip-name {
+  text-decoration: line-through;
+}
+.calendar-chip[data-carried] {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 30%, transparent);
+}
+.calendar-chip-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--muted-foreground);
+}
+.calendar-chip-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.calendar-chip-people {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.calendar-day-count {
+  display: none;
+  place-items: center;
+  width: 100%;
+  min-height: 24px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--primary) 12%, var(--card));
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+.calendar-more {
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary);
+  text-align: left;
+}
+.calendar-more:hover {
+  background: var(--muted);
+}
+.calendar-popover {
+  z-index: 50;
+  width: 260px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 10px 30px -12px
+    color-mix(in srgb, var(--foreground) 35%, transparent);
+}
+.calendar-undated {
+  /* Stays in reach while dragging a task from a lower week. */
+  position: sticky;
+  top: 80px;
+  max-height: calc(100svh - 100px);
+  overflow-y: auto;
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+.calendar-undated[data-drop] {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 7%, var(--card));
+}
+.calendar-undated h3 {
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+@media (max-width: 900px) {
+  .calendar-layout {
+    grid-template-columns: 1fr;
+  }
+  .calendar-undated {
+    position: static;
+    max-height: none;
+  }
+}
+@media (max-width: 640px) {
+  .calendar-day {
+    min-height: 64px;
+    padding: 3px;
+  }
+  .calendar-weekday {
+    padding: 6px 2px;
+    text-align: center;
+  }
+  .calendar-day-tasks > .calendar-chip,
+  .calendar-day-tasks > .calendar-more {
+    display: none;
+  }
+  .calendar-day-count {
+    display: grid;
+  }
+  .calendar-add {
+    width: 18px;
+    height: 18px;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .calendar-chip,
+  .calendar-day {
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease;
+  }
+}
+.calendar-anchor {
+  height: 0;
+}
