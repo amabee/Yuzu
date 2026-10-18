@@ -25,6 +25,7 @@ import {
   AssigneeAvatars,
   StatusIcon,
   optionBadgeStyle,
+  formatDueDate,
   priorityOptions,
 } from "./board-presentation";
 import { Button } from "@/components/ui/button";
@@ -498,28 +499,24 @@ export function TaskEditor({
               <div className="task-prop">
                 <span className="task-prop-label">Dates</span>
                 <div className="task-prop-value task-prop-dates">
-                  <input
-                    aria-label="Task start date"
-                    type="date"
+                  <DateChip
+                    label="Task start date"
+                    empty="Start"
                     value={draft.startDate}
                     max={draft.dueDate || undefined}
-                    aria-invalid={dateOrderInvalid || undefined}
-                    aria-describedby={
+                    invalid={dateOrderInvalid}
+                    describedBy={
                       dateOrderInvalid ? "task-date-order" : undefined
                     }
-                    onChange={(event) =>
-                      editDraft({ startDate: event.target.value })
-                    }
+                    onChange={(startDate) => editDraft({ startDate })}
                   />
                   <ArrowRight size={14} aria-hidden="true" />
-                  <input
-                    aria-label="Task due date"
-                    type="date"
+                  <DateChip
+                    label="Task due date"
+                    empty="Due"
                     value={draft.dueDate}
                     min={draft.startDate || undefined}
-                    onChange={(event) =>
-                      editDraft({ dueDate: event.target.value })
-                    }
+                    onChange={(dueDate) => editDraft({ dueDate })}
                   />
                 </div>
               </div>
@@ -1122,5 +1119,49 @@ export function TaskEditor({
         )}
       </footer>
     </>
+  );
+}
+
+/** A date that reads as "Oct 19, 2026" and opens the native picker. */
+function DateChip({
+  label,
+  empty,
+  value,
+  min,
+  max,
+  invalid,
+  describedBy,
+  onChange,
+}: {
+  label: string;
+  empty: string;
+  value: string;
+  min?: string;
+  max?: string;
+  invalid?: boolean;
+  describedBy?: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <span className="task-date-chip" data-empty={!value || undefined}>
+      {value ? formatDueDate(value, true) : empty}
+      <input
+        aria-label={label}
+        type="date"
+        value={value}
+        min={min}
+        max={max}
+        aria-invalid={invalid || undefined}
+        aria-describedby={describedBy}
+        onClick={(event) => {
+          try {
+            event.currentTarget.showPicker();
+          } catch {
+            // Older browsers keep the default date input behavior.
+          }
+        }}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </span>
   );
 }

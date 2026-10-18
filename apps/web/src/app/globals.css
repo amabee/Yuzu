@@ -3976,24 +3976,31 @@ body:has(:is(.task-sheet-panel, .export-sheet-panel)[data-state="open"])
     var(--card);
   box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.45);
 }
-.task-panel > .pause-leaf {
-  top: -16px;
-  left: -10px;
+.task-panel > .task-panel-leaf {
+  position: absolute;
+  z-index: 2;
+  top: -26px;
+  left: -34px;
+  width: 80px;
+  height: 40px;
+  background: url("/toasts/yuzu-leaf-corner.svg") center / contain no-repeat;
+  transform-origin: 70% 70%;
+  pointer-events: none;
 }
-.task-panel[data-state="open"] > .pause-leaf {
+.task-panel[data-state="open"] > .task-panel-leaf {
   animation: pause-sway 4s ease-in-out 300ms infinite alternate;
 }
 .task-panel > .pause-clip .pause-slice {
-  right: -70px;
-  bottom: 120px;
-  width: 260px;
-  height: 260px;
+  right: -80px;
+  bottom: -60px;
+  width: 300px;
+  height: 300px;
   color: var(--yuzu);
-  opacity: 0.07;
+  opacity: 0.14;
 }
 /* Lift content above the slice, but leave the absolutely placed close
    button where Radix puts it. */
-.task-panel > :not(.pause-leaf, .pause-clip, .absolute) {
+.task-panel > :not(.task-panel-leaf, .pause-clip, .absolute) {
   position: relative;
 }
 .task-panel .task-sheet-header {
@@ -4017,8 +4024,10 @@ body:has(:is(.task-sheet-panel, .export-sheet-panel)[data-state="open"])
 }
 .task-panel .task-sheet-tabs [role="tab"] {
   flex: 1;
+  justify-content: center;
   height: 34px;
   margin: 0;
+  padding: 0 8px;
   border: none;
   border-radius: 9px;
   color: var(--muted-foreground);
@@ -4030,6 +4039,21 @@ body:has(:is(.task-sheet-panel, .export-sheet-panel)[data-state="open"])
   color: var(--foreground);
   box-shadow: 0 4px 10px -4px rgba(0, 0, 0, 0.3);
 }
+.task-panel .task-sheet-tabs [role="tab"]:hover:not([aria-selected="true"]) {
+  color: var(--foreground);
+}
+.task-panel .task-sheet-tabs [role="tab"] span {
+  min-width: 18px;
+  padding: 1px 6px;
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+  color: inherit;
+  font-size: 11px;
+  font-weight: 600;
+}
+.task-panel .task-sheet-tabs [role="tab"][aria-selected="true"] span {
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  color: var(--primary);
+}
 .task-panel .task-sheet-tabs [role="tab"]::after {
   display: none;
 }
@@ -4039,8 +4063,8 @@ body:has(:is(.task-sheet-panel, .export-sheet-panel)[data-state="open"])
   background: var(--card);
 }
 .task-panel .task-sheet-footer button[type="submit"] {
-  background: var(--yuzu);
-  color: var(--pause-on-dark);
+  background: var(--primary);
+  color: var(--primary-foreground);
 }
 body:has(.task-panel[data-state="open"]) .yuzu-toast-viewport {
   right: 592px;
@@ -4096,6 +4120,7 @@ body:has(.task-panel[data-state="open"]) .yuzu-toast-viewport {
   margin-inline: -0.35rem;
   resize: none;
   field-sizing: content;
+  overflow: hidden;
   border: 1px solid transparent;
   border-radius: 0.6rem;
   background: transparent;
@@ -4192,12 +4217,29 @@ fieldset:disabled .task-prop-value:hover {
   border-radius: 999px;
   background: var(--muted-foreground);
 }
-.task-prop-dates input {
-  flex: 0 1 auto;
-  padding: 0.2rem 0.5rem;
+.task-date-chip {
+  position: relative;
+  padding: 0.2rem 0.6rem;
   border-radius: 0.45rem;
   background: color-mix(in oklab, var(--muted) 70%, transparent);
-  color-scheme: inherit;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.task-date-chip[data-empty] {
+  color: var(--muted-foreground);
+}
+.task-date-chip:has(input[aria-invalid="true"]) {
+  box-shadow: inset 0 0 0 1px var(--destructive);
+}
+.task-date-chip:focus-within {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.task-prop-value .task-date-chip input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
 }
 .task-prop-dates svg {
   color: var(--muted-foreground);

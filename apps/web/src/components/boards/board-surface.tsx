@@ -58,7 +58,7 @@ import {
   Flag,
 } from "lucide-react";
 import { BoardCalendarView } from "./board-calendar";
-import { PauseLeaf, PauseSlice } from "@/components/pause/decor";
+import { PauseSlice } from "@/components/pause/decor";
 import { BoardTimelineView } from "./board-timeline";
 import { timelineWindow } from "@/lib/timeline-contract";
 import { Button } from "@/components/ui/button";
@@ -1602,7 +1602,7 @@ export function BoardSurface({
           }}
           className="board-details-panel task-sheet-panel task-panel outline-none"
         >
-          <PauseLeaf />
+          <span className="task-panel-leaf" aria-hidden="true" />
           <span className="pause-clip" aria-hidden="true">
             <PauseSlice />
           </span>
