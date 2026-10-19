@@ -83,7 +83,7 @@ function boardChoices(state: BoardState) {
     statuses,
     priorities: priorityOptions(state),
     groups: state.groups,
-    people: state.people,
+    people: state.people.filter((person) => !person.deactivated),
     selectFields: custom.filter((field) =>
       ["SINGLE_SELECT", "TAGS"].includes(field.type),
     ),

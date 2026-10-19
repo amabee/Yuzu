@@ -28,6 +28,24 @@ function makeAuth() {
     session: { cookieCache: { enabled: false } },
     rateLimit: { enabled: true, window: 60, max: 30 },
     logger: { disabled: true },
+    databaseHooks: {
+      session: {
+        create: {
+          // Runs after the password check, so it reveals nothing to guessers.
+          before: async (session) => {
+            const user = await getDatabase().user.findUnique({
+              where: { id: session.userId },
+              select: { deactivatedAt: true },
+            });
+            if (user?.deactivatedAt)
+              throw new APIError("FORBIDDEN", {
+                message:
+                  "This account is deactivated. Ask an administrator to reactivate it.",
+              });
+          },
+        },
+      },
+    },
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
         if (

@@ -369,7 +369,7 @@ export async function scanDigests(now = new Date()) {
   if (settings?.setupState !== "READY") return 0;
   const zone = settings.timezone ?? "UTC";
   const people = await db().user.findMany({
-    where: { digestTime: { not: null } },
+    where: { digestTime: { not: null }, deactivatedAt: null },
     select: {
       id: true,
       name: true,

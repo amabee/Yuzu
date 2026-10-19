@@ -66,6 +66,22 @@ export default async function SettingsPage() {
       )}
       {isAdministrator(user.role) && (
         <Link
+          href="/settings/workspaces"
+          className="ml-3 mt-6 inline-flex rounded-lg border bg-card px-4 py-3 text-sm font-medium"
+        >
+          Workspaces
+        </Link>
+      )}
+      {isAdministrator(user.role) && (
+        <Link
+          href="/settings/audit"
+          className="ml-3 mt-6 inline-flex rounded-lg border bg-card px-4 py-3 text-sm font-medium"
+        >
+          Audit log
+        </Link>
+      )}
+      {isAdministrator(user.role) && (
+        <Link
           href="/settings/projects"
           className="ml-3 mt-6 inline-flex rounded-lg border bg-card px-4 py-3 text-sm font-medium"
         >

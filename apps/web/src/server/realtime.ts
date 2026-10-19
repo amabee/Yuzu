@@ -269,3 +269,36 @@ export async function notifyNavigationChange(target: {
     // Live hints are best effort; navigation still refreshes on next load.
   }
 }
+
+/** Closes these people's live connections, after their sessions end. */
+export const disconnectPeople = (userIds: string[]) =>
+  userEvent("signout", userIds);
+/** Tells these people to reload their navigation (their role changed). */
+export const refreshNavigationFor = (userIds: string[]) =>
+  userEvent("navigation", userIds);
+
+async function userEvent(kind: "signout" | "navigation", userIds: string[]) {
+  const secret = process.env.REALTIME_SECRET;
+  const internalURL = process.env.REALTIME_INTERNAL_URL;
+  if (!secret || !internalURL) return;
+  try {
+    for (let start = 0; start < userIds.length; start += 20)
+      await fetch(new URL("/events", internalURL), {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: signRealtimeToken(
+          {
+            purpose: "event",
+            kind,
+            userIds: userIds.slice(start, start + 20),
+            eventId: crypto.randomUUID(),
+            expiresAt: Date.now() + 10_000,
+          },
+          secret,
+        ),
+        signal: AbortSignal.timeout(1000),
+      });
+  } catch {
+    // Best effort: a signed-out person's tickets can't be renewed anyway.
+  }
+}

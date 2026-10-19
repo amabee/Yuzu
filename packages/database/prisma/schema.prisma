@@ -96,6 +96,12 @@ model User {
   digestTime              String?                  @default("08:00")
   lastDigestAt            DateTime?                @db.Timestamptz(3)
   automationRules         AutomationRule[]         @relation("AutomationCreator")
+  /// Deactivated people can't sign in; their name stays on their work.
+  deactivatedAt           DateTime?                @db.Timestamptz(3)
+  deactivatedById         String?
+  deactivatedBy           User?                    @relation("UserDeactivator", fields: [deactivatedById], references: [id], onDelete: SetNull)
+  usersDeactivated        User[]                   @relation("UserDeactivator")
+  auditEvents             AuditEvent[]             @relation("AuditActor")
 }
 
 model Session {
@@ -169,8 +175,31 @@ model Workspace {
   projects     Project[]
   invitations  Invitation[]
   accessEvents AccessEvent[]
+  auditEvents  AuditEvent[]
+  /// Archived workspaces are hidden, with their boards, until restored.
+  archivedAt   DateTime?         @db.Timestamptz(3)
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
+}
+
+/// Installation-wide record of access, people and settings changes.
+model AuditEvent {
+  id          String     @id @default(uuid(7))
+  /// Null for events without a signed-in actor, such as sign-in lockouts.
+  actorId     String?
+  actor       User?      @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  action      String
+  /// Who or what it was about, kept as text so it survives later changes.
+  subject     String
+  subjectId   String?
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  details     String?
+  createdAt   DateTime   @default(now()) @db.Timestamptz(3)
+
+  @@index([createdAt])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
 }
 
 // A specific initiative inside a workspace. PUBLIC projects are visible to every
