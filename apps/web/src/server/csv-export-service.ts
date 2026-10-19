@@ -1,5 +1,6 @@
 import { getDatabase, createRecordId } from "@yuzu/database";
 import { access, eligiblePeople } from "./board-service";
+import { audit } from "./audit";
 import { requireIdentity, isAdministrator } from "./team-access";
 import { SetupError } from "./setup/security";
 import {
@@ -255,7 +256,15 @@ export async function exportBoardCsvForActor(
   // Recheck current access after the snapshot finishes, before any bytes leave the server.
 
   await getDatabase().$transaction(async (tx) => {
-    await access(tx, actorId, request.boardId);
+    const { board } = await access(tx, actorId, request.boardId);
+    await audit(tx, {
+      actorId,
+      action: "CSV_EXPORTED",
+      subject: board.name,
+      subjectId: board.id,
+      workspaceId: board.workspaceId,
+      details: `${result.rowCount} ${result.rowCount === 1 ? "row" : "rows"}`,
+    });
     await tx.boardEvent.create({
       data: {
         id: createRecordId(),

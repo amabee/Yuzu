@@ -9,7 +9,7 @@ import { requireIdentity, boardScope, isAdministrator } from "./team-access";
 import { SetupError } from "./setup/security";
 import { serial } from "./board-service";
 
-function visibility(user: { id: string; role: string }) {
+export function visibility(user: { id: string; role: string }) {
   return {
     recipientId: user.id,
     board: boardScope(user),

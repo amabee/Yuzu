@@ -83,7 +83,7 @@ function boardChoices(state: BoardState) {
     statuses,
     priorities: priorityOptions(state),
     groups: state.groups,
-    people: state.people,
+    people: state.people.filter((person) => !person.deactivated),
     selectFields: custom.filter((field) =>
       ["SINGLE_SELECT", "TAGS"].includes(field.type),
     ),
@@ -652,7 +652,8 @@ function RuleBuilder({
       (action) =>
         action.kind === "create.task" ||
         (action.kind === "webhook" && meta.canWebhook) ||
-        (action.kind === "notify" && action.to === "people"),
+        ((action.kind === "notify" || action.kind === "email") &&
+          action.to === "people"),
     );
     return kept.length ? kept : [newAction("create.task")];
   };
@@ -775,6 +776,21 @@ function RuleBuilder({
         dueInDays: null,
       };
     if (kind === "webhook") return { kind, url: "" };
+    if (kind === "email")
+      return scheduled
+        ? {
+            kind,
+            to: "people",
+            userIds: [firstPerson],
+            subject: "Reminder from {board}",
+            message: "Time for the {rule}",
+          }
+        : {
+            kind,
+            to: "assignees",
+            subject: "Heads up: {task}",
+            message: "{task} is due {due}",
+          };
     if (kind.startsWith("date:"))
       return { kind: "set.date", field: kind.slice(5), days: 3 };
     const fieldId = kind.slice(6);
@@ -1241,6 +1257,7 @@ function RuleBuilder({
               onChange={(value) => setAction(index, newAction(value))}
             >
               <option value="notify">Notify</option>
+              <option value="email">Send an email</option>
               <option value="create.task">Create a task</option>
               {(meta.canWebhook || action.kind === "webhook") && (
                 <option value="webhook">Send a webhook</option>
@@ -1457,6 +1474,78 @@ function RuleBuilder({
                     </small>
                   </label>
                 )}
+              </>
+            )}
+            {action.kind === "email" && (
+              <>
+                <span>to</span>
+                <Pick
+                  label={`Action ${index + 1} who`}
+                  value={
+                    action.to === "people"
+                      ? `person:${action.userIds?.[0] ?? ""}`
+                      : action.to
+                  }
+                  onChange={(value) =>
+                    setAction(
+                      index,
+                      value.startsWith("person:")
+                        ? {
+                            ...action,
+                            to: "people",
+                            userIds: [value.slice(7)],
+                          }
+                        : {
+                            ...action,
+                            to: value as "assignees" | "creator",
+                            userIds: undefined,
+                          },
+                    )
+                  }
+                >
+                  {!scheduled && (
+                    <>
+                      <option value="assignees">the assignees</option>
+                      <option value="creator">the creator</option>
+                    </>
+                  )}
+                  {choices.people.map((person) => (
+                    <option key={person.id} value={`person:${person.id}`}>
+                      {person.name}
+                    </option>
+                  ))}
+                </Pick>
+                <MessageField
+                  index={index}
+                  name="subject"
+                  caption="Subject"
+                  chips={false}
+                  maxLength={150}
+                  placeholder={`Subject (optional), e.g. ${scheduled ? "Reminder from {board}" : "Heads up: {task}"}`}
+                  value={action.subject ?? ""}
+                  scheduled={scheduled}
+                  onChange={(subject) =>
+                    setAction(index, {
+                      ...action,
+                      subject: subject || undefined,
+                    })
+                  }
+                />
+                <MessageField
+                  index={index}
+                  maxLength={1000}
+                  caption="Email"
+                  placeholder={`Email text, e.g. ${scheduled ? "Time for the {rule}" : "{task} is due {due}"}`}
+                  value={action.message}
+                  scheduled={scheduled}
+                  onChange={(message) =>
+                    setAction(index, { ...action, message })
+                  }
+                />
+                <small className="automation-email-note">
+                  Sent right away to people who have email set up, with a link
+                  back to {scheduled ? "the board" : "the task"}.
+                </small>
               </>
             )}
             {(action.kind === "set.status" ||
@@ -1681,17 +1770,28 @@ function SchedulePicker({
   );
 }
 
-/** A notify step's own words, with placeholders filled in when it runs. */
+/** A step's own words, with placeholders filled in when it runs. */
 function MessageField({
   index,
   value,
   scheduled,
   onChange,
+  name = "message",
+  maxLength = 280,
+  placeholder,
+  caption,
+  chips = true,
 }: {
   index: number;
   value: string;
   scheduled: boolean;
   onChange: (value: string) => void;
+  name?: string;
+  maxLength?: number;
+  placeholder?: string;
+  /** A visible label, for steps with more than one text field. */
+  caption?: string;
+  chips?: boolean;
 }) {
   const fields = scheduled
     ? messageFields.filter((field) =>
@@ -1700,30 +1800,43 @@ function MessageField({
     : messageFields;
   return (
     <div className="automation-message">
+      {caption && (
+        <span className="automation-caption" aria-hidden="true">
+          {caption}
+        </span>
+      )}
       <input
-        aria-label={`Action ${index + 1} message`}
+        aria-label={`Action ${index + 1} ${name}`}
         className="automation-text"
-        maxLength={280}
+        maxLength={maxLength}
         value={value}
-        placeholder={`Message (optional), e.g. ${scheduled ? "Time for the {rule}" : "{task} just shipped 🎉 It's now {status}"}`}
+        placeholder={
+          placeholder ??
+          `Message (optional), e.g. ${scheduled ? "Time for the {rule}" : "{task} just shipped 🎉 It's now {status}"}`
+        }
         onChange={(event) => onChange(event.target.value)}
       />
-      <span className="automation-chips" aria-label="Insert a placeholder">
-        {fields.map((field) => (
-          <button
-            key={field.key}
-            type="button"
-            title={`Inserts ${field.hint}`}
-            onClick={() =>
-              onChange(
-                `${value}${value && !value.endsWith(" ") ? " " : ""}{${field.key}}`,
-              )
-            }
-          >
-            {`{${field.key}}`}
-          </button>
-        ))}
-      </span>
+      {chips && (
+        <span
+          className="automation-chips"
+          aria-label={`Insert a placeholder into the ${name}`}
+        >
+          {fields.map((field) => (
+            <button
+              key={field.key}
+              type="button"
+              title={`Inserts ${field.hint}`}
+              onClick={() =>
+                onChange(
+                  `${value}${value && !value.endsWith(" ") ? " " : ""}{${field.key}}`,
+                )
+              }
+            >
+              {`{${field.key}}`}
+            </button>
+          ))}
+        </span>
+      )}
     </div>
   );
 }

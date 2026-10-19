@@ -100,6 +100,8 @@ services:
       REALTIME_INTERNAL_URL: http://realtime:3001
       # Automation webhooks read signing secrets encrypted by the web app.
       SETTINGS_ENCRYPTION_KEY: ${SETTINGS_ENCRYPTION_KEY:?Run pnpm setup:keys first}
+      # Email set up as 127.0.0.1 (Mailpit) is reached by service name here.
+      YUZU_LOOPBACK_SMTP_HOST: ${YUZU_LOOPBACK_SMTP_HOST:-mailpit}
     depends_on:
       postgres:
         condition: service_healthy

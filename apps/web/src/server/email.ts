@@ -24,6 +24,14 @@ export async function verifiedEmailSettings() {
   return settings;
 }
 
+/** Whether the installation can send email right now. */
+export function emailReady(settings: EmailSettings | null) {
+  return Boolean(
+    settings?.emailConfig &&
+    settings.emailVerifiedRevision === settings.emailConfigRevision,
+  );
+}
+
 function smtpConfiguration(settings: EmailSettings) {
   if (
     !settings.emailConfig ||
@@ -42,10 +50,18 @@ export async function sendVerifiedEmail(
   to: string,
   subject: string,
   text: string,
+  extra?: { html?: string; headers?: Record<string, string> },
 ) {
   const smtp = smtpConfiguration(settings);
+  const loopback = ["127.0.0.1", "localhost", "::1"].includes(smtp.host);
+  // Inside Docker, "127.0.0.1" is the container itself; the worker reaches a
+  // local mail server (such as Mailpit) by its service name instead.
+  const host =
+    loopback && process.env.YUZU_LOOPBACK_SMTP_HOST
+      ? process.env.YUZU_LOOPBACK_SMTP_HOST
+      : smtp.host;
   const transport = nodemailer.createTransport({
-    host: smtp.host,
+    host,
     port: smtp.port,
     secure: smtp.secure,
     requireTLS:
@@ -63,6 +79,8 @@ export async function sendVerifiedEmail(
       to,
       subject,
       text,
+      ...(extra?.html ? { html: extra.html } : {}),
+      ...(extra?.headers ? { headers: extra.headers } : {}),
     });
     if (!result.accepted.length)
       throw new Error("SMTP did not accept the recipient.");

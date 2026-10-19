@@ -49,14 +49,14 @@ model InstallationSettings {
 }
 
 model User {
-  id                      String                @id @default(uuid(7))
+  id                      String                   @id @default(uuid(7))
   name                    String
-  email                   String                @unique
-  emailVerified           Boolean               @default(false)
+  email                   String                   @unique
+  emailVerified           Boolean                  @default(false)
   image                   String?
-  role                    String                @default("MEMBER")
-  createdAt               DateTime              @default(now())
-  updatedAt               DateTime              @updatedAt
+  role                    String                   @default("MEMBER")
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
   transfers               CsvTransfer[]
   savedBoardViews         SavedBoardView[]
   boardViewSelections     BoardViewSelection[]
@@ -66,31 +66,42 @@ model User {
   workspaces              Workspace[]
   memberships             WorkspaceMember[]
   boards                  Board[]
-  invitations             Invitation[]          @relation("Inviter")
-  managedBoards           BoardManager[]        @relation("BoardManagerUser")
-  boardManagerGrants      BoardManager[]        @relation("BoardManagerGrantor")
+  invitations             Invitation[]             @relation("Inviter")
+  managedBoards           BoardManager[]           @relation("BoardManagerUser")
+  boardManagerGrants      BoardManager[]           @relation("BoardManagerGrantor")
   boardEvents             BoardEvent[]
-  tasksCreated            Task[]                @relation("TaskCreator")
+  tasksCreated            Task[]                   @relation("TaskCreator")
   taskAssignments         TaskAssignee[]
-  taskGrants              TaskEditorGrant[]     @relation("TaskEditor")
-  grantsIssued            TaskEditorGrant[]     @relation("TaskGrantor")
+  taskGrants              TaskEditorGrant[]        @relation("TaskEditor")
+  grantsIssued            TaskEditorGrant[]        @relation("TaskGrantor")
   taskActivity            TaskActivity[]
   fieldPeople             TaskFieldPerson[]
   comments                TaskComment[]
   attachments             TaskAttachment[]
   commentRevisions        CommentRevision[]
   accessEvents            AccessEvent[]
-  projectsCreated         Project[]             @relation("ProjectCreator")
-  projectMemberships      ProjectMember[]       @relation("ProjectMemberUser")
-  projectGrants           ProjectMember[]       @relation("ProjectMemberGrantor")
-  projectInvitations      ProjectInvitation[]   @relation("ProjectInviter")
-  primaryApprovalPolicies BoardApprovalPolicy[] @relation("PrimaryApprover")
-  backupApprovalPolicies  BoardApprovalPolicy[] @relation("BackupApprover")
-  proposalsAuthored       BoardProposal[]       @relation("ProposalAuthor")
-  proposalsDecided        BoardProposal[]       @relation("ProposalDecider")
-  notifications           Notification[]        @relation("NotificationRecipient")
-  notificationsSent       Notification[]        @relation("NotificationActor")
-  automationRules         AutomationRule[]      @relation("AutomationCreator")
+  projectsCreated         Project[]                @relation("ProjectCreator")
+  projectMemberships      ProjectMember[]          @relation("ProjectMemberUser")
+  projectGrants           ProjectMember[]          @relation("ProjectMemberGrantor")
+  projectInvitations      ProjectInvitation[]      @relation("ProjectInviter")
+  primaryApprovalPolicies BoardApprovalPolicy[]    @relation("PrimaryApprover")
+  backupApprovalPolicies  BoardApprovalPolicy[]    @relation("BackupApprover")
+  proposalsAuthored       BoardProposal[]          @relation("ProposalAuthor")
+  proposalsDecided        BoardProposal[]          @relation("ProposalDecider")
+  notifications           Notification[]           @relation("NotificationRecipient")
+  notificationsSent       Notification[]           @relation("NotificationActor")
+  emailPreferences        NotificationPreference[]
+  emailMessages           EmailMessage[]
+  /// Daily digest time ("HH:MM", installation timezone); null turns it off.
+  digestTime              String?                  @default("08:00")
+  lastDigestAt            DateTime?                @db.Timestamptz(3)
+  automationRules         AutomationRule[]         @relation("AutomationCreator")
+  /// Deactivated people can't sign in; their name stays on their work.
+  deactivatedAt           DateTime?                @db.Timestamptz(3)
+  deactivatedById         String?
+  deactivatedBy           User?                    @relation("UserDeactivator", fields: [deactivatedById], references: [id], onDelete: SetNull)
+  usersDeactivated        User[]                   @relation("UserDeactivator")
+  auditEvents             AuditEvent[]             @relation("AuditActor")
 }
 
 model Session {
@@ -164,8 +175,31 @@ model Workspace {
   projects     Project[]
   invitations  Invitation[]
   accessEvents AccessEvent[]
+  auditEvents  AuditEvent[]
+  /// Archived workspaces are hidden, with their boards, until restored.
+  archivedAt   DateTime?         @db.Timestamptz(3)
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
+}
+
+/// Installation-wide record of access, people and settings changes.
+model AuditEvent {
+  id          String     @id @default(uuid(7))
+  /// Null for events without a signed-in actor, such as sign-in lockouts.
+  actorId     String?
+  actor       User?      @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  action      String
+  /// Who or what it was about, kept as text so it survives later changes.
+  subject     String
+  subjectId   String?
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  details     String?
+  createdAt   DateTime   @default(now()) @db.Timestamptz(3)
+
+  @@index([createdAt])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
 }
 
 // A specific initiative inside a workspace. PUBLIC projects are visible to every
@@ -794,4 +828,52 @@ model AutomationDelivery {
 
   @@index([status, nextAttemptAt])
   @@index([runId])
+}
+
+enum EmailDelivery {
+  INSTANT
+  DIGEST
+  OFF
+}
+
+/// How one person wants one kind of notification by email; absent means the
+/// default for that kind.
+model NotificationPreference {
+  userId   String
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind     NotificationKind
+  delivery EmailDelivery
+
+  @@id([userId, kind])
+}
+
+enum EmailStatus {
+  QUEUED
+  SENT
+  SKIPPED
+  FAILED
+}
+
+/// An email waiting for the worker: an instant notification (rendered when it
+/// is sent, so a notification read meanwhile is skipped), a digest, or a rule.
+model EmailMessage {
+  id             String      @id @default(uuid(7))
+  userId         String
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// "instant", "digest" or "rule".
+  purpose        String
+  /// The notification an instant email is about.
+  notificationId String?
+  subject        String?
+  html           String?
+  text           String?
+  status         EmailStatus @default(QUEUED)
+  sendAfter      DateTime    @default(now()) @db.Timestamptz(3)
+  attempts       Int         @default(0)
+  error          String?
+  sentAt         DateTime?   @db.Timestamptz(3)
+  createdAt      DateTime    @default(now()) @db.Timestamptz(3)
+
+  @@index([status, sendAfter])
+  @@index([userId, sentAt])
 }

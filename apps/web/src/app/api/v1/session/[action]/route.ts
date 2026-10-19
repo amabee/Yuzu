@@ -35,6 +35,13 @@ export async function POST(
         "RATE_LIMITED",
         "Too many sign-in attempts. Try again later.",
       );
+    // Only a deactivated account is refused after a correct password.
+    if (action === "sign-in" && authResponse.status === 403)
+      throw new SetupError(
+        403,
+        "DEACTIVATED",
+        "This account is deactivated. Ask an administrator to reactivate it.",
+      );
     if (!authResponse.ok)
       throw new SetupError(
         401,

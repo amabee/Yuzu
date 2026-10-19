@@ -22,6 +22,12 @@ export async function requireIdentity(
   const user = await db.user.findUnique({ where: { id: session.user.id } });
   if (!user)
     throw new SetupError(401, "SIGN_IN_REQUIRED", "Sign in to continue.");
+  if (user.deactivatedAt)
+    throw new SetupError(
+      403,
+      "DEACTIVATED",
+      "This account is deactivated. Ask an administrator to reactivate it.",
+    );
   if (
     settings.maintenanceMode &&
     !allowMaintenance &&
@@ -48,21 +54,22 @@ export async function requireAdministrator(headers: Headers) {
 
 type Principal = { id: string; role: string };
 
-/** Workspaces the user is a full member of (admins: all). */
+/** Workspaces the user is a full member of (admins: all). Archived
+ *  workspaces are hidden from everyone until restored. */
 export function workspaceScope(user: Principal) {
   return isAdministrator(user.role)
-    ? {}
-    : { members: { some: { userId: user.id } } };
+    ? { archivedAt: null }
+    : { archivedAt: null, members: { some: { userId: user.id } } };
 }
 
 /** Workspaces to show the user: full memberships, plus any where they belong
  *  to a project (project-only invitees see just that project). */
 export function visibleWorkspaceScope(user: Principal) {
-  // Prisma matches nothing for an empty object inside OR, so admins skip it.
-  if (isAdministrator(user.role)) return {};
+  if (isAdministrator(user.role)) return { archivedAt: null };
   return {
+    archivedAt: null,
     OR: [
-      workspaceScope(user),
+      { members: { some: { userId: user.id } } },
       { projects: { some: { members: { some: { userId: user.id } } } } },
     ],
   };
@@ -73,10 +80,11 @@ export function visibleWorkspaceScope(user: Principal) {
 export function projectScope(user: Principal) {
   return {
     OR: [
-      isAdministrator(user.role)
-        ? { visibility: "PUBLIC" }
-        : { visibility: "PUBLIC", workspace: workspaceScope(user) },
-      { members: { some: { userId: user.id } } },
+      { visibility: "PUBLIC", workspace: workspaceScope(user) },
+      {
+        members: { some: { userId: user.id } },
+        workspace: { archivedAt: null },
+      },
     ],
   };
 }
@@ -87,9 +95,7 @@ export function projectScope(user: Principal) {
 export function boardScope(user: Principal) {
   return {
     OR: [
-      isAdministrator(user.role)
-        ? { projectId: null }
-        : { projectId: null, workspace: workspaceScope(user) },
+      { projectId: null, workspace: workspaceScope(user) },
       { project: projectScope(user) },
     ],
   };

@@ -207,6 +207,17 @@ export function describeAction(
           `create “${action.name}”${action.boardId ? ` on ${labels.board?.(action.boardId) ?? "another board"}` : ""}`,
         ),
       ];
+    case "email":
+      return [
+        b(
+          action.to === "assignees"
+            ? "email the assignees"
+            : action.to === "creator"
+              ? "email the creator"
+              : `email ${(action.userIds ?? []).map(labels.person).join(", ")}`,
+        ),
+        t(`: “${action.message}”`),
+      ];
     case "webhook": {
       let host = action.url;
       try {

@@ -9,8 +9,10 @@ export function signRealtimeToken(payload, secret) {
 }
 // Navigation events carry no board: they only tell named users to reload
 // their navigation, which the server scopes again on the next request.
+// Sign-out events close named users' connections (deactivated accounts).
+const userKinds = ["navigation", "signout"];
 const navigationEvent = (payload, purpose) =>
-  purpose === "event" && payload.kind === "navigation";
+  purpose === "event" && userKinds.includes(payload.kind);
 export function verifyRealtimeToken(token, secret, purpose, now = Date.now()) {
   if (
     typeof token !== "string" ||
@@ -68,7 +70,7 @@ export function verifyRealtimeToken(token, secret, purpose, now = Date.now()) {
   if (
     purpose === "event" &&
     payload.kind !== undefined &&
-    (payload.kind !== "navigation" ||
+    (!userKinds.includes(payload.kind) ||
       payload.boardId !== undefined ||
       !Array.isArray(payload.userIds))
   )

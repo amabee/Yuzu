@@ -1,4 +1,5 @@
 import { createRecordId, type DatabaseTransaction } from "@yuzu/database";
+import { queueNotificationEmails } from "./email-queue";
 
 // The inbox record is also the durable delivery intent. Socket events only hint
 // that it changed; disconnected clients read these same committed records later.
@@ -26,13 +27,16 @@ export async function createNotifications(
   const recipients = [...new Set(recipientIds)].filter(
     (id) => includeActor || id !== input.actorId,
   );
-  if (recipients.length)
-    await tx.notification.createMany({
-      data: recipients.map((recipientId) => ({
-        id: createRecordId(),
-        ...data,
-        recipientId,
-      })),
-      skipDuplicates: true,
-    });
+  if (!recipients.length) return;
+  const created = await tx.notification.createManyAndReturn({
+    data: recipients.map((recipientId) => ({
+      id: createRecordId(),
+      ...data,
+      recipientId,
+    })),
+    skipDuplicates: true,
+    select: { id: true, recipientId: true, kind: true, createdAt: true },
+  });
+  // Email follows the same record, per each person's settings.
+  await queueNotificationEmails(tx, created);
 }

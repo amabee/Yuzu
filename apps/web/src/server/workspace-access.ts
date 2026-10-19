@@ -23,7 +23,7 @@ export const workspaceContext = cache(async () => {
   const user = await getDatabase().user.findUnique({
     where: { id: session.user.id },
   });
-  if (!user) unauthorized();
+  if (!user || user.deactivatedAt) unauthorized();
   if (settings.maintenanceMode && !isAdministrator(user.role))
     redirect("/maintenance");
   const workspaces = await getDatabase().workspace.findMany({
