@@ -219,7 +219,8 @@ test("the daily digest gathers unread rule messages, and rules can send email", 
   page,
   mailbox,
 }) => {
-  test.setTimeout(120_000);
+  // The digest time is up to a minute ahead and the scan runs each minute.
+  test.setTimeout(200_000);
   const { member, boardId } = await team(page);
   const db = getDatabase();
   const save = (rule: Record<string, unknown>) =>
@@ -276,7 +277,7 @@ test("the daily digest gathers unread rule messages, and rules can send email", 
     },
   });
   await expect
-    .poll(() => mailbox.length, { timeout: 100_000, intervals: [2_000] })
+    .poll(() => mailbox.length, { timeout: 150_000, intervals: [2_000] })
     .toBe(2);
   expect(mailbox[1]).toContain("Subject: 1 update on Yuzu today");
   expect(mailbox[1]).toContain("Launch post is ready for you");
