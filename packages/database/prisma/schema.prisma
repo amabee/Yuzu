@@ -102,6 +102,31 @@ model User {
   deactivatedBy           User?                    @relation("UserDeactivator", fields: [deactivatedById], references: [id], onDelete: SetNull)
   usersDeactivated        User[]                   @relation("UserDeactivator")
   auditEvents             AuditEvent[]             @relation("AuditActor")
+  apiTokens               ApiToken[]               @relation("ApiTokenOwner")
+  apiTokensRevoked        ApiToken[]               @relation("ApiTokenRevoker")
+}
+
+/// Personal API tokens. Only a SHA-256 digest of the secret is stored.
+model ApiToken {
+  id             String    @id @default(uuid(7))
+  userId         String
+  user           User      @relation("ApiTokenOwner", fields: [userId], references: [id], onDelete: Cascade)
+  name           String
+  /// The first characters of the token, so people can recognise it.
+  prefix         String
+  digest         String    @unique
+  /// READ or WRITE.
+  access         String
+  expiresAt      DateTime? @db.Timestamptz(3)
+  lastUsedAt     DateTime? @db.Timestamptz(3)
+  expiryWarnedAt DateTime? @db.Timestamptz(3)
+  revokedAt      DateTime? @db.Timestamptz(3)
+  revokedById    String?
+  revokedBy      User?     @relation("ApiTokenRevoker", fields: [revokedById], references: [id], onDelete: SetNull)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
 }
 
 model Session {

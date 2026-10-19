@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import {
   CalendarDays,
   CalendarRange,
+  KeyRound,
   Mail,
   Paperclip,
   ShieldCheck,
@@ -106,6 +107,25 @@ export default async function SettingsPage() {
             className="rounded-lg border bg-card px-3 py-2 text-sm font-medium"
           >
             Email notifications
+          </Link>
+        </section>
+        <section className="flex flex-col justify-between gap-4 border-b p-6 sm:flex-row sm:items-center">
+          <div className="flex gap-4">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-secondary">
+              <KeyRound size={19} className="text-primary" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold">API</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Tokens for scripts and tools, and the API reference.
+              </p>
+            </div>
+          </div>
+          <Link
+            href="/settings/api"
+            className="rounded-lg border bg-card px-3 py-2 text-sm font-medium"
+          >
+            API tokens
           </Link>
         </section>
         {settings.map(({ icon: Icon, title, description, value }) => (

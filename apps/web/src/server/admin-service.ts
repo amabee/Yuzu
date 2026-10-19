@@ -181,6 +181,10 @@ export async function deactivatePerson(input: unknown, headers: Headers) {
         pausedReason: `Paused: ${target.name} was deactivated. A manager can take it over by saving it.`,
       },
     });
+    await tx.apiToken.updateMany({
+      where: { userId: target.id, revokedAt: null },
+      data: { revokedAt: new Date(), revokedById: me.id },
+    });
     const emails = await tx.emailMessage.updateMany({
       where: { userId: target.id, status: "QUEUED" },
       data: { status: "SKIPPED", error: "The account was deactivated." },

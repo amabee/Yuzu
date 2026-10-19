@@ -200,3 +200,27 @@ ${button(input.taskUrl, input.taskName ? "Open the task" : `Open ${input.appName
     text,
   };
 }
+
+/** A security notice: an API token stops working soon. Always sent. */
+export function tokenExpiryEmail(input: {
+  appName: string;
+  origin: string;
+  tokenName: string;
+  expiresOn: string;
+}) {
+  const e = escapeHtml;
+  const manage = `${input.origin}/settings/api`;
+  const links: Links = {
+    origin: input.origin,
+    settingsUrl: `${input.origin}/settings/notifications`,
+    unsubscribeUrl: manage,
+    reason: "Notices about your API tokens are always sent.",
+    unsubscribeLabel: "Manage API tokens",
+  };
+  const subject = `Your API token “${input.tokenName}” expires ${input.expiresOn}`;
+  const body = `<h1 style="margin:0;font-size:21px;line-height:1.3;font-weight:800;letter-spacing:-0.02em;">Your API token “${e(input.tokenName)}” expires ${e(input.expiresOn)}</h1>
+<p style="margin:6px 0 0;font-size:13px;color:${colors.muted};">Scripts and tools using it will stop working then. Create a new token and swap it in before that.</p>
+${button(manage, "Manage API tokens")}`;
+  const text = `Your API token “${input.tokenName}” expires ${input.expiresOn}.\nScripts and tools using it will stop working then. Create a new token and swap it in before that.\n\n${manage}${textFooter(links)}`;
+  return { subject, html: layout(body, links, input.appName), text };
+}

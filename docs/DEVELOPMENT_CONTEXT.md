@@ -10,8 +10,8 @@ The user plans to run it on their computer first, then a shared server. Phases
 1–3 are merged, plus Projects, saved-view layouts, Calendar/Timeline, task start
 dates, the app redesign, the "pause point" design system, the task panel, the
 Kanban redesign and the notification bell dropdown. **Phase 4 (automation)
-slices 1 and 2 are merged; email notifications are in PRs #27/#28 and
-administration is on `feat/admin-lifecycle`.** The application remains
+slices 1 and 2 are merged; email notifications are in PRs #27/#28,
+administration in #29 and the API on `feat/api-tokens`.** The application remains
 pre-production.
 
 Main: merge of PR #25 (`b66dfbe`). Recent PRs: #20 finish-up pass (pause style
@@ -259,15 +259,36 @@ deactivate only (never delete/anonymize); admin first, then the API slice.
 - Operations: rebuild the realtime server and worker after pulling
   (`docker compose up -d --build --wait realtime worker` if run in Docker).
 
+## API (branch `feat/api-tokens`)
+
+Spec and mockup: `docs/specs/api.md`, `docs/mockups/api.html`.
+
+- `ApiToken` (SHA-256 `digest`, `prefix`, READ/WRITE, optional `expiresAt`,
+  `lastUsedAt`, `expiryWarnedAt`, `revokedAt`). Service:
+  `server/api-token-service.ts` (list/create/revoke, audit
+  API_TOKEN_CREATED/REVOKED); verification and the 120/min limit (single
+  upsert on `AuthenticationAttempt`, id `api-token:<id>`) in
+  `server/api-token-auth.ts`. Routes: `api/v1/tokens/[action]` (browser only).
+- `lib/api-registry.ts` is the single list of public endpoints. `src/proxy.ts`
+  (matcher `/api/:path*`) refuses tokens elsewhere and stamps allowed requests
+  with `x-yuzu-api-gate: <read|write>.<per-process secret>`; `requireIdentity`
+  accepts a bearer token only with that stamp and never falls back to cookies.
+  `readSetupBody` skips the origin check for stamped token requests.
+- `lib/openapi.ts` builds `/api/v1/openapi.json` (OpenAPI 3.0 via
+  `z.toJSONSchema`) and the field lists for Settings → API → Reference.
+- Expiry: `warnExpiringTokens` (email worker, each minute) queues one
+  `purpose: "security"` email 7 days ahead. Deactivation revokes tokens.
+- Tests: `tests/api.spec.ts`, `lib/api-registry.test.ts`, `lib/openapi.test.ts`.
+- Adding an endpoint to the API = one registry entry (route must exist).
+
 ## Next session
 
-The user's agreed order (2026-10-19): email (done) → admin (this slice) → the
-**API slice**: personal API tokens for every member (read-only or read & write,
-limited to the creator's own access, shown once, hashed, expiring, revocable;
-admins can see and revoke all), token auth on `/api/v1` with rate limits, an
-OpenAPI spec generated from the Zod contracts, and a docs page. Plan it with a
-mockup first. Go-live work (deployment, backup/restore, pilot/load
-verification) is deferred until asked.
+The agreed roadmap (email → admin → API) is built: email in PRs #27/#28,
+admin in #29, API on `feat/api-tokens` (stacked; merge in order). Go-live work
+(deployment, backup/restore, pilot/load verification) is deferred until asked;
+ask the user what comes next. Possible follow-ups: installation settings
+changes in the audit log, a "Deactivated" label on names in task UI, uploads
+and CSV import over the API.
 
 Small leftovers: the theme switcher still shows on setup, invitation and
 password-reset pages (the user only asked to remove it from sign-in/welcome).

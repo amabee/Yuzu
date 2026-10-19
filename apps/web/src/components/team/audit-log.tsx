@@ -28,6 +28,7 @@ const icons: Record<AuditKind, typeof UserCog> = {
   security: ShieldAlert,
   workspaces: Boxes,
   data: ArrowDownToLine,
+  api: KeyRound,
 };
 /** Details already said in the sentence aren't repeated underneath. */
 const inSentence = new Set(["ROLE_CHANGED", "WORKSPACE_RENAMED"]);
