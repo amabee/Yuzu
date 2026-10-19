@@ -1,3 +1,4 @@
+import { bearerToken, gatedAccess } from "../api-gate";
 import {
   createCipheriv,
   createDecipheriv,
@@ -72,7 +73,10 @@ export async function readSetupBody(
   request: Request,
   maxBytes = 16_384,
 ): Promise<unknown> {
-  if (request.headers.get("origin") !== configuredOrigin())
+  // API-token requests carry no cookies, so there's nothing to forge.
+  const viaToken =
+    bearerToken(request.headers) !== null && gatedAccess(request.headers);
+  if (!viaToken && request.headers.get("origin") !== configuredOrigin())
     throw new SetupError(
       403,
       "INVALID_ORIGIN",

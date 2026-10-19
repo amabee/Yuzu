@@ -81,6 +81,10 @@ export const auditKinds = {
     actions: ["WORKSPACE_RENAMED", "WORKSPACE_ARCHIVED", "WORKSPACE_RESTORED"],
   },
   data: { label: "Exports", actions: ["CSV_EXPORTED"] },
+  api: {
+    label: "API tokens",
+    actions: ["API_TOKEN_CREATED", "API_TOKEN_REVOKED"],
+  },
 } as const;
 export type AuditKind = keyof typeof auditKinds;
 export const auditRanges = {
@@ -158,6 +162,10 @@ export function auditSentence(
       return `archived the workspace ${subject}`;
     case "WORKSPACE_RESTORED":
       return `restored the workspace ${subject}`;
+    case "API_TOKEN_CREATED":
+      return `created the API token “${subject}”`;
+    case "API_TOKEN_REVOKED":
+      return `revoked the API token “${subject}”`;
     case "CSV_EXPORTED":
       return `exported ${subject} to CSV`;
     default:

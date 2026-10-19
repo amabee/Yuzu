@@ -9,6 +9,7 @@ import {
   digestEmail,
   instantEmail,
   ruleEmail,
+  tokenExpiryEmail,
   type DigestItem,
 } from "@/lib/email-templates";
 import { latestOccurrence } from "@/lib/automation-schedule";
@@ -484,6 +485,52 @@ export async function scanDigests(now = new Date()) {
   return queued;
 }
 
+// ---------- API token expiry ----------
+
+/** Emails each token's owner once, a week before the token expires. */
+export async function warnExpiringTokens(now = new Date()) {
+  const due = await db().apiToken.findMany({
+    where: {
+      revokedAt: null,
+      expiryWarnedAt: null,
+      expiresAt: { gt: now, lte: new Date(now.getTime() + 7 * 86_400_000) },
+      user: { deactivatedAt: null },
+    },
+    take: 100,
+  });
+  if (!due.length) return 0;
+  const settings = await db().installationSettings.findUnique({
+    where: { id: "installation" },
+  });
+  for (const token of due) {
+    // Claim it first so two workers don't both warn.
+    const claimed = await db().apiToken.updateMany({
+      where: { id: token.id, expiryWarnedAt: null },
+      data: { expiryWarnedAt: now },
+    });
+    if (!claimed.count) continue;
+    const email = tokenExpiryEmail({
+      appName: settings?.name ?? "Yuzu",
+      origin: configuredOrigin(),
+      tokenName: token.name,
+      expiresOn: token.expiresAt!.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        timeZone: settings?.timezone ?? "UTC",
+      }),
+    });
+    await db().emailMessage.create({
+      data: {
+        id: createRecordId(),
+        userId: token.userId,
+        purpose: "security",
+        ...email,
+      },
+    });
+  }
+  return due.length;
+}
+
 /** Sends due emails every few seconds and checks digests each minute. */
 export function startEmailWorker() {
   let stopped = false;
@@ -496,6 +543,7 @@ export function startEmailWorker() {
       if (Date.now() - lastScan > 60_000) {
         lastScan = Date.now();
         await scanDigests();
+        await warnExpiringTokens();
       }
       while (!stopped && (await processEmailQueue()) === 20);
     } catch {

@@ -1,6 +1,8 @@
 import { getDatabase } from "@yuzu/database";
 import { getAuth } from "./auth";
 import { SetupError } from "./setup/security";
+import { bearerToken, gatedAccess } from "./api-gate";
+import { tokenIdentity } from "./api-token-auth";
 
 export const isAdministrator = (role: string) =>
   role === "OWNER" || role === "ADMIN";
@@ -15,6 +17,25 @@ export async function requireIdentity(
   });
   if (settings?.setupState !== "READY")
     throw new SetupError(403, "SETUP_REQUIRED", "Complete installation first.");
+  // A request carrying an API token never falls back to a browser session.
+  const token = bearerToken(headers);
+  if (token) {
+    const need = gatedAccess(headers);
+    if (!need)
+      throw new SetupError(
+        403,
+        "NOT_AVAILABLE_TO_TOKENS",
+        "API tokens can't use this endpoint.",
+      );
+    const user = await tokenIdentity(token, need);
+    if (settings.maintenanceMode && !allowMaintenance)
+      throw new SetupError(
+        503,
+        "MAINTENANCE",
+        "Yuzu is undergoing maintenance. Try again shortly.",
+      );
+    return { settings, session: null, user, viaToken: true as const };
+  }
   const session = await getAuth().api.getSession({ headers });
   if (!session)
     throw new SetupError(401, "SIGN_IN_REQUIRED", "Sign in to continue.");
@@ -38,7 +59,7 @@ export async function requireIdentity(
       "MAINTENANCE",
       "Yuzu is undergoing maintenance. Try again shortly.",
     );
-  return { settings, session, user };
+  return { settings, session, user, viaToken: false as const };
 }
 
 export async function requireAdministrator(headers: Headers) {
