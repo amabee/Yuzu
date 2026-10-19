@@ -14,6 +14,7 @@ import {
   Zap,
 } from "lucide-react";
 import { z } from "zod";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { YuzuToast, type YuzuToastNotice } from "@/components/ui/yuzu-toast";
 import {
@@ -174,6 +175,12 @@ export function NotificationInboxView({
             Assignments and decisions, ready when you are.
           </p>
         </div>
+        <Link
+          href="/settings/notifications"
+          className="ml-auto text-sm font-medium text-primary"
+        >
+          Email settings
+        </Link>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div

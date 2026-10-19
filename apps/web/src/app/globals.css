@@ -5150,9 +5150,13 @@ body:has(.pause-sheet[data-state="open"]) .yuzu-toast-viewport {
   color: var(--destructive);
 }
 .notification-menu-foot {
+  display: flex;
+  justify-content: space-between;
   padding: 10px 18px 14px;
   border-top: 1px solid var(--border);
-  text-align: center;
+}
+.notification-menu-foot a + a {
+  color: var(--muted-foreground);
 }
 
 /* ---------- Automations: rules sheet, builder and run history ---------- */
@@ -5636,4 +5640,161 @@ body:has(.pause-sheet[data-state="open"]) .yuzu-toast-viewport {
   font-size: 12px;
   font-weight: 400;
   color: var(--muted-foreground);
+}
+.automation-caption {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.automation-email-note {
+  flex-basis: 100%;
+  padding-left: 24px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+/* ---------- Email notification settings ---------- */
+.email-settings {
+  position: relative;
+  max-width: 720px;
+  margin-top: 28px;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background:
+    radial-gradient(
+      ellipse 85% 220px at 0% 0%,
+      color-mix(in srgb, var(--yuzu) 16%, transparent),
+      transparent 80%
+    ),
+    var(--card);
+  box-shadow: 0 30px 70px -30px rgba(0, 0, 0, 0.35);
+}
+.email-settings > .task-panel-leaf {
+  position: absolute;
+  z-index: 2;
+  top: -26px;
+  left: -30px;
+  width: 80px;
+  height: 40px;
+  background: url("/toasts/yuzu-leaf-corner.svg") center / contain no-repeat;
+  pointer-events: none;
+}
+.email-settings > .pause-clip .pause-slice {
+  right: -70px;
+  bottom: -70px;
+  width: 260px;
+  height: 260px;
+}
+.email-settings-body {
+  position: relative;
+  padding: 28px 26px 22px;
+}
+.email-settings h1 {
+  font-family: var(--font-display, inherit);
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+.email-settings-sub {
+  margin-top: 4px;
+  font-size: 13.5px;
+  color: var(--muted-foreground);
+}
+.email-settings-rows {
+  margin-top: 20px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+}
+.email-settings-rows li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 13px 16px;
+}
+.email-settings-rows li + li {
+  border-top: 1px solid var(--border);
+}
+.email-settings-rows b {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+}
+.email-settings-rows small {
+  display: block;
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+}
+.email-settings-seg {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  margin-left: auto;
+  padding: 3px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--muted) 85%, transparent);
+}
+.email-settings-seg button {
+  padding: 4px 12px;
+  border-radius: 99px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.email-settings-seg button[aria-checked="true"] {
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 15%, transparent);
+}
+.email-settings-seg button:focus-visible {
+  outline: 2px solid var(--ring);
+}
+.email-settings-digest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin-top: 16px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--muted) 70%, transparent);
+  font-size: 14px;
+}
+.email-settings-digest b {
+  font-weight: 600;
+}
+.email-settings-digest input {
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--foreground);
+  font: inherit;
+  font-weight: 600;
+}
+.email-settings-digest small {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.email-settings-note {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--intent-info) 12%, transparent);
+  color: color-mix(in srgb, var(--intent-info) 75%, var(--foreground));
+  font-size: 12.5px;
+}
+.email-settings-status {
+  min-height: 18px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+@media (max-width: 560px) {
+  .email-settings-seg {
+    margin-left: 0;
+  }
 }

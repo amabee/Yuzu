@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import {
   CalendarDays,
   CalendarRange,
+  Mail,
   Paperclip,
   ShieldCheck,
   Webhook,
@@ -72,6 +73,25 @@ export default async function SettingsPage() {
         </Link>
       )}
       <div className="mt-8 overflow-hidden rounded-xl border bg-card">
+        <section className="flex flex-col justify-between gap-4 border-b p-6 sm:flex-row sm:items-center">
+          <div className="flex gap-4">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-secondary">
+              <Mail size={19} className="text-primary" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold">Email notifications</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Choose which updates reach your inbox, and when.
+              </p>
+            </div>
+          </div>
+          <Link
+            href="/settings/notifications"
+            className="rounded-lg border bg-card px-3 py-2 text-sm font-medium"
+          >
+            Email notifications
+          </Link>
+        </section>
         {settings.map(({ icon: Icon, title, description, value }) => (
           <section
             key={title}
