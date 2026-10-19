@@ -1,5 +1,6 @@
 import { getDatabase } from "@yuzu/database";
 import { digest } from "./setup/security";
+import { audit } from "./audit";
 
 export async function allowSignIn(email: string): Promise<boolean> {
   return allowAttempt(email, "sign-in");
@@ -56,6 +57,18 @@ async function allowAttempt(
                 where: { id: rule.id },
                 data: { count: { increment: 1 } },
               });
+              // The attempt that reaches the limit locks the address: audit it.
+              if (
+                namespace === "sign-in" &&
+                !rule.id.endsWith("-global") &&
+                current.count + 1 === rule.limit
+              )
+                await audit(tx, {
+                  actorId: null,
+                  action: "SIGN_IN_LOCKED",
+                  subject: subject.trim().toLowerCase(),
+                  details: `${rule.limit} attempts in ${Math.round(rule.window / 60_000)} minutes`,
+                });
             } else
               await tx.authenticationAttempt.upsert({
                 where: { id: rule.id },

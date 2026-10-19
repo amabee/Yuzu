@@ -16,7 +16,7 @@ export type BoardEvent = {
 };
 export type NavigationEvent = {
   purpose: "event";
-  kind: "navigation";
+  kind: "navigation" | "signout";
   eventId: string;
   userIds: string[];
   expiresAt: number;

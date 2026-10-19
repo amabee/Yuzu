@@ -98,11 +98,13 @@ export function ApprovalPolicyEditor({
                 }
               >
                 <option value="">Choose a person</option>
-                {state.people.map((person) => (
-                  <option key={person.id} value={person.id}>
-                    {person.name}
-                  </option>
-                ))}
+                {state.people
+                  .filter((person) => !person.deactivated)
+                  .map((person) => (
+                    <option key={person.id} value={person.id}>
+                      {person.name}
+                    </option>
+                  ))}
                 {policy.primaryApproverId &&
                   !state.people.some(
                     (person) => person.id === policy.primaryApproverId,
@@ -128,7 +130,11 @@ export function ApprovalPolicyEditor({
               >
                 <option value="">No backup</option>
                 {state.people
-                  .filter((person) => person.id !== policy.primaryApproverId)
+                  .filter(
+                    (person) =>
+                      !person.deactivated &&
+                      person.id !== policy.primaryApproverId,
+                  )
                   .map((person) => (
                     <option key={person.id} value={person.id}>
                       {person.name}

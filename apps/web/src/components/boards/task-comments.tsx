@@ -13,7 +13,7 @@ import { mentionPresent, activeMention } from "@/lib/comment-mentions";
 import { Button } from "@/components/ui/button";
 import { AssigneeAvatars } from "./board-presentation";
 import { History, Pencil, SendHorizontal, Trash2, X } from "lucide-react";
-type Person = { id: string; name: string };
+type Person = { id: string; name: string; deactivated?: boolean };
 function Composer({
   people,
   body,
@@ -44,6 +44,7 @@ function Composer({
   const dismissed = useRef("");
   const matches = trigger
     ? people
+        .filter((person) => !person.deactivated)
         .filter((person) =>
           person.name
             .toLocaleLowerCase()

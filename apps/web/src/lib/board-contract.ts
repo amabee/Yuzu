@@ -228,7 +228,12 @@ export type BoardState = {
   currentUserId: string;
   groups: { id: string; name: string }[];
   fields: BoardField[];
-  people: { id: string; name: string; image?: string | null }[];
+  people: {
+    id: string;
+    name: string;
+    image?: string | null;
+    deactivated?: boolean;
+  }[];
   tasks: BoardTask[];
   approvalPolicy: ApprovalPolicy;
   pendingApprovals: PendingApproval[];
@@ -263,6 +268,8 @@ const baseBoardStateSchema = z.object({
       id: personId,
       name: z.string(),
       image: z.string().nullable().optional(),
+      /** Deactivated people keep their name on work but can't be chosen. */
+      deactivated: z.boolean().optional(),
     }),
   ),
   tasks: z.array(

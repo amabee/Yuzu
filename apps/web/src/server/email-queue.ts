@@ -12,10 +12,22 @@ export async function deliveries(
   const saved = await tx.notificationPreference.findMany({
     where: { userId: { in: userIds }, kind: kind as never },
   });
+  // Deactivated people get no email at all.
+  const inactive = new Set(
+    (
+      await tx.user.findMany({
+        where: { id: { in: userIds }, deactivatedAt: { not: null } },
+        select: { id: true },
+      })
+    ).map((user) => user.id),
+  );
   return new Map<string, EmailDelivery>(
     userIds.map((id) => [
       id,
-      saved.find((row) => row.userId === id)?.delivery ?? defaultDelivery(kind),
+      inactive.has(id)
+        ? "OFF"
+        : (saved.find((row) => row.userId === id)?.delivery ??
+          defaultDelivery(kind)),
     ]),
   );
 }

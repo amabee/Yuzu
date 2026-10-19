@@ -41,7 +41,8 @@ export async function requestRecovery(input: unknown) {
     include: { accounts: { where: { providerId: "credential" } } },
   });
   const credential = user?.accounts.find((account) => account.password);
-  if (!user || !credential?.password) return { saved: true };
+  if (!user || !credential?.password || user.deactivatedAt)
+    return { saved: true };
   const id = `${PREFIX}${user.id}`;
   const identifier = `${PREFIX}${digest(token)}`;
   const payload = {
@@ -107,6 +108,7 @@ async function resetRecord(tx: DatabaseTransaction, tokenDigest: string) {
   // Email or password changes invalidate previously issued recovery links.
   if (
     !user ||
+    user.deactivatedAt ||
     user.email !== payload.email ||
     !account?.password ||
     digest(account.password) !== payload.credentialDigest

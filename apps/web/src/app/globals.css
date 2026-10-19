@@ -5798,3 +5798,320 @@ body:has(.pause-sheet[data-state="open"]) .yuzu-toast-viewport {
     margin-left: 0;
   }
 }
+
+/* ---------- Administration: people, workspaces, audit log ---------- */
+.people-admin-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.people-admin-bar h2 {
+  margin-right: auto;
+  font-size: 20px;
+  font-weight: 600;
+}
+.people-admin-search {
+  display: flex;
+  flex: 0 1 260px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--muted-foreground);
+}
+.people-admin-search input {
+  min-width: 0;
+  flex: 1;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 13px;
+  outline: none;
+}
+.people-admin-search:focus-within {
+  outline: 2px solid var(--ring);
+}
+.people-admin-tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 14px;
+}
+.people-admin-tabs button {
+  padding: 5px 11px;
+  border-radius: 99px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.people-admin-tabs button[aria-pressed="true"] {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.people-admin-invites {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--intent-warning) 16%, transparent);
+  font-size: 13px;
+}
+.people-admin-invites a {
+  margin-left: auto;
+  font-weight: 700;
+  color: var(--primary);
+}
+.people-admin-rows {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+}
+.people-admin-rows > li {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto 84px 32px;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+}
+.people-admin-rows > li + li {
+  border-top: 1px solid var(--border);
+}
+.people-admin-rows > li[data-deactivated="true"] {
+  background: color-mix(in srgb, var(--muted) 55%, transparent);
+}
+.people-admin-rows > li[data-deactivated="true"] b {
+  color: var(--muted-foreground);
+}
+.people-admin-rows b {
+  display: block;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.people-admin-rows small {
+  display: block;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.people-admin-avatar {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 99px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 12px;
+  font-weight: 700;
+}
+[data-deactivated="true"] .people-admin-avatar {
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+.people-admin-tag {
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 99px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 700;
+  vertical-align: 1px;
+}
+.people-admin-role {
+  justify-self: start;
+  padding: 2px 10px;
+  border-radius: 99px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 700;
+}
+.people-admin-role[data-role="OWNER"] {
+  background: color-mix(in srgb, var(--intent-yuzu) 24%, transparent);
+  color: color-mix(in srgb, var(--intent-yuzu) 45%, var(--foreground));
+}
+.people-admin-role[data-role="ADMIN"] {
+  background: color-mix(in srgb, var(--intent-info) 14%, transparent);
+  color: color-mix(in srgb, var(--intent-info) 75%, var(--foreground));
+}
+.people-admin-seen {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.people-admin-more {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--muted-foreground);
+}
+.people-admin-more:hover,
+.people-admin-more[data-state="open"] {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.people-admin-more:focus-visible {
+  outline: 2px solid var(--ring);
+}
+.people-admin-menu {
+  width: 250px;
+}
+.people-admin-menu [role="menuitem"] > span {
+  display: grid;
+  font-weight: 600;
+}
+.people-admin-menu small {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+.people-admin-menu .people-admin-warn {
+  color: var(--intent-danger);
+}
+.people-admin-empty {
+  display: block !important;
+  padding: 18px 14px !important;
+  font-size: 13px;
+  color: var(--muted-foreground);
+  text-align: center;
+}
+.people-admin-foot {
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+}
+.people-admin-effects {
+  display: grid;
+  gap: 6px;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--muted-foreground);
+  list-style: disc;
+}
+.people-admin-effects b {
+  font-weight: 600;
+  color: var(--foreground);
+}
+.workspace-admin-rows > li {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.workspace-admin-actions {
+  display: flex;
+  gap: 6px;
+}
+.workspace-admin-rename {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.workspace-admin-rename input {
+  flex: 1 1 220px;
+}
+.audit-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.audit-filters select {
+  width: auto;
+}
+.audit-day {
+  margin: 22px 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted-foreground);
+}
+.audit-events {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+}
+.audit-events li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  font-size: 13.5px;
+}
+.audit-events li + li {
+  border-top: 1px solid var(--border);
+}
+.audit-events b {
+  font-weight: 600;
+}
+.audit-events small {
+  display: block;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.audit-events time {
+  margin-left: auto;
+  padding-top: 2px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.audit-icon {
+  display: grid;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--intent-info) 14%, transparent);
+  color: var(--intent-info);
+}
+.audit-icon[data-kind="security"],
+.audit-icon[data-action="USER_DEACTIVATED"] {
+  background: color-mix(in srgb, var(--intent-danger) 14%, transparent);
+  color: var(--intent-danger);
+}
+.audit-icon[data-kind="workspaces"] {
+  background: color-mix(in srgb, var(--intent-warning) 18%, transparent);
+  color: color-mix(in srgb, var(--intent-warning) 70%, var(--foreground));
+}
+.audit-icon[data-kind="data"],
+.audit-icon[data-action="USER_REACTIVATED"] {
+  background: color-mix(in srgb, var(--intent-success) 14%, transparent);
+  color: var(--intent-success);
+}
+.audit-empty {
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  font-size: 13px;
+  color: var(--muted-foreground);
+  text-align: center;
+}
+.audit-more {
+  display: block;
+  margin: 14px auto 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
+}
+@media (max-width: 640px) {
+  .people-admin-rows > li {
+    grid-template-columns: 34px minmax(0, 1fr) 32px;
+  }
+  .people-admin-role,
+  .people-admin-seen {
+    display: none;
+  }
+  .workspace-admin-rows > li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -135,7 +135,7 @@ export function TeamManager() {
           Owners and administrators can access every workspace.
         </p>
       </section>
-      <section>
+      <section id="invitations" className="scroll-mt-20">
         <h2 className="mb-4 text-lg font-semibold">Invitations</h2>
         <div className="space-y-3">
           {team.data.invitations

@@ -29,6 +29,7 @@ import {
   workspaceScope,
 } from "./team-access";
 import { configuredOrigin, digest, SetupError } from "./setup/security";
+import { recordAccess } from "./audit";
 import { getAuth } from "./auth";
 import { allowInvitationAttempt } from "./auth-rate-limit";
 import { sendVerifiedEmail } from "./email";
@@ -453,14 +454,12 @@ export async function inviteToProject(input: unknown, headers: Headers) {
         "INVITATION_UNAVAILABLE",
         "This invitation was revoked while sending.",
       );
-    await db().accessEvent.create({
-      data: {
+    await recordAccess(db(), {
         workspaceId: invitation.project.workspaceId,
         actorId: user.id,
         action: "PROJECT_INVITATION_SENT",
         subjectEmail: body.email,
-      },
-    });
+      });
     return { sent: true };
   } catch (error) {
     await db().projectInvitation.updateMany({
@@ -498,14 +497,12 @@ export async function revokeProjectInvitation(
       where: { id },
       data: { revokedAt: new Date() },
     });
-    await tx.accessEvent.create({
-      data: {
+    await recordAccess(tx, {
         workspaceId: project.workspaceId,
         actorId: current.id,
         action: "PROJECT_INVITATION_REVOKED",
         subjectEmail: invite.email,
-      },
-    });
+      });
     return { revoked: true };
   });
 }
@@ -667,14 +664,12 @@ export async function acceptProjectInvitation(
       where: { id: current.id },
       data: { acceptedAt: new Date() },
     });
-    await tx.accessEvent.create({
-      data: {
+    await recordAccess(tx, {
         workspaceId: current.project.workspaceId,
         actorId: recipient.id,
         action: "PROJECT_INVITATION_ACCEPTED",
         subjectEmail: recipient.email,
-      },
-    });
+      });
   });
   return { accepted: true, signedIn: Boolean(existing) };
 }
@@ -712,14 +707,12 @@ export async function recoverProject(input: unknown, headers: Headers) {
       },
       update: { role: "MANAGER" },
     });
-    await tx.accessEvent.create({
-      data: {
+    await recordAccess(tx, {
         workspaceId: project.workspaceId,
         actorId: user.id,
         action: "PROJECT_ACCESS_RECOVERED",
         subjectEmail: user.email,
-      },
-    });
+      });
     return {
       name: project.name,
       managerEmails: project.members

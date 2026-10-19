@@ -10,7 +10,9 @@ The user plans to run it on their computer first, then a shared server. Phases
 1–3 are merged, plus Projects, saved-view layouts, Calendar/Timeline, task start
 dates, the app redesign, the "pause point" design system, the task panel, the
 Kanban redesign and the notification bell dropdown. **Phase 4 (automation)
-slices 1 and 2 are merged.** The application remains pre-production.
+slices 1 and 2 are merged; email notifications are in PRs #27/#28 and
+administration is on `feat/admin-lifecycle`.** The application remains
+pre-production.
 
 Main: merge of PR #25 (`b66dfbe`). Recent PRs: #20 finish-up pass (pause style
 everywhere, bell dropdown, no theme switcher on sign-in/welcome), #21 automation
@@ -215,18 +217,57 @@ normal task write path, and records `AutomationRun` history (30 days).
   `docker compose up -d --build --wait worker`. A worker older than a saved rule
   reports "options the worker doesn't recognise" in run history.
 
+## Email (PRs #27 engine, #28 UI)
+
+Spec and mockup: `docs/specs/email.md`, `docs/mockups/email.html`. Per-type
+delivery (`NotificationPreference`: INSTANT / DIGEST / OFF; defaults: assignments,
+mentions, approval requests instant; decisions and rule messages daily), a
+per-person digest time (`User.digestTime`, null = off), 5-minute delay for
+instant emails (skipped if read or deleted), 30/hour cap, signed one-click
+unsubscribe. Engine: `server/email-{queue,service}.ts`, templates in
+`lib/email-templates.ts`, worker in `apps/worker`. UI: Settings → Email
+notifications (`/settings/notifications`), links from Settings, the bell and the
+Inbox, and the rule builder's "Send an email" step. Tests: `tests/email.spec.ts`.
+
+## Administration (branch `feat/admin-lifecycle`)
+
+Spec and mockup: `docs/specs/admin.md`, `docs/mockups/admin.html`. Decisions:
+deactivate only (never delete/anonymize); admin first, then the API slice.
+
+- `User.deactivatedAt/deactivatedById`: `requireIdentity`, `workspaceContext`
+  and `access()` refuse deactivated people; a better-auth `session.create`
+  hook refuses sign-in after the password check (403 → "This account is
+  deactivated"); password recovery is silently unavailable. Deactivating
+  deletes sessions, sends a realtime `signout` event (new protocol kind) that
+  drops their sockets, pauses rules they created, cancels queued emails.
+- `eligiblePeople` keeps deactivated people flagged `deactivated: true` so
+  names still render; pickers (assignees, people fields, editors, mentions,
+  managers, approvers, rule choices) filter them out.
+- Roles: only the owner makes admins/members, deactivates admins, or transfers
+  ownership (password re-entry, shares the sign-in rate limit). Admins
+  deactivate members. Nobody changes the owner or themselves.
+- `Workspace.archivedAt`: archived workspaces (and their boards/projects) are
+  hidden from everyone via `workspaceScope`/`visibleWorkspaceScope`/
+  `projectScope`/`boardScope`; the last open workspace can't be archived.
+- `AuditEvent` (installation-wide; migration backfills `AccessEvent`):
+  `server/audit.ts` (`audit`, `recordAccess`). Recorded: invitations and
+  removals, project invitations/recovery, role changes, (de)activation,
+  ownership transfer, workspace rename/archive/restore, CSV exports, sign-in
+  lockouts. Not yet: installation settings changes.
+- API `app/api/v1/admin/[action]`; UI: Team access (People list on top),
+  Settings → Workspaces, Settings → Audit log. Tests: `tests/admin.spec.ts`.
+- Operations: rebuild the realtime server and worker after pulling
+  (`docker compose up -d --build --wait realtime worker` if run in Docker).
+
 ## Next session
 
-The user's agreed order (2026-10-19): **email next**, then admin + API
-(account/workspace lifecycle administration, OpenAPI). Go-live work
-(deployment, backup/restore, pilot/load verification) is deferred until asked.
-
-Email was only proposed, not planned. Plan it with the user before any code, as
-was done for automation: notification emails per type with instant / daily
-digest / off settings and unsubscribe links, a timezone-aware daily digest, no
-email for your own actions or for notifications already read in the app, an
-"email" rule action reusing custom messages, and branded HTML plus plain-text
-templates. It builds on the existing SMTP setup (Mailpit locally).
+The user's agreed order (2026-10-19): email (done) → admin (this slice) → the
+**API slice**: personal API tokens for every member (read-only or read & write,
+limited to the creator's own access, shown once, hashed, expiring, revocable;
+admins can see and revoke all), token auth on `/api/v1` with rate limits, an
+OpenAPI spec generated from the Zod contracts, and a docs page. Plan it with a
+mockup first. Go-live work (deployment, backup/restore, pilot/load
+verification) is deferred until asked.
 
 Small leftovers: the theme switcher still shows on setup, invitation and
 password-reset pages (the user only asked to remove it from sign-in/welcome).
