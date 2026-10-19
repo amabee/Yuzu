@@ -146,10 +146,29 @@ export const automationActionSchema = z.discriminatedUnion("kind", [
         ),
     })
     .strict(),
+  z
+    .object({
+      kind: z.literal("email"),
+      to: z.enum(["assignees", "creator", "people"]),
+      userIds: z.array(personId).max(20).optional(),
+      /** Placeholders like {task} fill in when it runs. */
+      subject: z.string().trim().max(150).optional(),
+      message: z.string().trim().min(1).max(1000),
+    })
+    .strict()
+    .refine(
+      (value) => value.to !== "people" || Boolean(value.userIds?.length),
+      "Choose who to email.",
+    ),
 ]);
 
 /** Actions that don't need a task, the only ones scheduled rules may use. */
-export const tasklessActions = ["create.task", "webhook", "notify"] as const;
+export const tasklessActions = [
+  "create.task",
+  "webhook",
+  "notify",
+  "email",
+] as const;
 
 export const automationRuleInputSchema = z
   .object({
@@ -171,11 +190,11 @@ export const automationRuleInputSchema = z
       rule.trigger.kind !== "schedule" ||
       (rule.conditions.length === 0 &&
         rule.actions.every((action) =>
-          action.kind !== "notify"
-            ? (tasklessActions as readonly string[]).includes(action.kind)
-            : action.to === "people",
+          action.kind === "notify" || action.kind === "email"
+            ? action.to === "people"
+            : (tasklessActions as readonly string[]).includes(action.kind),
         )),
-    "Scheduled rules have no task, so they can only create tasks, send webhooks or notify chosen people.",
+    "Scheduled rules have no task, so they can only create tasks, send webhooks, or notify or email chosen people.",
   );
 
 export const automationToggleSchema = z

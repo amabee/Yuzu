@@ -56,6 +56,7 @@ import {
 } from "./automation-webhooks";
 import { latestOccurrence, nextOccurrence } from "@/lib/automation-schedule";
 import { defaultMessage, renderMessage } from "@/lib/automation-message";
+import { queueRuleEmails } from "./email-service";
 import { digest, SetupError } from "./setup/security";
 
 const db = () => getDatabase();
@@ -755,7 +756,7 @@ async function runRule(rule: StoredRule, event: StoredEvent) {
       });
     const actions = z.array(automationActionSchema).parse(rule.actions);
     const day = await today(tx);
-    const { changes, notices, creations, webhooks } = planActions(
+    const { changes, notices, creations, webhooks, emails } = planActions(
       actions,
       current,
       day,
@@ -933,6 +934,56 @@ async function runRule(rule: StoredRule, event: StoredEvent) {
         index++;
       }
     }
+    // "Send an email" steps: board members only, per their settings.
+    let emailed = 0;
+    if (emails.length) {
+      const values = await messageValues(tx, {
+        board: context.board,
+        rule,
+        task: task
+          ? {
+              ...current,
+              ...changes,
+              assigneeIds: assignees,
+              name: task.name,
+              createdById: task.createdById,
+            }
+          : null,
+        day,
+      });
+      const appName =
+        (
+          await tx.installationSettings.findUnique({
+            where: { id: "installation" },
+          })
+        )?.name ?? "Yuzu";
+      for (const step of emails) {
+        const to = [
+          ...new Set(
+            step.to === "assignees"
+              ? assignees
+              : step.to === "creator"
+                ? task
+                  ? [task.createdById]
+                  : []
+                : (step.userIds ?? []),
+          ),
+        ].filter((id) => people.has(id));
+        const message = renderMessage(step.message, values);
+        emailed += await queueRuleEmails(tx, {
+          userIds: to,
+          subject: renderMessage(step.subject || step.message, values).slice(
+            0,
+            150,
+          ),
+          message,
+          ruleName: rule.name,
+          boardId: rule.boardId,
+          task: task ? { id: task.id, name: task.name } : null,
+          appName,
+        });
+      }
+    }
     const parts = [
       ...(task && Object.keys(changes).length
         ? [await describe(tx, context.board, changes, 0)]
@@ -942,6 +993,9 @@ async function runRule(rule: StoredRule, event: StoredEvent) {
         ? [
             `Notified ${recipients.length} ${recipients.length === 1 ? "person" : "people"}`,
           ]
+        : []),
+      ...(emailed
+        ? [`Emailed ${emailed} ${emailed === 1 ? "person" : "people"}`]
         : []),
       ...(webhooks.length
         ? [

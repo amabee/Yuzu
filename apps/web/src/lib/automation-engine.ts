@@ -159,6 +159,7 @@ export function planActions(
   const notices: PlannedNotice[] = [];
   const creations: Extract<AutomationAction, { kind: "create.task" }>[] = [];
   const webhooks: string[] = [];
+  const emails: Extract<AutomationAction, { kind: "email" }>[] = [];
   for (const action of actions) {
     switch (action.kind) {
       case "set.status":
@@ -203,6 +204,9 @@ export function planActions(
       case "webhook":
         webhooks.push(action.url);
         break;
+      case "email":
+        emails.push(action);
+        break;
     }
   }
   const changes: PlannedChanges = {};
@@ -228,7 +232,7 @@ export function planActions(
     ),
   );
   if (Object.keys(fieldValues).length) changes.fieldValues = fieldValues;
-  return { changes, notices, creations, webhooks };
+  return { changes, notices, creations, webhooks, emails };
 }
 
 export function addDays(day: string, days: number) {
