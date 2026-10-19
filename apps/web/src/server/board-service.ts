@@ -114,7 +114,8 @@ export async function access(
   write = false,
 ) {
   const user = await tx.user.findUnique({ where: { id: userId } });
-  if (!user) throw notFound();
+  // Deactivated people (and rules running as them) reach nothing.
+  if (!user || user.deactivatedAt) throw notFound();
   const board = await tx.board.findFirst({
     where: { id: boardId, ...boardScope(user) },
     include: {
@@ -153,7 +154,8 @@ export async function access(
   };
 }
 /** People who can be assigned, mentioned, or chosen on this board: whoever can
- *  see it. Private projects: their members only. Public projects and standalone
+ *  see it. Deactivated people stay listed, flagged, so their names still show
+ *  on their work; pickers leave them out. Private projects: their members only. Public projects and standalone
  *  boards: workspace members and admins, plus members of a public project. */
 export async function eligiblePeople(
   tx: DatabaseTransaction,
@@ -168,20 +170,27 @@ export async function eligiblePeople(
   const projectMembers = board.projectId
     ? [{ projectMemberships: { some: { projectId: board.projectId } } }]
     : [];
-  return tx.user.findMany({
-    where: {
-      OR:
-        project?.visibility === "PRIVATE"
-          ? projectMembers
-          : [
-              { role: { in: ["OWNER", "ADMIN"] } },
-              { memberships: { some: { workspaceId: board.workspaceId } } },
-              ...projectMembers,
-            ],
-    },
-    select: { id: true, name: true, image: true },
-    orderBy: { name: "asc" },
-  });
+  return tx.user
+    .findMany({
+      where: {
+        OR:
+          project?.visibility === "PRIVATE"
+            ? projectMembers
+            : [
+                { role: { in: ["OWNER", "ADMIN"] } },
+                { memberships: { some: { workspaceId: board.workspaceId } } },
+                ...projectMembers,
+              ],
+      },
+      select: { id: true, name: true, image: true, deactivatedAt: true },
+      orderBy: { name: "asc" },
+    })
+    .then((people) =>
+      people.map(({ deactivatedAt, ...person }) => ({
+        ...person,
+        deactivated: Boolean(deactivatedAt),
+      })),
+    );
 }
 function ensurePeople(ids: string[], eligible: Set<string>) {
   if (ids.some((id) => !eligible.has(id)))

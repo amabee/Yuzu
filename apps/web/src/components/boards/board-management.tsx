@@ -446,7 +446,11 @@ export function BoardManagement({
             >
               <option value="">Choose a person</option>
               {state.people
-                .filter((person) => !state.managerIds.includes(person.id))
+                .filter(
+                  (person) =>
+                    !person.deactivated &&
+                    !state.managerIds.includes(person.id),
+                )
                 .map((person) => (
                   <option key={person.id} value={person.id}>
                     {person.name}

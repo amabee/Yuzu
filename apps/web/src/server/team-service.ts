@@ -13,6 +13,7 @@ import {
   revokeSchema,
 } from "@/lib/team-contract";
 import { configuredOrigin, digest, SetupError } from "./setup/security";
+import { recordAccess } from "./audit";
 import { requireAdministrator } from "./team-access";
 import { getAuth } from "./auth";
 import { allowInvitationAttempt } from "./auth-rate-limit";
@@ -76,6 +77,7 @@ export async function teamState(headers: Headers) {
   await requireAdministrator(headers);
   const [workspaces, members, invitations] = await Promise.all([
     db().workspace.findMany({
+      where: { archivedAt: null },
       select: { id: true, name: true },
       orderBy: { createdAt: "asc" },
     }),
@@ -194,14 +196,12 @@ export async function sendInvitation(input: unknown, headers: Headers) {
       data: { sentAt: new Date() },
     });
     if (!marked.count) throw unavailable();
-    await db().accessEvent.create({
-      data: {
+    await recordAccess(db(), {
         workspaceId,
         actorId: user.id,
         action: "INVITATION_SENT",
         subjectEmail: email,
-      },
-    });
+      });
     return { sent: true };
   } catch (error) {
     await db().invitation.updateMany({
@@ -235,14 +235,12 @@ export async function revokeInvitation(input: unknown, headers: Headers) {
       where: { id },
       data: { revokedAt: new Date() },
     });
-    await tx.accessEvent.create({
-      data: {
+    await recordAccess(tx, {
         workspaceId: invite.workspaceId,
         actorId: user.id,
         action: "INVITATION_REVOKED",
         subjectEmail: invite.email,
-      },
-    });
+      });
   });
   return { revoked: true };
 }
@@ -275,14 +273,12 @@ export async function removeMember(input: unknown, headers: Headers) {
       where: { workspaceId, email: target.email, acceptedAt: null },
       data: { revokedAt: new Date() },
     });
-    await tx.accessEvent.create({
-      data: {
+    await recordAccess(tx, {
         workspaceId,
         actorId: user.id,
         action: "MEMBER_REMOVED",
         subjectEmail: target.email,
-      },
-    });
+      });
   });
   return { removed: true };
 }
@@ -408,14 +404,12 @@ export async function acceptInvitation(input: unknown, headers: Headers) {
       where: { id: current!.id },
       data: { acceptedAt: new Date() },
     });
-    await tx.accessEvent.create({
-      data: {
+    await recordAccess(tx, {
         workspaceId: current!.workspaceId,
         actorId: recipient.id,
         action: "INVITATION_ACCEPTED",
         subjectEmail: recipient.email,
-      },
-    });
+      });
   });
   return { accepted: true, signedIn: Boolean(existing) };
 }

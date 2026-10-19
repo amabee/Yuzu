@@ -178,6 +178,9 @@ export function NotificationMenu({
             <Link href="/notifications" onClick={() => setOpen(false)}>
               See all in Inbox
             </Link>
+            <Link href="/settings/notifications" onClick={() => setOpen(false)}>
+              Email settings
+            </Link>
           </footer>
         </Popover.Content>
       </Popover.Portal>

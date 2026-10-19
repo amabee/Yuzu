@@ -539,29 +539,35 @@ export function TaskEditor({
                     )}
                   </summary>
                   <div className="task-people-options">
-                    {state.people.map((person) => (
-                      <label key={person.id}>
-                        <input
-                          type="checkbox"
-                          aria-label={`Assign ${person.name}`}
-                          checked={draft.assigneeIds.includes(person.id)}
-                          onChange={(event) =>
-                            editDraft({
-                              assigneeIds: event.target.checked
-                                ? [...draft.assigneeIds, person.id]
-                                : draft.assigneeIds.filter(
-                                    (id) => id !== person.id,
-                                  ),
-                            })
-                          }
-                        />
-                        <AssigneeAvatars
-                          ids={[person.id]}
-                          people={state.people}
-                        />
-                        {person.name}
-                      </label>
-                    ))}
+                    {state.people
+                      .filter(
+                        (person) =>
+                          !person.deactivated ||
+                          draft.assigneeIds.includes(person.id),
+                      )
+                      .map((person) => (
+                        <label key={person.id}>
+                          <input
+                            type="checkbox"
+                            aria-label={`Assign ${person.name}`}
+                            checked={draft.assigneeIds.includes(person.id)}
+                            onChange={(event) =>
+                              editDraft({
+                                assigneeIds: event.target.checked
+                                  ? [...draft.assigneeIds, person.id]
+                                  : draft.assigneeIds.filter(
+                                      (id) => id !== person.id,
+                                    ),
+                              })
+                            }
+                          />
+                          <AssigneeAvatars
+                            ids={[person.id]}
+                            people={state.people}
+                          />
+                          {person.name}
+                        </label>
+                      ))}
                   </div>
                 </details>
               </div>
@@ -711,10 +717,12 @@ export function TaskEditor({
                           }
                         >
                           {(field.type === "PEOPLE"
-                            ? state.people.map((person) => ({
-                                id: person.id,
-                                label: person.name,
-                              }))
+                            ? state.people
+                                .filter((person) => !person.deactivated)
+                                .map((person) => ({
+                                  id: person.id,
+                                  label: person.name,
+                                }))
                             : field.options
                           ).map((option) => (
                             <option key={option.id} value={option.id}>
@@ -1161,7 +1169,11 @@ export function TaskEditor({
               >
                 <option value="">Choose a person</option>
                 {state.people
-                  .filter((person) => !task.editorIds.includes(person.id))
+                  .filter(
+                    (person) =>
+                      !person.deactivated &&
+                      !task.editorIds.includes(person.id),
+                  )
                   .map((person) => (
                     <option key={person.id} value={person.id}>
                       {person.name}

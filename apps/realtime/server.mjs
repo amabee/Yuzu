@@ -52,7 +52,11 @@ export async function startRealtimeServer({
       }
       if (!seen.has(event.eventId)) {
         seen.set(event.eventId, event.expiresAt);
-        if (event.kind === "navigation")
+        if (event.kind === "signout")
+          io.in(event.userIds.map((id) => `user:${id}`)).disconnectSockets(
+            true,
+          );
+        else if (event.kind === "navigation")
           io.to(event.userIds.map((id) => `user:${id}`)).emit(
             "navigation:changed",
             { eventId: event.eventId },

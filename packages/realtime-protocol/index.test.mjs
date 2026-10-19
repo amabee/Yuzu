@@ -82,6 +82,12 @@ test("navigation events name their recipients and carry no board", () => {
     verifyRealtimeToken(signRealtimeToken(event, secret), secret, "event"),
     event,
   );
+  // Sign-out events share the shape: named users, no board.
+  const signout = { ...event, kind: "signout" };
+  assert.deepEqual(
+    verifyRealtimeToken(signRealtimeToken(signout, secret), secret, "event"),
+    signout,
+  );
   for (const invalid of [
     { ...event, kind: "other" },
     { ...event, userIds: undefined },
