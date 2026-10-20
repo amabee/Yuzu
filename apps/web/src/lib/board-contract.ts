@@ -17,6 +17,7 @@ import {
 } from "./record-types";
 
 export type BoardRecord = RecordConfig & { type: RecordType };
+import type { LinkedRecord } from "./record-links";
 export const numberDisplaySchema = z
   .object({
     format: z.enum(numberFormats),
@@ -54,6 +55,8 @@ export const fieldTypes = [
   "PEOPLE",
   "URL",
   "EMAIL",
+  "RELATION",
+  "ROLLUP",
 ] as const;
 export const priorities = ["LOW", "NORMAL", "HIGH", "URGENT"] as const;
 export const coreKeys = [
@@ -153,6 +156,10 @@ export const fieldSchema = z
     options: z.array(z.string().trim().min(1).max(80)).max(50).default([]),
     /** Number fields: how values show. */
     number: numberDisplaySchema.optional(),
+    /** Link fields: the other board and how many on each side. */
+    relation: z.unknown().optional(),
+    /** Rollups: the link field, count or sum, and the summed field. */
+    rollup: z.unknown().optional(),
   })
   .strict();
 export const groupSchema = z
@@ -213,6 +220,8 @@ export type BoardField = {
   options: BoardOption[];
   /** Number fields: format, decimals, limits, and whether it's a system field. */
   number?: NumberConfig;
+  /** Link fields: the other board, and whether a record links to many. */
+  relation?: { targetBoardId: string; many: boolean };
 };
 export type BoardTask = {
   id: string;
@@ -255,6 +264,8 @@ export type BoardState = {
   record?: BoardRecord;
   /** Installation currency for currency number fields. */
   currency?: string;
+  /** Linked records the viewer may see, by id; others are private. */
+  linked?: Record<string, LinkedRecord>;
   managerIds: string[];
   currentUserId: string;
   groups: { id: string; name: string }[];
@@ -283,6 +294,16 @@ const baseBoardStateSchema = z.object({
     .extend({ type: z.enum(recordTypes) })
     .default({ type: "TASK", ...recordDefinitions.TASK.defaults }),
   currency: z.string().default("PHP"),
+  linked: z
+    .record(
+      z.string(),
+      z.object({
+        name: z.string(),
+        boardId: z.string(),
+        archived: z.boolean(),
+      }),
+    )
+    .default({}),
   managerIds: z.array(personId),
   currentUserId: personId,
   groups: z.array(z.object({ id: recordId, name: z.string() })),
@@ -297,6 +318,9 @@ const baseBoardStateSchema = z.object({
         optionAppearanceSchema.extend({ id: z.string(), label: z.string() }),
       ),
       number: numberConfigSchema.optional(),
+      relation: z
+        .object({ targetBoardId: z.string(), many: z.boolean() })
+        .optional(),
     }),
   ),
   people: z.array(
@@ -451,7 +475,10 @@ export const commentHistorySchema = z.array(
 );
 
 /** Board fields that are on for this board's record type. */
-export function visibleFields(state: { fields: BoardField[]; record?: BoardRecord }) {
+export function visibleFields(state: {
+  fields: BoardField[];
+  record?: BoardRecord;
+}) {
   const record = recordOf(state);
   return state.fields.filter((field) => {
     const builtin = builtinForColumn(field.key);

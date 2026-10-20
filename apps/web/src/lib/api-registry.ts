@@ -133,6 +133,20 @@ export const apiEndpoints: ApiEndpoint[] = [
   },
   {
     method: "GET",
+    path: "/boards/link-options",
+    group: "Boards and tasks",
+    summary: "Records you can link through a link field",
+    description:
+      "Set links by sending the chosen record ids as the link field's value in fieldValues. Links to records you can't see are kept as they are.",
+    access: "read",
+    query: z.object({
+      fieldId: recordId,
+      q: z.string().max(200).optional(),
+    }),
+    returns: "Up to 20 matching records",
+  },
+  {
+    method: "GET",
     path: "/boards/comments",
     group: "Comments",
     summary: "A task's comments",

@@ -1,4 +1,5 @@
 "use client";
+import { LinkPicker } from "./link-picker";
 import { PauseAlert } from "@/components/pause/pause-alert";
 import { useState } from "react";
 import { createRecordId } from "@yuzu/database/ids";
@@ -41,6 +42,7 @@ import { Input } from "@/components/ui/input";
 import { SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import {
   builtinName,
+  formatNumber,
   lower,
   recordDefinitions,
   type BuiltinKey,
@@ -704,7 +706,26 @@ export function TaskEditor({
                   <div key={field.id} className="task-prop">
                     <span className="task-prop-label">{label}</span>
                     <div className="task-prop-value">
-                      {field.type === "CHECKBOX" ? (
+                      {field.type === "RELATION" ? (
+                        <LinkPicker
+                          fieldId={field.id}
+                          label={label}
+                          value={
+                            Array.isArray(value) ? (value as string[]) : []
+                          }
+                          linked={state.linked}
+                          many={field.relation?.many ?? true}
+                          currentUserId={state.currentUserId}
+                          disabled={!editable || pending}
+                          onChange={(ids) => changeValue(field.id, ids)}
+                        />
+                      ) : field.type === "ROLLUP" ? (
+                        <span className="task-rollup" aria-label={label}>
+                          {typeof value === "number"
+                            ? formatNumber(value, field.number, state.currency)
+                            : "—"}
+                        </span>
+                      ) : field.type === "CHECKBOX" ? (
                         <input
                           aria-label={label}
                           type="checkbox"

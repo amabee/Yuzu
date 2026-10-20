@@ -45,6 +45,7 @@ import {
   removeFieldSchema,
   personId,
   priorities,
+  recordId,
   commentCreateSchema,
   renameGroupSchema,
   coreKeys,
@@ -69,6 +70,19 @@ import {
 } from "./team-access";
 import { digest, SetupError } from "./setup/security";
 import { ruleBuiltins, viewBuiltins } from "@/lib/record-usage";
+import {
+  MAX_LINKS_PER_FIELD,
+  relationConfig,
+  rollupConfig,
+} from "@/lib/record-links";
+import {
+  createRelationField,
+  fillRollups,
+  linkedRecords,
+  removeRelationField,
+  rollupColumnConfig,
+  syncLinks,
+} from "./record-links-service";
 import {
   aRecord,
   asRecordType,
@@ -349,6 +363,18 @@ function typedValue(
         .union([z.literal(""), z.string().email().max(320)])
         .parse(input);
       break;
+    case "RELATION":
+      // Ids only here; syncLinks checks them against the other board.
+      z.array(recordId)
+        .max(MAX_LINKS_PER_FIELD)
+        .parse(input ?? []);
+      break;
+    case "ROLLUP":
+      throw new SetupError(
+        422,
+        "READ_ONLY_FIELD",
+        "Rollups are calculated from linked records and can't be edited.",
+      );
     case "NUMBER": {
       const { min, max } = numberConfig(field.config);
       let number = z.number().finite();
@@ -432,6 +458,8 @@ export async function saveValues(
   values: Record<string, unknown> | undefined,
   board: Awaited<ReturnType<typeof access>>["board"],
   people: Set<string>,
+  /** Whose view decides which linked records can be added or kept. */
+  viewer: { id: string; role: string },
 ) {
   for (const [fieldId, input] of Object.entries(values ?? {})) {
     const field = board.columns.find(
@@ -443,6 +471,10 @@ export async function saveValues(
         "INVALID_FIELD",
         "Choose an active custom field from this board.",
       );
+    if (field.type === "RELATION") {
+      await syncLinks(tx, taskId, field, input, viewer);
+      continue;
+    }
     const { personIds, ...data } = typedValue(field, input, people);
     const value = await tx.taskFieldValue.upsert({
       where: { taskId_fieldId: { taskId, fieldId } },
@@ -467,6 +499,17 @@ const taskInclude = {
   assignees: true,
   editors: true,
   values: { include: { people: true, field: true } },
+  // Both directions of "Link to board" fields, bounded per record.
+  linksFrom: {
+    select: { fieldId: true, toId: true },
+    orderBy: { createdAt: "asc" as const },
+    take: 200,
+  },
+  linksTo: {
+    select: { fromId: true, field: { select: { config: true } } },
+    orderBy: { createdAt: "asc" as const },
+    take: 200,
+  },
   activity: {
     select: {
       id: true,
@@ -512,6 +555,19 @@ export function snapshot(task: LoadedTask) {
   );
 }
 function valueMap(task: LoadedTask): Record<string, FieldValue> {
+  const links: Record<string, string[]> = {};
+  for (const link of task.linksFrom)
+    (links[link.fieldId] ??= []).push(link.toId);
+  for (const link of task.linksTo) {
+    const mirror = relationConfig(link.field.config)?.mirrorFieldId;
+    if (mirror) (links[mirror] ??= []).push(link.fromId);
+  }
+  return {
+    ...links,
+    ...valueRows(task),
+  };
+}
+function valueRows(task: LoadedTask): Record<string, FieldValue> {
   return Object.fromEntries(
     task.values
       .filter((value) => !value.field.archivedAt)
@@ -550,6 +606,8 @@ export async function boardState(
               "Removed task comment",
               "Uploaded task attachment",
               "Removed task attachment",
+              "Linked record",
+              "Unlinked record",
             ],
           },
         },
@@ -658,6 +716,28 @@ export async function boardState(
             : { authorId: user.id }),
         },
       });
+      // Names of linked records this viewer may see (others stay private),
+      // for link chips, rollups and "Linked …" activity lines.
+      const relationIds = context.board.columns
+        .filter((column) => column.type === "RELATION")
+        .map((column) => column.id);
+      const linked = await linkedRecords(tx, context.user, [
+        ...[...tasks, ...(focused ? [focused] : [])].flatMap((task) => {
+          const values = valueMap(task);
+          return relationIds.flatMap((id) =>
+            Array.isArray(values[id]) ? (values[id] as string[]) : [],
+          );
+        }),
+        ...commentEvents.flatMap(
+          (event) =>
+            (event.after as { otherId?: string } | null)?.otherId ?? [],
+        ),
+      ]);
+      const linkAction = (event: { action: string; after: unknown }) => {
+        const otherId = (event.after as { otherId?: string } | null)?.otherId;
+        const name = (otherId && linked[otherId]?.name) || "a private item";
+        return `${event.action === "Linked record" ? "Linked" : "Unlinked"} ${name}`;
+      };
       const presentTask = (task: LoadedTask): BoardTask => ({
         id: task.id,
         ...snapshot(task),
@@ -679,16 +759,27 @@ export async function boardState(
           .slice(0, 20)
           .map((event) => ({
             id: event.id,
-            action:
-              event.action +
-              (event.action === "Uploaded task attachment" ||
-              event.action === "Removed task attachment"
-                ? `: ${(event as { after?: { fileName?: string } }).after?.fileName ?? "File"}`
-                : ""),
+            action: ["Linked record", "Unlinked record"].includes(event.action)
+              ? linkAction(
+                  event as unknown as { action: string; after: unknown },
+                )
+              : event.action +
+                (event.action === "Uploaded task attachment" ||
+                event.action === "Removed task attachment"
+                  ? `: ${(event as { after?: { fileName?: string } }).after?.fileName ?? "File"}`
+                  : ""),
             actor: event.actor.name,
             createdAt: event.createdAt.toISOString(),
           })),
       });
+      const presentedTasks = tasks.map(presentTask);
+      const presentedFocus = focused ? presentTask(focused) : null;
+      await fillRollups(
+        tx,
+        context.board.columns,
+        [...presentedTasks, ...(presentedFocus ? [presentedFocus] : [])],
+        linked,
+      );
       return {
         calendarDate,
         groupTaskCounts: Object.fromEntries(
@@ -704,7 +795,7 @@ export async function boardState(
           ),
           config,
         },
-        focusedTask: focused ? presentTask(focused) : null,
+        focusedTask: presentedFocus,
         pendingApprovalCount,
         pulse: {
           statusCounts: Object.fromEntries(
@@ -762,9 +853,27 @@ export async function boardState(
           ...(field.type === "NUMBER"
             ? { number: numberConfig(field.config) }
             : {}),
+          // Rollups show like the field they sum.
+          ...(field.type === "ROLLUP"
+            ? {
+                number: {
+                  format: rollupConfig(field.config)?.format ?? "plain",
+                  decimals: rollupConfig(field.config)?.decimals,
+                },
+              }
+            : {}),
+          ...(field.type === "RELATION" && relationConfig(field.config)
+            ? {
+                relation: {
+                  targetBoardId: relationConfig(field.config)!.targetBoardId,
+                  many: relationConfig(field.config)!.many,
+                },
+              }
+            : {}),
         })),
         people: await eligiblePeople(tx, context.board),
-        tasks: tasks.map(presentTask),
+        tasks: presentedTasks,
+        linked,
       };
     },
     { isolationLevel: "RepeatableRead", timeout: 15000 },
@@ -983,7 +1092,14 @@ export async function createTaskRecord(
       },
     },
   });
-  await saveValues(tx, task.id, body.fieldValues, context.board, people);
+  await saveValues(
+    tx,
+    task.id,
+    body.fieldValues,
+    context.board,
+    people,
+    context.user,
+  );
   await createNotifications(tx, {
     recipientIds: body.assigneeIds ?? [],
     actorId,
@@ -1081,7 +1197,14 @@ export async function applyTaskRecord(
         where: { taskId: task.id, userId: grant.userId },
       });
   }
-  await saveValues(tx, task.id, fieldValues, context.board, people);
+  await saveValues(
+    tx,
+    task.id,
+    fieldValues,
+    context.board,
+    people,
+    context.user,
+  );
   const after = await loadTask(tx, task.id);
   if (assigneeIds)
     await createNotifications(tx, {
@@ -1659,10 +1782,24 @@ export async function manageBoard(
           "FIELD_CHANGED",
           "This field changed. Reload its current configuration first.",
         );
-      await tx.boardColumn.update({
-        where: { id: field.id },
-        data: { archivedAt: new Date() },
-      });
+      if (field.type === "RELATION") {
+        // The mirror on the other board goes too, so its manager must agree.
+        const config = relationConfig(field.config);
+        if (config && config.targetBoardId !== context.board.id) {
+          const other = await access(tx, user.id, config.targetBoardId, true);
+          if (!other.canManage)
+            throw new SetupError(
+              403,
+              "FORBIDDEN",
+              "You need to manage the linked board too, since its mirror field is removed with this one.",
+            );
+        }
+        await removeRelationField(tx, field);
+      } else
+        await tx.boardColumn.update({
+          where: { id: field.id },
+          data: { archivedAt: new Date() },
+        });
       await tx.boardEvent.create({
         data: {
           boardId: body.boardId,
@@ -2036,6 +2173,23 @@ export async function manageBoard(
         "INVALID_OPTIONS",
         "Choose unique field options.",
       );
+    const nextPosition = (columns: { position: number }[]) =>
+      columns.reduce(
+        (highest, column) => Math.max(highest, column.position),
+        -1,
+      ) + 1;
+    if (field.type === "RELATION")
+      return createRelationField(
+        tx,
+        context,
+        field.name,
+        field.relation,
+        nextPosition,
+      );
+    const rollup =
+      field.type === "ROLLUP"
+        ? await rollupColumnConfig(tx, context, field.rollup)
+        : null;
     return tx.boardColumn.create({
       data: {
         boardId: body.boardId,
@@ -2053,6 +2207,7 @@ export async function manageBoard(
             label,
           })),
           ...(field.type === "NUMBER" && field.number ? field.number : {}),
+          ...(rollup ?? {}),
         },
       },
       select: { id: true },
