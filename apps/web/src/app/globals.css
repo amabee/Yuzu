@@ -6512,8 +6512,9 @@ body:has(.pause-sheet[data-state="open"]) .yuzu-toast-viewport {
 .trash-retain b {
   font-weight: 600;
 }
-.trash-empty {
+.trash-retain .trash-empty {
   margin-left: auto;
+  border-color: color-mix(in srgb, var(--intent-danger) 40%, var(--border));
   color: var(--intent-danger);
 }
 @media (max-width: 640px) {
