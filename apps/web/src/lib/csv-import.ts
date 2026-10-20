@@ -1,3 +1,10 @@
+import {
+  builtinLabels,
+  builtinName,
+  lower,
+  type BuiltinKey,
+  type RecordConfig,
+} from "./record-types";
 import { z } from "zod";
 import {
   createTaskSchema,
@@ -44,6 +51,8 @@ export const importRowSchema = z
   .strict();
 export type ImportMapping = z.infer<typeof importMappingSchema>;
 export type ImportContext = {
+  /** The board's record names and built-ins; Task defaults when absent. */
+  record?: RecordConfig;
   fields: BoardField[];
   groups: { id: string; name: string }[];
   people: { id: string; name: string }[];
@@ -200,28 +209,38 @@ export function* importPreviewChunks(csv: ReturnType<typeof parseImportCsv>) {
 }
 
 export function importTargets(context: ImportContext) {
+  const record = context.record;
+  const singular = record?.singular ?? "Task";
+  const noun = lower(singular);
+  const builtin = (key: BuiltinKey, id: string, aliases: string[]) => {
+    if (record && !record.builtins[key].on) return [];
+    const name = record ? builtinName(record, key) : builtinLabels[key];
+    return [
+      { id, name, aliases: [...new Set([name.toLowerCase(), ...aliases])] },
+    ];
+  };
   return [
-    { id: "name", name: "Task title", aliases: ["task", "title", "name"] },
-    { id: "description", name: "Description", aliases: ["description"] },
-    { id: "status", name: "Status", aliases: ["status"] },
-    { id: "priority", name: "Priority", aliases: ["priority"] },
     {
-      id: "start_date",
-      name: "Start date",
-      aliases: ["start date", "start_date", "start"],
+      id: "name",
+      name: `${singular} title`,
+      aliases: [...new Set([noun, "task", "title", "name"])],
     },
-    {
-      id: "due_date",
-      name: "Due date",
-      aliases: ["due date", "due_date", "target date"],
-    },
+    ...builtin("description", "description", ["description"]),
+    ...builtin("status", "status", ["status"]),
+    ...builtin("priority", "priority", ["priority"]),
+    ...builtin("startDate", "start_date", [
+      "start date",
+      "start_date",
+      "start",
+    ]),
+    ...builtin("dueDate", "due_date", ["due date", "due_date", "target date"]),
     { id: "group", name: "Group", aliases: ["group"] },
-    { id: "assignees", name: "Assignees", aliases: ["assignees", "assignee"] },
-    { id: "checklist", name: "Checklist", aliases: ["checklist"] },
+    ...builtin("assignees", "assignees", ["assignees", "assignee"]),
+    ...builtin("checklist", "checklist", ["checklist"]),
     {
       id: "source_id",
-      name: "Original task ID (duplicate check only)",
-      aliases: ["task id"],
+      name: `Original ${noun} ID (duplicate check only)`,
+      aliases: [...new Set([`${noun} id`, "task id"])],
     },
     ...context.fields
       .filter((field) => !coreKeys.includes(field.key))

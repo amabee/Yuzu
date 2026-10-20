@@ -22,8 +22,11 @@ export async function workspaceDashboard(
     day: "2-digit",
   }).format(new Date());
   const { start, end } = calendarWindow(calendarDate);
+  // Task counts only make sense for Task boards; other record types get
+  // their own dashboards (phase 2).
   const visibleBoards: Prisma.BoardWhereInput = {
     ...boardScope(user),
+    recordType: "TASK",
     ...(query.workspaceId ? { workspaceId: query.workspaceId } : {}),
     // boardScope above still applies, so a hidden project matches nothing.
     ...(query.projectId ? { projectId: query.projectId } : {}),

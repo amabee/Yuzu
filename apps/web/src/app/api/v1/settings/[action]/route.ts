@@ -3,6 +3,7 @@ import { readSetupBody, SetupError } from "@/server/setup/security";
 import {
   updateAutomationSettings,
   updateCalendarSettings,
+  updateCurrencySettings,
 } from "@/server/installation-settings-service";
 
 export async function POST(
@@ -12,13 +13,15 @@ export async function POST(
   const requestId = crypto.randomUUID();
   try {
     const action = (await context.params).action;
-    if (action !== "calendar" && action !== "automation")
+    if (!["calendar", "automation", "currency"].includes(action))
       throw new SetupError(404, "NOT_FOUND", "Settings action not found.");
     const body = await readSetupBody(request);
     const data =
       action === "calendar"
         ? await updateCalendarSettings(body, request.headers)
-        : await updateAutomationSettings(body, request.headers);
+        : action === "currency"
+          ? await updateCurrencySettings(body, request.headers)
+          : await updateAutomationSettings(body, request.headers);
     return Response.json(
       { data, requestId },
       { headers: { "Cache-Control": "no-store" } },

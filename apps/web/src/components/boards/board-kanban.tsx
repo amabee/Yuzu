@@ -41,8 +41,11 @@ import {
   formatDueDate,
   priorityOptions,
 } from "./board-presentation";
+import { builtinName, formatNumber, lower } from "@/lib/record-types";
 import {
   coreKeys,
+  recordOf,
+  visibleFields,
   type BoardField,
   type BoardState,
   type BoardTask,
@@ -388,6 +391,9 @@ function Lane({
 }) {
   const { setNodeRef } = useDroppable({ id: laneId(lane.key) });
   const [expanded, setExpanded] = useState(false);
+  const record = recordOf(state);
+  const noun = lower(record.singular);
+  const nouns = lower(record.plural);
   const done = lane.statusId === "done";
   const tasks = ids.flatMap((id) => byId.get(id) ?? []);
   // Done folds after a few cards, unless something is being dropped there.
@@ -415,8 +421,8 @@ function Lane({
           <button
             type="button"
             className="board-lane-add"
-            aria-label={`Add task to ${lane.label}`}
-            title={`Add task to ${lane.label}`}
+            aria-label={`Add ${noun} to ${lane.label}`}
+            title={`Add ${noun} to ${lane.label}`}
             onClick={() => onAdd(lane)}
           >
             <Plus size={15} />
@@ -452,25 +458,25 @@ function Lane({
       {!tasks.length &&
         (lane.count ? (
           <div className="board-lane-empty">
-            <p>No tasks from this status on this page.</p>
+            <p>No {nouns} from this status on this page.</p>
             <button type="button" onClick={() => onShowStatus(lane)}>
               Show {lane.label}
             </button>
           </div>
         ) : (
           <p className="board-lane-empty">
-            {dragging ? "Drop here" : "No tasks yet on this status."}
+            {dragging ? "Drop here" : `No ${nouns} yet on this status.`}
           </p>
         ))}
       {canAdd && (
         <button
           type="button"
           className="board-lane-add-row"
-          aria-label={`Add task to ${lane.label}`}
+          aria-label={`Add ${noun} to ${lane.label}`}
           onClick={() => onAdd(lane)}
         >
           <Plus size={14} />
-          Add task
+          Add {noun}
         </button>
       )}
     </section>
@@ -563,8 +569,29 @@ function TaskCard({
   overlay?: boolean;
 }) {
   const today = state.calendarDate ?? new Date().toISOString().slice(0, 10);
+  const record = recordOf(state);
   const done = task.statusId === "done";
-  const due = task.dueDate;
+  const due = record.builtins.dueDate.on ? task.dueDate : null;
+  const showPriority =
+    record.builtins.priority.on && hotPriorities.has(task.priority);
+  // Money on the card: currency fields, the way a deal is read at a glance.
+  const amounts = visibleFields(state)
+    .filter(
+      (field) =>
+        field.type === "NUMBER" &&
+        field.number?.format === "currency" &&
+        typeof task.fieldValues[field.id] === "number",
+    )
+    .slice(0, 2)
+    .map((field) => ({
+      key: field.id,
+      name: field.name,
+      text: formatNumber(
+        task.fieldValues[field.id] as number,
+        field.number,
+        state.currency,
+      ),
+    }));
   const dueState =
     !due || done
       ? undefined
@@ -625,7 +652,7 @@ function TaskCard({
             ]
           : [];
       }),
-    ...(task.checklist.length
+    ...(task.checklist.length && record.builtins.checklist.on
       ? [
           {
             key: "checklist",
@@ -662,7 +689,7 @@ function TaskCard({
               type="button"
               className="task-card-action"
               aria-label={`${state.approvalPolicy.enabled && state.approvalPolicy.requireArchive ? "Request archive for" : "Archive"} ${task.name}`}
-              title="Archive task"
+              title={`Archive ${lower(record.singular)}`}
               disabled={busy}
               onClick={() => onArchive?.(task)}
             >
@@ -677,9 +704,9 @@ function TaskCard({
           Awaiting approval
         </Link>
       )}
-      {(group || hotPriorities.has(task.priority)) && (
+      {(group || showPriority) && (
         <div className="task-card-tags">
-          {hotPriorities.has(task.priority) && (
+          {showPriority && (
             <span
               className="task-card-priority"
               style={
@@ -722,11 +749,20 @@ function TaskCard({
             className="task-card-date"
             dateTime={due}
             data-state={dueState}
-            title={`Target date: ${formatDueDate(due, true)}`}
+            title={`${builtinName(record, "dueDate")}: ${formatDueDate(due, true)}`}
           >
             {formatDueDate(due)}
           </time>
         )}
+        {amounts.map((item) => (
+          <span
+            key={item.key}
+            className="task-card-amount"
+            title={`${item.name}: ${item.text}`}
+          >
+            {item.text}
+          </span>
+        ))}
         {checklists.map((item) => (
           <span
             key={item.key}
@@ -757,7 +793,7 @@ function TaskCard({
             {task.attachmentCount}
           </span>
         )}
-        {task.assigneeIds.length > 0 && (
+        {record.builtins.assignees.on && task.assigneeIds.length > 0 && (
           <span className="task-card-people">
             <AssigneeAvatars ids={task.assigneeIds} people={state.people} />
           </span>

@@ -1,5 +1,12 @@
 "use client";
 
+import {
+  builtinName,
+  lower,
+  recordDefinitions,
+  type BuiltinKey,
+  type RecordConfig,
+} from "@/lib/record-types";
 import { useId, type ReactNode } from "react";
 import { Search, SlidersHorizontal, X } from "lucide-react";
 import {
@@ -83,6 +90,7 @@ export function BoardFilters({
   count,
   onChange,
   hideDue = false,
+  record = recordDefinitions.TASK.defaults,
 }: {
   config: ViewConfig;
   statuses: BoardOption[];
@@ -92,7 +100,12 @@ export function BoardFilters({
   onChange: (config: ViewConfig) => void;
   /** The calendar places tasks by date, so it hides the due-date filter. */
   hideDue?: boolean;
+  /** The board's names and which built-ins are on. */
+  record?: RecordConfig;
 }) {
+  const noun = lower(record.singular);
+  const nouns = lower(record.plural);
+  const shown = (key: BuiltinKey) => record.builtins[key].on;
   const searchId = useId();
   const active = [
     Boolean(config.statusId),
@@ -113,13 +126,13 @@ export function BoardFilters({
     ) : undefined;
   return (
     <section
-      aria-label="Task filters"
+      aria-label={`${record.singular} filters`}
       className="mb-4 rounded-lg border border-border bg-card p-4 sm:p-5"
     >
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
           <SlidersHorizontal size={16} className="text-muted-foreground" />
-          <h2 className="text-sm font-semibold">Filter tasks</h2>
+          <h2 className="text-sm font-semibold">Filter {nouns}</h2>
           <span className="text-xs text-muted-foreground">
             {count} {count === 1 ? "match" : "matches"}
           </span>
@@ -160,8 +173,8 @@ export function BoardFilters({
             <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               id={searchId}
-              aria-label="Search tasks"
-              placeholder="Search task names or descriptions…"
+              aria-label={`Search ${nouns}`}
+              placeholder={`Search ${noun} names or descriptions…`}
               className="h-[40px] pl-9"
               value={config.search}
               maxLength={200}
@@ -169,59 +182,65 @@ export function BoardFilters({
             />
           </div>
         </div>
-        <BoardFilterSelect
-          title="Status"
-          label="Filter board status"
-          value={config.statusId ?? ""}
-          onChange={(value) => field("statusId", value || null)}
-          options={[
-            { value: "", label: "All statuses" },
-            ...(config.statusId &&
-            config.statusId !== "__none__" &&
-            !statuses.some((status) => status.id === config.statusId)
-              ? [{ value: config.statusId, label: "Removed status" }]
-              : []),
-            ...statuses.map((status) => ({
-              value: status.id,
-              label: status.label,
-              decoration: dot(status.color),
-            })),
-            { value: "__none__", label: "No status" },
-          ]}
-        />
-        <BoardFilterSelect
-          title="Assignee"
-          label="Filter task assignee"
-          value={config.assignee}
-          onChange={(value) =>
-            field("assignee", value as ViewConfig["assignee"])
-          }
-          options={[
-            { value: "all", label: "Anyone" },
-            { value: "me", label: "Assigned to me" },
-            { value: "unassigned", label: "Unassigned" },
-          ]}
-        />
-        <BoardFilterSelect
-          title="Priority"
-          label="Filter task priority"
-          value={config.priority}
-          onChange={(value) =>
-            field("priority", value as ViewConfig["priority"])
-          }
-          options={[
-            { value: "all", label: "Any priority" },
-            ...priorities.map((option) => ({
-              value: option.id,
-              label: option.label,
-              decoration: dot(option.color),
-            })),
-          ]}
-        />
-        {!hideDue && (
+        {shown("status") && (
           <BoardFilterSelect
-            title="Due date"
-            label="Filter task due date"
+            title={builtinName(record, "status")}
+            label="Filter board status"
+            value={config.statusId ?? ""}
+            onChange={(value) => field("statusId", value || null)}
+            options={[
+              { value: "", label: "All statuses" },
+              ...(config.statusId &&
+              config.statusId !== "__none__" &&
+              !statuses.some((status) => status.id === config.statusId)
+                ? [{ value: config.statusId, label: "Removed status" }]
+                : []),
+              ...statuses.map((status) => ({
+                value: status.id,
+                label: status.label,
+                decoration: dot(status.color),
+              })),
+              { value: "__none__", label: "No status" },
+            ]}
+          />
+        )}
+        {shown("assignees") && (
+          <BoardFilterSelect
+            title={builtinName(record, "assignees")}
+            label={`Filter ${noun} assignee`}
+            value={config.assignee}
+            onChange={(value) =>
+              field("assignee", value as ViewConfig["assignee"])
+            }
+            options={[
+              { value: "all", label: "Anyone" },
+              { value: "me", label: "Assigned to me" },
+              { value: "unassigned", label: "Unassigned" },
+            ]}
+          />
+        )}
+        {shown("priority") && (
+          <BoardFilterSelect
+            title={builtinName(record, "priority")}
+            label={`Filter ${noun} priority`}
+            value={config.priority}
+            onChange={(value) =>
+              field("priority", value as ViewConfig["priority"])
+            }
+            options={[
+              { value: "all", label: "Any priority" },
+              ...priorities.map((option) => ({
+                value: option.id,
+                label: option.label,
+                decoration: dot(option.color),
+              })),
+            ]}
+          />
+        )}
+        {!hideDue && shown("dueDate") && (
+          <BoardFilterSelect
+            title={builtinName(record, "dueDate")}
+            label={`Filter ${noun} due date`}
             value={config.due}
             onChange={(value) => field("due", value as ViewConfig["due"])}
             options={[
@@ -235,13 +254,15 @@ export function BoardFilters({
         <BoardFilterSelect
           className="min-w-0 sm:col-span-2"
           title="Sort by"
-          label="Sort tasks"
+          label={`Sort ${nouns}`}
           value={config.sort}
           onChange={(value) => field("sort", value as ViewConfig["sort"])}
           options={[
             { value: "created", label: "Created order" },
             { value: "name", label: "Name" },
-            { value: "due", label: "Due date" },
+            ...(shown("dueDate")
+              ? [{ value: "due", label: builtinName(record, "dueDate") }]
+              : []),
           ]}
         />
       </div>

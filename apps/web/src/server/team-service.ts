@@ -197,11 +197,11 @@ export async function sendInvitation(input: unknown, headers: Headers) {
     });
     if (!marked.count) throw unavailable();
     await recordAccess(db(), {
-        workspaceId,
-        actorId: user.id,
-        action: "INVITATION_SENT",
-        subjectEmail: email,
-      });
+      workspaceId,
+      actorId: user.id,
+      action: "INVITATION_SENT",
+      subjectEmail: email,
+    });
     return { sent: true };
   } catch (error) {
     await db().invitation.updateMany({
@@ -236,11 +236,11 @@ export async function revokeInvitation(input: unknown, headers: Headers) {
       data: { revokedAt: new Date() },
     });
     await recordAccess(tx, {
-        workspaceId: invite.workspaceId,
-        actorId: user.id,
-        action: "INVITATION_REVOKED",
-        subjectEmail: invite.email,
-      });
+      workspaceId: invite.workspaceId,
+      actorId: user.id,
+      action: "INVITATION_REVOKED",
+      subjectEmail: invite.email,
+    });
   });
   return { revoked: true };
 }
@@ -274,11 +274,11 @@ export async function removeMember(input: unknown, headers: Headers) {
       data: { revokedAt: new Date() },
     });
     await recordAccess(tx, {
-        workspaceId,
-        actorId: user.id,
-        action: "MEMBER_REMOVED",
-        subjectEmail: target.email,
-      });
+      workspaceId,
+      actorId: user.id,
+      action: "MEMBER_REMOVED",
+      subjectEmail: target.email,
+    });
   });
   return { removed: true };
 }
@@ -405,11 +405,11 @@ export async function acceptInvitation(input: unknown, headers: Headers) {
       data: { acceptedAt: new Date() },
     });
     await recordAccess(tx, {
-        workspaceId: current!.workspaceId,
-        actorId: recipient.id,
-        action: "INVITATION_ACCEPTED",
-        subjectEmail: recipient.email,
-      });
+      workspaceId: current!.workspaceId,
+      actorId: recipient.id,
+      action: "INVITATION_ACCEPTED",
+      subjectEmail: recipient.email,
+    });
   });
   return { accepted: true, signedIn: Boolean(existing) };
 }

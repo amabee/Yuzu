@@ -1,4 +1,5 @@
 "use client";
+import type { BuiltinKey } from "@/lib/record-types";
 import { useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -29,7 +30,7 @@ import {
   type Part,
   type RuleLabels,
 } from "@/lib/automation-describe";
-import { coreKeys, type BoardState } from "@/lib/board-contract";
+import { coreKeys, recordOf, type BoardState } from "@/lib/board-contract";
 import { nextOccurrence, type Schedule } from "@/lib/automation-schedule";
 import { messageFields } from "@/lib/automation-message";
 import { priorityOptions } from "./board-presentation";
@@ -644,6 +645,13 @@ function RuleBuilder({
   onSave: () => void;
 }) {
   const choices = boardChoices(state);
+  // Only offer built-ins that are on for this board.
+  const on = Object.fromEntries(
+    Object.entries(recordOf(state).builtins).map(([key, value]) => [
+      key,
+      value.on,
+    ]),
+  ) as Record<BuiltinKey, boolean>;
   const set = (patch: Partial<Draft>) => onChange({ ...draft, ...patch });
   const scheduled = draft.trigger.kind === "schedule";
   /** Scheduled rules can't read a task: keep only task-free steps. */
@@ -904,15 +912,27 @@ function RuleBuilder({
           >
             <option value="schedule">on a schedule</option>
             <option value="task.created">a task is created</option>
-            <option value="status.changed">status changes</option>
-            <option value="assignee.added">someone is assigned</option>
-            <option value="due.arrived">a task is due today</option>
-            <option value="due.overdue">a task becomes overdue</option>
+            {on.status && (
+              <option value="status.changed">status changes</option>
+            )}
+            {on.assignees && (
+              <option value="assignee.added">someone is assigned</option>
+            )}
+            {on.dueDate && (
+              <option value="due.arrived">a task is due today</option>
+            )}
+            {on.dueDate && (
+              <option value="due.overdue">a task becomes overdue</option>
+            )}
             <option value="comment.added">a comment is added</option>
-            <option value="checklist.completed">
-              the checklist is completed
-            </option>
-            <option value="field:priority">priority changes</option>
+            {on.checklist && (
+              <option value="checklist.completed">
+                the checklist is completed
+              </option>
+            )}
+            {on.priority && (
+              <option value="field:priority">priority changes</option>
+            )}
             {choices.groups.length > 0 && (
               <option value="field:group">a task moves to a group</option>
             )}
@@ -1051,13 +1071,13 @@ function RuleBuilder({
                 value={subjectOf(condition)}
                 onChange={(value) => setCondition(index, newCondition(value))}
               >
-                <option value="status">Status</option>
-                <option value="priority">Priority</option>
+                {on.status && <option value="status">Status</option>}
+                {on.priority && <option value="priority">Priority</option>}
                 {choices.groups.length > 0 && (
                   <option value="group">Group</option>
                 )}
-                <option value="assignees">Assignees</option>
-                <option value="due">Due date</option>
+                {on.assignees && <option value="assignees">Assignees</option>}
+                {on.dueDate && <option value="due">Due date</option>}
                 {[...choices.selectFields, ...choices.checkFields].map(
                   (field) => (
                     <option key={field.id} value={`field:${field.id}`}>
@@ -1264,15 +1284,21 @@ function RuleBuilder({
               )}
               {!scheduled && (
                 <>
-                  <option value="set.status">Set status</option>
-                  <option value="set.priority">Set priority</option>
+                  {on.status && <option value="set.status">Set status</option>}
+                  {on.priority && (
+                    <option value="set.priority">Set priority</option>
+                  )}
                   {choices.groups.length > 0 && (
                     <option value="set.group">Move to group</option>
                   )}
-                  <option value="assign">Assign</option>
-                  <option value="unassign">Unassign</option>
-                  <option value="date:dueDate">Set due date</option>
-                  <option value="date:startDate">Set start date</option>
+                  {on.assignees && <option value="assign">Assign</option>}
+                  {on.assignees && <option value="unassign">Unassign</option>}
+                  {on.dueDate && (
+                    <option value="date:dueDate">Set due date</option>
+                  )}
+                  {on.startDate && (
+                    <option value="date:startDate">Set start date</option>
+                  )}
                   {choices.dateFields.map((field) => (
                     <option key={field.id} value={`date:${field.id}`}>
                       Set {field.name}
@@ -1433,7 +1459,9 @@ function RuleBuilder({
                 >
                   {!scheduled && (
                     <>
-                      <option value="assignees">the assignees</option>
+                      {on.assignees && (
+                        <option value="assignees">the assignees</option>
+                      )}
                       <option value="creator">the creator</option>
                     </>
                   )}
@@ -1505,7 +1533,9 @@ function RuleBuilder({
                 >
                   {!scheduled && (
                     <>
-                      <option value="assignees">the assignees</option>
+                      {on.assignees && (
+                        <option value="assignees">the assignees</option>
+                      )}
                       <option value="creator">the creator</option>
                     </>
                   )}

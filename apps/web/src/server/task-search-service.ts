@@ -1,3 +1,4 @@
+import { asRecordType, resolveRecordConfig } from "@/lib/record-types";
 import { getDatabase, type Prisma } from "@yuzu/database";
 import {
   taskSearchQuerySchema,
@@ -41,6 +42,8 @@ export async function searchTasks(
             select: {
               id: true,
               name: true,
+              recordType: true,
+              recordConfig: true,
               workspace: { select: { name: true } },
               project: { select: { name: true } },
             },
@@ -60,6 +63,10 @@ export async function searchTasks(
           archived: Boolean(task.archivedAt),
           boardId: task.board.id,
           boardName: task.board.name,
+          recordName: resolveRecordConfig(
+            asRecordType(task.board.recordType),
+            task.board.recordConfig,
+          ).singular,
           workspaceName: task.board.workspace.name,
           projectName: task.board.project?.name ?? null,
         })),

@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
-import type { BoardState } from "@/lib/board-contract";
+import { visibleFields, type BoardState } from "@/lib/board-contract";
 export function ApprovalPolicyEditor({
   state,
   pending,
@@ -163,7 +163,7 @@ export function ApprovalPolicyEditor({
             <legend className="mb-2 text-xs font-medium">
               Protected fields
             </legend>
-            {state.fields.map((field) => (
+            {visibleFields(state).map((field) => (
               <label key={field.id} className="flex items-center gap-2 text-xs">
                 <input
                   type="checkbox"

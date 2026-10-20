@@ -182,8 +182,8 @@ only that test port, never the dev services.
 
 Hierarchy: Organization (the installation; reserved for a future page builder) →
 Workspace → Project (optional, PUBLIC/PRIVATE) → Board → Groups → Items.
-Standalone boards remain. Views are views of one board, not a level. Spec:
-`docs/specs/projects.md`. `boardScope`/`projectScope`/`visibleWorkspaceScope` in
+Standalone boards remain. Views are views of one board, not a level. Spec: in the PR
+history. `boardScope`/`projectScope`/`visibleWorkspaceScope` in
 `server/team-access.ts` gate every board read. Private projects are hidden from
 admins too; admins regain access only via audited `recover`. Gotcha: Prisma
 matches nothing for `{}` inside `OR`, so the scopes return `{}` directly for
@@ -281,20 +281,46 @@ Spec and mockup: `docs/specs/api.md`, `docs/mockups/api.html`.
 - Tests: `tests/api.spec.ts`, `lib/api-registry.test.ts`, `lib/openapi.test.ts`.
 - Adding an endpoint to the API = one registry entry (route must exist).
 
+## Record types (branch `feat/record-types`, phase 1 slice 1a)
+
+Direction: `docs/Yuzu_CRM_and_Business_Platform_Roadmap.md` (revision 2). Specs:
+`docs/specs/record-contract.md` (the 16-row compatibility contract) and
+`docs/specs/record-foundation.md`; mockup `docs/mockups/record-foundation.html`.
+
+- `Board.recordType` (TASK default, DEAL, CUSTOM) and `Board.recordConfig`
+  (names + built-in switches); `InstallationSettings.currency` (default PHP,
+  Settings → Currency). Definitions in `lib/record-types.ts`
+  (`resolveRecordConfig`, locks, `formatNumber`); usage helpers in
+  `lib/record-usage.ts`; client helpers `recordOf`/`visibleFields` in
+  `lib/board-contract.ts`; server `boardRecord()` in `board-service.ts`.
+- Server: `validateCore` → `checkRecordRules` refuses turned-off built-ins
+  (FIELD_TURNED_OFF) and >1 Deal owner; NUMBER min/max from field config;
+  Deal system fields (Amount currency ≥ 0, Probability 0–100) can't be
+  removed or change format; `record-settings` board action (preview lists
+  affected rules/views); rules that need a turned-off field SKIP without
+  counting failures; approvals can't protect turned-off fields; dashboard
+  counts Task boards only; CSV export/import follow names and switches;
+  search returns `recordName`; notices say "assigned you to this deal".
+- UI: Create board type picker (+ custom names/switches); Board details →
+  Records on this board; table/Kanban/panel/filters/rule builder/approvals
+  hide turned-off built-ins; Kanban shows currency fields; notices when Kanban
+  (status off) or Calendar/Timeline (dates off) can't apply.
+- Tests: `tests/records.spec.ts`, `lib/record-types.test.ts`.
+- Next: slice 1b (RELATION field + `RecordLink` table, two-way mirror,
+  count/sum ROLLUP), then the type-matrix test, then phase 2 CRM MVP.
+
 ## Next session
 
-The agreed roadmap (email → admin → API) is built: email in PRs #27/#28,
-admin in #29, API on `feat/api-tokens` (stacked; merge in order). Go-live work
-(deployment, backup/restore, pilot/load verification) is deferred until asked;
-ask the user what comes next. Possible follow-ups: installation settings
-changes in the audit log, a "Deactivated" label on names in task UI, uploads
-and CSV import over the API.
+Merge order for the stacked PRs: #27 → #28 → #29 → #30 → record types.
+Continue phase 1 with slice 1b (links and rollups) per
+`docs/specs/record-foundation.md`. Go-live work stays after phase 2 (CRM MVP).
 
 Small leftovers: the theme switcher still shows on setup, invitation and
 password-reset pages (the user only asked to remove it from sign-in/welcome).
 Do not describe Yuzu as production-ready.
 
 Start with this file, `git status`, and the specific source needed for the new
-request. Consult `README.md` for operational detail and `docs/progress.md` only
-when historical evidence is needed. Older notes saying CSV jobs require keeping
+request. Consult `README.md` for operational detail, the roadmap
+(`docs/Yuzu_CRM_and_Business_Platform_Roadmap.md`) for direction, and
+`docs/specs/` for feature specs; history lives in Git. Older notes saying CSV jobs require keeping
 the board open, or that files/search/reporting are still unimplemented, are stale.

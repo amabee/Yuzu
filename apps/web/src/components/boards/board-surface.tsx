@@ -23,8 +23,11 @@ import {
   type BoardState,
   type BoardTask,
   type BoardField,
+  recordOf,
+  visibleFields,
 } from "@/lib/board-contract";
 import { OperationToast, type BoardNotice } from "./operation-toast";
+import { builtinName, countOf, formatNumber, lower } from "@/lib/record-types";
 import { TaskEditor } from "./task-editor";
 import { useTaskUploads } from "./use-task-uploads";
 import { BoardManagement } from "./board-management";
@@ -226,7 +229,11 @@ export function BoardSurface({
       queryClient.isMutating({ mutationKey: boardKey }) ? false : "always",
   });
   const state = query.data ?? initialState;
-  const fields = state.fields;
+  const record = recordOf(state);
+  const noun = lower(record.singular);
+  const nouns = lower(record.plural);
+  const checklistOn = record.builtins.checklist.on;
+  const fields = visibleFields(state);
   const savedStatuses =
     state.fields.find((field) => field.key === "status")?.options ?? [];
   const configureView = <K extends keyof ViewConfig>(
@@ -358,11 +365,12 @@ export function BoardSurface({
       }
       const labels: Record<string, string> = {
         "approval-policy": "Approval settings saved",
-        "create-task": "Task created",
-        update: "Task updated",
-        archive: "Task archived",
-        restore: "Task restored",
-        editor: "Task permissions updated",
+        "create-task": `${record.singular} created`,
+        update: `${record.singular} updated`,
+        archive: `${record.singular} archived`,
+        restore: `${record.singular} restored`,
+        editor: `${record.singular} permissions updated`,
+        "record-settings": "Board records updated",
         field: "Custom field added",
         group: "Group added",
         "configure-field": "Field saved",
@@ -561,6 +569,8 @@ export function BoardSurface({
           (id) => field.options.find((option) => option.id === id)?.label ?? id,
         )
         .join(", ");
+    if (field.type === "NUMBER" && typeof value === "number")
+      return formatNumber(value, field.number, state.currency);
     return Array.isArray(value)
       ? value.join(", ")
       : typeof value === "boolean"
@@ -750,7 +760,9 @@ export function BoardSurface({
           </Button>
         </div>
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="text-xs text-muted-foreground">{total} tasks</span>
+          <span className="text-xs text-muted-foreground">
+            {countOf(record, total)}
+          </span>
           <Button
             size="sm"
             disabled={busy}
@@ -761,7 +773,7 @@ export function BoardSurface({
               setCreating(true);
             }}
           >
-            Add task
+            Add {noun}
           </Button>
           <Button
             variant="ghost"
@@ -769,7 +781,7 @@ export function BoardSurface({
             aria-pressed={archived}
             onClick={() => setArchived(!archived)}
           >
-            {archived ? "Active tasks" : "Archived"}
+            {archived ? `Active ${nouns}` : "Archived"}
           </Button>
           <ImportCsv
             state={state}
@@ -821,9 +833,26 @@ export function BoardSurface({
           count={total}
           onChange={setViewConfig}
           hideDue={view === "calendar" || view === "timeline"}
+          record={record}
         />
       )}
-      {view === "timeline" ? (
+      {view === "board" && !record.builtins.status.on ? (
+        <p role="status" className="audit-empty">
+          The Kanban view groups {nouns} by {builtinName(record, "status")},
+          which is turned off on this board. Use the table, or turn it on in
+          Board details → Records on this board.
+        </p>
+      ) : (view === "calendar" && !record.builtins.dueDate.on) ||
+        (view === "timeline" &&
+          !record.builtins.dueDate.on &&
+          !record.builtins.startDate.on) ? (
+        <p role="status" className="audit-empty">
+          {view === "calendar" ? "The calendar" : "The timeline"} places {nouns}{" "}
+          by their dates, which are turned off on this board. Turn on{" "}
+          {builtinName(record, "dueDate")} in Board details → Records on this
+          board to use it.
+        </p>
+      ) : view === "timeline" ? (
         <BoardTimelineView
           boardKey={boardKey}
           boardId={state.boardId}
@@ -939,7 +968,7 @@ export function BoardSurface({
               <tr>
                 {!fields.length && (
                   <th scope="col" className="border-b px-5 py-4 font-medium">
-                    Task
+                    {record.singular}
                   </th>
                 )}
                 {fields.map((field) => (
@@ -951,25 +980,28 @@ export function BoardSurface({
                     {field.name}
                   </th>
                 ))}
-                <th scope="col" className="border-b px-5 py-4 font-medium">
-                  Task checklist
-                </th>
+                {checklistOn && (
+                  <th scope="col" className="border-b px-5 py-4 font-medium">
+                    {record.singular}{" "}
+                    {builtinName(record, "checklist").toLowerCase()}
+                  </th>
+                )}
               </tr>
             </thead>
             <VirtualTableBody
               items={tasks}
-              columns={Math.max(fields.length, 1) + 1}
+              columns={Math.max(fields.length, 1) + (checklistOn ? 1 : 0)}
             >
               {(task) => (
                 <tr key={task.id} data-task-id={task.id}>
                   {(fields.length
-                    ? state.fields
+                    ? fields
                     : [
                         {
                           version: "",
                           id: "name",
                           key: "name",
-                          name: "Task",
+                          name: record.singular,
                           type: "TEXT",
                           options: [],
                         },
@@ -1079,30 +1111,32 @@ export function BoardSurface({
                       )}
                     </td>
                   ))}
-                  <td className="border-b px-4 py-3">
-                    {task.checklist.length ? (
-                      <button
-                        type="button"
-                        className="flex items-center gap-2 text-left text-primary"
-                        aria-label={`Open checklist for ${task.name}`}
-                        onClick={() => {
-                          mutation.reset();
-                          setSelectedId(task.id);
-                        }}
-                      >
-                        <ListChecks size={15} />
-                        <span>
-                          {task.checklist.filter((item) => item.done).length}/
-                          {task.checklist.length}
-                        </span>
-                        <span className="max-w-48 truncate text-xs text-muted-foreground">
-                          {task.checklist.map((item) => item.text).join(", ")}
-                        </span>
-                      </button>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </td>
+                  {checklistOn && (
+                    <td className="border-b px-4 py-3">
+                      {task.checklist.length ? (
+                        <button
+                          type="button"
+                          className="flex items-center gap-2 text-left text-primary"
+                          aria-label={`Open checklist for ${task.name}`}
+                          onClick={() => {
+                            mutation.reset();
+                            setSelectedId(task.id);
+                          }}
+                        >
+                          <ListChecks size={15} />
+                          <span>
+                            {task.checklist.filter((item) => item.done).length}/
+                            {task.checklist.length}
+                          </span>
+                          <span className="max-w-48 truncate text-xs text-muted-foreground">
+                            {task.checklist.map((item) => item.text).join(", ")}
+                          </span>
+                        </button>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
+                  )}
                 </tr>
               )}
             </VirtualTableBody>
@@ -1129,14 +1163,14 @@ export function BoardSurface({
       )}
       {state.pagination && view !== "calendar" && view !== "timeline" && (
         <nav
-          aria-label="Task pages"
+          aria-label={`${record.singular} pages`}
           className="my-4 flex flex-wrap items-center justify-between gap-3 text-xs"
         >
           <span role="status">
-            {query.isFetching ? "Updating tasks... " : ""}
+            {query.isFetching ? `Updating ${nouns}... ` : ""}
             {total
-              ? `${(state.pagination.page - 1) * 100 + 1}-${Math.min(state.pagination.page * 100, total)} of ${total.toLocaleString()} tasks`
-              : "No matching tasks"}
+              ? `${(state.pagination.page - 1) * 100 + 1}-${Math.min(state.pagination.page * 100, total)} of ${countOf(record, total)}`
+              : `No matching ${nouns}`}
           </span>
           <div className="flex items-center gap-2">
             <Button
@@ -1147,7 +1181,7 @@ export function BoardSurface({
                 setPageRequest({ configKey, page: state.pagination!.page - 1 })
               }
             >
-              Previous tasks
+              Previous {nouns}
             </Button>
             <label>
               Page{" "}
@@ -1181,7 +1215,7 @@ export function BoardSurface({
                 setPageRequest({ configKey, page: state.pagination!.page + 1 })
               }
             >
-              Next tasks
+              Next {nouns}
             </Button>
           </div>
         </nav>
@@ -1245,24 +1279,26 @@ export function BoardSurface({
                 )}
               </dl>
             </section>
-            <section>
-              <h3>
-                <Layers3 size={16} />
-                Status lanes
-              </h3>
-              <div className="mt-4 flex flex-wrap gap-2">
-                {statuses.map((status) => (
-                  <span key={status} className="board-detail-tag">
-                    {status}
-                  </span>
-                ))}
-                {!statuses.length && (
-                  <p className="text-sm text-muted-foreground">
-                    No statuses configured.
-                  </p>
-                )}
-              </div>
-            </section>
+            {record.builtins.status.on && (
+              <section>
+                <h3>
+                  <Layers3 size={16} />
+                  {builtinName(record, "status")} lanes
+                </h3>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {statuses.map((status) => (
+                    <span key={status} className="board-detail-tag">
+                      {status}
+                    </span>
+                  ))}
+                  {!statuses.length && (
+                    <p className="text-sm text-muted-foreground">
+                      No statuses configured.
+                    </p>
+                  )}
+                </div>
+              </section>
+            )}
             {mutation.error && (
               <p role="alert" className="text-sm text-destructive">
                 {mutation.error.message}

@@ -188,6 +188,9 @@ export function WorkspaceSearch({
                             {task.workspaceName} /{" "}
                             {task.projectName ? `${task.projectName} / ` : ""}
                             {task.boardName}
+                            {task.recordName !== "Task"
+                              ? ` · ${task.recordName}`
+                              : ""}
                             {task.archived ? " / Archived" : ""}
                           </p>
                           {task.description && (

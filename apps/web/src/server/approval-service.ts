@@ -20,6 +20,7 @@ import {
   fieldOptions,
 } from "@/lib/board-contract";
 import {
+  boardRecord,
   access,
   serial,
   eligiblePeople,
@@ -32,6 +33,7 @@ import {
   validateValues,
 } from "./board-service";
 import { readApprovalPolicy } from "./approval-policy";
+import { builtinForColumn } from "@/lib/record-types";
 import { requireIdentity, isAdministrator, boardScope } from "./team-access";
 import { SetupError } from "./setup/security";
 import { createNotifications } from "./notification-events";
@@ -78,11 +80,14 @@ export async function configureApprovals(input: unknown, headers: Headers) {
         "APPROVER_REQUIRED",
         "Choose a primary approver before enabling approval mode.",
       );
-    if (
-      body.protectedFieldIds.some(
-        (id) => !context.board.columns.some((field) => field.id === id),
-      )
-    )
+    const record = boardRecord(context.board).config;
+    const usable = (id: string) => {
+      const field = context.board.columns.find((item) => item.id === id);
+      if (!field) return false;
+      const builtin = builtinForColumn(field.key);
+      return !builtin || record.builtins[builtin].on;
+    };
+    if (body.protectedFieldIds.some((id) => !usable(id)))
       throw new SetupError(
         422,
         "INVALID_FIELD",

@@ -36,6 +36,7 @@ import {
 import { z } from "zod";
 import {
   access,
+  boardRecord,
   applyTaskRecord,
   createTaskInTransaction,
   eligiblePeople,
@@ -45,6 +46,8 @@ import {
   validateCore,
   validateValues,
 } from "./board-service";
+import { ruleBlockedBy } from "@/lib/record-usage";
+import { builtinName } from "@/lib/record-types";
 import { readApprovalPolicy, submitProposal } from "./approval-policy";
 import { createNotifications } from "./notification-events";
 import { notifyBoardMutation } from "./realtime";
@@ -737,6 +740,14 @@ async function runRule(rule: StoredRule, event: StoredEvent) {
         detail: "The rule's creator no longer manages this board.",
         pause:
           "Its creator no longer manages this board. A manager can take it over by saving it.",
+      });
+    // A field the rule needs was turned off: skip, but don't count a failure.
+    const boardConfig = boardRecord(context.board).config;
+    const blocked = ruleBlockedBy(rule as never, boardConfig);
+    if (blocked)
+      return record({
+        outcome: "SKIPPED",
+        detail: `Uses ${builtinName(boardConfig, blocked)}, which is turned off on this board.`,
       });
     const current = task ? (snapshot(task) as RuleTask) : NO_TASK;
     const conditions = z
