@@ -358,11 +358,20 @@ Trash or set auto-erase (Never/30/90/365 days).
   Settings → Trash (`components/trash/`).
 - Tests: `tests/trash.spec.ts`.
 
+## Record contract test (branch `feat/type-matrix`)
+
+`apps/web/tests/contract.spec.ts` runs the record compatibility contract
+(`docs/specs/record-contract.md`, now 17 rows) on every system type: create/
+update and type rules, revisions, permissions, approvals, views and filters,
+names, rules, CSV, API tokens, activity, links and rollups, search,
+dashboards, and Trash invisibility. Add each new system type (Company,
+Contact, Lead, Activity in phase 2) to its `types` list. Phase 1 is complete.
+
 ## Next session
 
-Merge order: #31 → #32 → #33 → trash. All target `main`. Then the phase 1
-type-matrix contract test (add the "deleted records are invisible" row), and
-phase 2 (CRM MVP).
+Merge order: #31 → #32 → #33 → #34 → type matrix. All target `main`.
+Then plan phase 2 (CRM MVP) with the user. Open decision first: Lead as its
+own record that converts, or a lifecycle stage on Contact.
 
 Small leftovers: the theme switcher still shows on setup, invitation and
 password-reset pages (the user only asked to remove it from sign-in/welcome).
