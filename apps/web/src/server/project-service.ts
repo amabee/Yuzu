@@ -101,6 +101,7 @@ export async function visibleProjects(
     include: {
       members: { where: { userId: user.id }, select: { role: true } },
       boards: {
+        where: { deletedAt: null },
         select: { id: true, name: true, position: true },
         orderBy: [{ position: "asc" }, { createdAt: "asc" }],
         take: 200,
@@ -146,6 +147,7 @@ export async function listProjects(
 export async function projectDirectory(headers: Headers) {
   await requireAdministrator(headers);
   const projects = await db().project.findMany({
+    where: { deletedAt: null },
     orderBy: [{ workspaceId: "asc" }, { position: "asc" }],
     take: 500,
     select: {
@@ -247,7 +249,7 @@ export async function reorderProjects(input: unknown, headers: Headers) {
   return serial(async (tx) => {
     await writer(tx, user.id);
     const existing = await tx.project.findMany({
-      where: { workspaceId: body.workspaceId },
+      where: { workspaceId: body.workspaceId, deletedAt: null },
       select: { id: true },
     });
     const ids = new Set(existing.map((project) => project.id));

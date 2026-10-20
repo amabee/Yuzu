@@ -2,7 +2,8 @@
 import { useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useRouter } from "nextjs-toploader/app";
-import { Archive, Pencil, Users } from "lucide-react";
+import { Archive, Pencil, Trash2, Users } from "lucide-react";
+import { DeleteDialog } from "@/components/trash/delete-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -64,6 +65,7 @@ export function ProjectActions({
       ? requested
       : null);
   const [archiving, setArchiving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const openPanel = (next: "members" | "edit" | null) => {
     setPanel(next);
     // Drop ?panel= so a refresh or back navigation doesn't reopen it.
@@ -87,6 +89,15 @@ export function ProjectActions({
             onClick={() => setArchiving(true)}
           >
             <Archive size={15} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label="Delete project"
+            title="Delete project"
+            onClick={() => setDeleting(true)}
+          >
+            <Trash2 size={15} />
           </Button>
           <CreateBoard
             workspaces={[]}
@@ -118,6 +129,19 @@ export function ProjectActions({
       <ArchiveProjectDialog
         project={archiving ? project : null}
         onOpenChange={setArchiving}
+      />
+      <DeleteDialog
+        open={deleting}
+        onOpenChange={setDeleting}
+        title={`Delete the ${project.name} project?`}
+        description="The project and its boards move to Trash and disappear for everyone. Its managers or an admin can restore it from Settings → Trash."
+        confirm="Delete project"
+        action="delete-project"
+        id={project.id}
+        onDeleted={() => {
+          router.push("/boards");
+          router.refresh();
+        }}
       />
     </>
   );

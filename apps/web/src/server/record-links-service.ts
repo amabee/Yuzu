@@ -76,6 +76,7 @@ export async function syncLinks(
           id: { in: [...new Set([...requested, ...existing])] },
           boardId: config.targetBoardId,
           board: boardScope(user),
+          deletedAt: null,
         },
         select: { id: true, name: true, archivedAt: true },
       })
@@ -168,6 +169,7 @@ export async function linkedRecords(
     where: {
       id: { in: [...new Set(ids)].slice(0, 5000) },
       board: boardScope(user),
+      deletedAt: null,
     },
     select: { id: true, name: true, boardId: true, archivedAt: true },
   });
@@ -253,6 +255,7 @@ export async function linkOptions(
         boardId: config.targetBoardId,
         board: boardScope(user),
         archivedAt: null,
+        deletedAt: null,
         ...(q
           ? { name: { contains: escapeLike(q), mode: "insensitive" as const } }
           : {}),

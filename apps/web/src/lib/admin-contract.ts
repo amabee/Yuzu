@@ -85,6 +85,17 @@ export const auditKinds = {
     label: "API tokens",
     actions: ["API_TOKEN_CREATED", "API_TOKEN_REVOKED"],
   },
+  trash: {
+    label: "Deleting and Trash",
+    actions: [
+      "BOARD_DELETED",
+      "BOARD_RESTORED",
+      "PROJECT_DELETED",
+      "PROJECT_RESTORED",
+      "TRASH_ERASED",
+      "TRASH_RETENTION_SET",
+    ],
+  },
 } as const;
 export type AuditKind = keyof typeof auditKinds;
 export const auditRanges = {
@@ -166,6 +177,18 @@ export function auditSentence(
       return `created the API token “${subject}”`;
     case "API_TOKEN_REVOKED":
       return `revoked the API token “${subject}”`;
+    case "BOARD_DELETED":
+      return `deleted the board ${subject}`;
+    case "BOARD_RESTORED":
+      return `restored the board ${subject}`;
+    case "PROJECT_DELETED":
+      return `deleted the project ${subject}`;
+    case "PROJECT_RESTORED":
+      return `restored the project ${subject}`;
+    case "TRASH_ERASED":
+      return `erased ${subject} from Trash`;
+    case "TRASH_RETENTION_SET":
+      return `set Trash auto-erase to ${subject}`;
     case "CSV_EXPORTED":
       return `exported ${subject} to CSV`;
     default:

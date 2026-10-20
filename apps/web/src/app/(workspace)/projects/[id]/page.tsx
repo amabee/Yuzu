@@ -35,6 +35,7 @@ export default async function ProjectPage({
         },
       },
       boards: {
+        where: { deletedAt: null },
         orderBy: [{ position: "asc" }, { createdAt: "asc" }],
         take: 200,
         select: { id: true, name: true },
@@ -63,6 +64,7 @@ export default async function ProjectPage({
       where: {
         boardId: { in: project.boards.map((board) => board.id) },
         archivedAt: null,
+        deletedAt: null,
         dueDate: { gte: start, lte: end },
         OR: [{ statusId: null }, { statusId: { not: COMPLETED_STATUS_ID } }],
       },
@@ -89,7 +91,7 @@ export default async function ProjectPage({
   const [totals, completed] = await Promise.all([
     db.task.groupBy({
       by: ["boardId"],
-      where: { boardId: { in: boardIds }, archivedAt: null },
+      where: { boardId: { in: boardIds }, archivedAt: null, deletedAt: null },
       _count: true,
     }),
     db.task.groupBy({
@@ -97,6 +99,7 @@ export default async function ProjectPage({
       where: {
         boardId: { in: boardIds },
         archivedAt: null,
+        deletedAt: null,
         statusId: COMPLETED_STATUS_ID,
       },
       _count: true,

@@ -129,6 +129,7 @@ export async function exportBoardCsvForActor(
           const batch = await tx.task.findMany({
             where: {
               boardId: board.id,
+              deletedAt: null,
               archivedAt: config
                 ? config.archived
                   ? { not: null }

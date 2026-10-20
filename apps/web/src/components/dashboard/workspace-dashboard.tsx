@@ -295,7 +295,10 @@ export function WorkspaceDashboard({
       </dl>
       <div className="overview-grid">
         <div className="grid min-w-0 content-start gap-5">
-          <section aria-label="Task deadlines" className="overview-card bg-card">
+          <section
+            aria-label="Task deadlines"
+            className="overview-card bg-card"
+          >
             <header className="overview-card-head">
               <h2>
                 <CalendarDays size={18} />
@@ -529,7 +532,10 @@ export function WorkspaceDashboard({
           </section>
         </div>
         <div className="grid min-w-0 content-start gap-5">
-          <section aria-label="Waiting on you" className="overview-card bg-card">
+          <section
+            aria-label="Waiting on you"
+            className="overview-card bg-card"
+          >
             <header className="overview-card-head">
               <h2>
                 <ShieldCheck size={18} />
@@ -576,7 +582,10 @@ export function WorkspaceDashboard({
               </div>
             )}
           </section>
-          <section aria-label="Assignee workload" className="overview-card bg-card">
+          <section
+            aria-label="Assignee workload"
+            className="overview-card bg-card"
+          >
             <header className="overview-card-head">
               <div>
                 <h2>

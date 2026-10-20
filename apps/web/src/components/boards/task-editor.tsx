@@ -56,6 +56,7 @@ import {
 import {
   PauseButton,
   PauseClose,
+  PauseDialog,
   PauseModal,
 } from "@/components/pause/pause-dialog";
 import {
@@ -188,6 +189,7 @@ export function TaskEditor({
   const [tab, setTab] = useState<"comments" | "activity" | "files">("comments");
   const [composerSlot, setComposerSlot] = useState<HTMLDivElement | null>(null);
   const [editorsOpen, setEditorsOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [accessPerson, setAccessPerson] = useState("");
   const [newChecklistItem, setNewChecklistItem] = useState("");
   const editable = !task || task.canEdit;
@@ -324,7 +326,7 @@ export function TaskEditor({
                   )}
                 </button>
               )}
-              {(canComplete || canManageEditors) && (
+              {(canComplete || canManageEditors || state.canManage) && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button
@@ -361,6 +363,16 @@ export function TaskEditor({
                       <DropdownMenuItem onSelect={() => setEditorsOpen(true)}>
                         <UserCog size={14} />
                         Task editors…
+                      </DropdownMenuItem>
+                    )}
+                    {state.canManage && (
+                      <DropdownMenuItem
+                        className="text-destructive"
+                        disabled={pending}
+                        onSelect={() => setDeleting(true)}
+                      >
+                        <Trash2 size={14} />
+                        Delete {noun}…
                       </DropdownMenuItem>
                     )}
                   </DropdownMenuContent>
@@ -1212,6 +1224,33 @@ export function TaskEditor({
           </>
         )}
       </div>
+      {task && (
+        <PauseDialog
+          open={deleting}
+          onOpenChange={setDeleting}
+          intent="danger"
+          title={`Delete “${task.name}”?`}
+          description={`It moves to Trash and disappears from the board, search, links and rules. Managers can restore it from Trash.`}
+          actions={
+            <>
+              <PauseClose asChild>
+                <PauseButton>Cancel</PauseButton>
+              </PauseClose>
+              <PauseButton
+                tone="primary"
+                data-autofocus
+                disabled={pending}
+                onClick={() => {
+                  setDeleting(false);
+                  onAction("trash/delete-record", { id: task.id });
+                }}
+              >
+                Delete {noun}
+              </PauseButton>
+            </>
+          }
+        />
+      )}
       {task && canManageEditors && (
         <PauseModal
           open={editorsOpen}

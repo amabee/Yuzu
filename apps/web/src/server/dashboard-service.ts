@@ -34,6 +34,7 @@ export async function workspaceDashboard(
   const active: Prisma.TaskWhereInput = {
     board: visibleBoards,
     archivedAt: null,
+    deletedAt: null,
   };
   const open: Prisma.TaskWhereInput = {
     ...active,

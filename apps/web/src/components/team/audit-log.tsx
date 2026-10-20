@@ -6,6 +6,7 @@ import {
   Boxes,
   KeyRound,
   ShieldAlert,
+  Trash2,
   UserCog,
 } from "lucide-react";
 import { apiRequest } from "@/lib/api-client";
@@ -29,6 +30,7 @@ const icons: Record<AuditKind, typeof UserCog> = {
   workspaces: Boxes,
   data: ArrowDownToLine,
   api: KeyRound,
+  trash: Trash2,
 };
 /** Details already said in the sentence aren't repeated underneath. */
 const inSentence = new Set(["ROLE_CHANGED", "WORKSPACE_RENAMED"]);

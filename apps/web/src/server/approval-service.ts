@@ -303,7 +303,10 @@ export async function decideApproval(input: unknown, headers: Headers) {
     const task = proposal.taskId ? await loadTask(tx, proposal.taskId) : null;
     if (
       proposal.operation !== "CREATE" &&
-      (!task || task.archivedAt || !canEdit(task, authorContext))
+      (!task ||
+        task.archivedAt ||
+        task.deletedAt ||
+        !canEdit(task, authorContext))
     )
       return finish(
         "STALE",

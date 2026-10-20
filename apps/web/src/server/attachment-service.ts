@@ -34,7 +34,7 @@ async function taskAccess(
     where: { id: taskId },
     include: { assignees: true, editors: true },
   });
-  if (!task) throw missing();
+  if (!task || task.deletedAt) throw missing();
   const context = await access(tx, userId, task.boardId, write);
   const canEdit =
     context.canManage ||

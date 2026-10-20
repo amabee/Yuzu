@@ -13,6 +13,8 @@ export function visibility(user: { id: string; role: string }) {
   return {
     recipientId: user.id,
     board: boardScope(user),
+    // Notifications about records in Trash stay hidden until restored.
+    AND: [{ OR: [{ taskId: null }, { task: { deletedAt: null } }] }],
     ...(isAdministrator(user.role)
       ? {}
       : {
