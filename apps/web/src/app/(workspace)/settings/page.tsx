@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import {
   CalendarDays,
   CalendarRange,
+  Coins,
   KeyRound,
   Mail,
   Paperclip,
@@ -9,6 +10,7 @@ import {
   Webhook,
 } from "lucide-react";
 import { WeekStartSetting } from "@/components/settings/week-start-setting";
+import { CurrencySetting } from "@/components/settings/currency-setting";
 import { PrivateWebhookSetting } from "@/components/settings/private-webhook-setting";
 import Link from "next/link";
 import { workspaceContext } from "@/server/workspace-access";
@@ -151,6 +153,29 @@ export default async function SettingsPage() {
             </span>
           </section>
         ))}
+        <section className="flex flex-col justify-between gap-4 border-b p-6 sm:flex-row sm:items-center">
+          <div className="flex gap-4">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-secondary">
+              <Coins size={19} className="text-primary" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold">Currency</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                What currency number fields, such as a deal&apos;s Amount, show.
+              </p>
+            </div>
+          </div>
+          {isAdministrator(user.role) ? (
+            <CurrencySetting
+              currency={installation.currency}
+              revision={installation.revision}
+            />
+          ) : (
+            <span className="text-sm text-muted-foreground">
+              {installation.currency}
+            </span>
+          )}
+        </section>
         <section className="flex flex-col justify-between gap-4 p-6 sm:flex-row sm:items-center">
           <div className="flex gap-4">
             <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-secondary">

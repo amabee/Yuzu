@@ -5,8 +5,9 @@
 - Read `docs/DEVELOPMENT_CONTEXT.md` for the current handoff. Check `git status`
   and the current branch before changing files. Verify snapshot details in code.
 - Read only the relevant feature documentation; do not load the entire chat
-  history or `docs/progress.md` by default. Older documents describe earlier
-  implementations and may be superseded by the handoff or current source.
+  history by default. The product direction is
+  `docs/Yuzu_CRM_and_Business_Platform_Roadmap.md`; feature specs live in
+  `docs/specs/`. Older documents may be superseded by the handoff or source.
 - Follow `apps/web/AGENTS.md` when working in the web app. Before changing Next.js
   code, read the relevant installed documentation under
   `apps/web/node_modules/next/dist/docs/`. This repository uses Next.js 16.4.

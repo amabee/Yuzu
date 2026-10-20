@@ -2,6 +2,7 @@ import { getDatabase } from "@yuzu/database";
 import { z } from "zod";
 import { requireAdministrator } from "./team-access";
 import { SetupError } from "./setup/security";
+import { currencyCode } from "@/lib/record-types";
 
 export const calendarSettingsSchema = z.strictObject({
   revision: z.number().int().positive(),
@@ -26,6 +27,37 @@ export async function updateCalendarSettings(input: unknown, headers: Headers) {
       "Settings changed since you opened them. Reload and try again.",
     );
   return { weekStartsOn: body.weekStartsOn, revision: body.revision + 1 };
+}
+
+export const currencySettingsSchema = z.strictObject({
+  revision: z.number().int().positive(),
+  currency: currencyCode,
+});
+
+/** The currency that currency number fields show; owners and admins only. */
+export async function updateCurrencySettings(input: unknown, headers: Headers) {
+  await requireAdministrator(headers);
+  const body = currencySettingsSchema.parse(input);
+  try {
+    new Intl.NumberFormat("en", { style: "currency", currency: body.currency });
+  } catch {
+    throw new SetupError(
+      422,
+      "INVALID_CURRENCY",
+      "Yuzu doesn't know that currency.",
+    );
+  }
+  const updated = await getDatabase().installationSettings.updateMany({
+    where: { id: "installation", revision: body.revision },
+    data: { currency: body.currency, revision: { increment: 1 } },
+  });
+  if (updated.count === 0)
+    throw new SetupError(
+      409,
+      "SETTINGS_CHANGED",
+      "Settings changed since you opened them. Reload and try again.",
+    );
+  return { currency: body.currency, revision: body.revision + 1 };
 }
 
 export const automationSettingsSchema = z.strictObject({

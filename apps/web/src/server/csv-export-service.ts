@@ -1,5 +1,5 @@
 import { getDatabase, createRecordId } from "@yuzu/database";
-import { access, eligiblePeople } from "./board-service";
+import { access, boardRecord, eligiblePeople } from "./board-service";
 import { audit } from "./audit";
 import { requireIdentity, isAdministrator } from "./team-access";
 import { SetupError } from "./setup/security";
@@ -97,12 +97,14 @@ export async function exportBoardCsvForActor(
             "EXPORT_STATUS",
             "This view uses a removed status. Choose a current status before exporting.",
           );
+        const record = boardRecord(board).config;
         const context = {
+          record,
           fields,
           groups: board.groups,
           people: await eligiblePeople(tx, board),
         };
-        const prefix = "\ufeff" + csvLine(csvHeaders(fields));
+        const prefix = "\ufeff" + csvLine(csvHeaders(fields, record));
         let bytes = Buffer.byteLength(prefix);
         if (bytes > MAX_CSV_BYTES)
           throw tooLarge(

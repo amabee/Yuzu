@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createRecordId, getDatabase } from "@yuzu/database";
 import {
   access,
+  boardRecord,
   eligiblePeople,
   createTask,
   validateCore,
@@ -106,6 +107,7 @@ export async function previewCsvImport(
       const people = await eligiblePeople(tx, context.board);
       const eligible = new Set(people.map((person) => person.id));
       const model = {
+        record: boardRecord(context.board).config,
         fields: context.board.columns.map((field) => ({
           ...field,
           version: "",

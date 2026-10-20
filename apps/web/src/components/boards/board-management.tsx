@@ -1,4 +1,6 @@
 "use client";
+import { BoardRecordSettings } from "./record-settings";
+import type { NumberFormat } from "@/lib/record-types";
 import { useState } from "react";
 import { ApprovalPolicyEditor } from "./approval-policy-editor";
 import { Button } from "@/components/ui/button";
@@ -9,8 +11,10 @@ import {
   coreKeys,
   statusIcons,
   priorities,
+  recordOf,
   type BoardState,
   type BoardField,
+  visibleFields,
 } from "@/lib/board-contract";
 
 function FieldConfiguration({
@@ -34,6 +38,9 @@ function FieldConfiguration({
       : field.options,
   );
   const [draggedOption, setDraggedOption] = useState<string | null>(null);
+  const [format, setFormat] = useState<NumberFormat>(
+    field.number?.format ?? "plain",
+  );
   const moveOption = (from: number, to: number) => {
     setOptions((current) => {
       const next = [...current];
@@ -64,10 +71,29 @@ function FieldConfiguration({
             version: field.version,
             name,
             options,
+            ...(field.type === "NUMBER"
+              ? {
+                  number: {
+                    format,
+                    ...(field.number?.decimals !== undefined
+                      ? { decimals: field.number.decimals }
+                      : {}),
+                  },
+                }
+              : {}),
           });
         }}
       >
         <fieldset disabled={pending} className="space-y-3">
+          {field.type === "NUMBER" && (
+            <NumberFormatPick
+              label={`${field.name} format`}
+              value={format}
+              locked={Boolean(field.number?.system)}
+              currency={state.currency}
+              onChange={setFormat}
+            />
+          )}
           <Input
             aria-label={`Rename ${field.name} field`}
             required
@@ -392,10 +418,17 @@ export function BoardManagement({
   const [name, setName] = useState("");
   const [type, setType] = useState<string>("TEXT");
   const [options, setOptions] = useState("");
+  const [newFormat, setNewFormat] = useState<NumberFormat>("plain");
   const [group, setGroup] = useState("");
   const [manager, setManager] = useState("");
   return (
     <section className="space-y-4 border-t pt-5">
+      <BoardRecordSettings
+        key={JSON.stringify(state.record ?? null)}
+        state={state}
+        pending={pending}
+        onAction={onAction}
+      />
       <ApprovalPolicyEditor
         key={state.approvalPolicy.version}
         state={state}
@@ -473,7 +506,7 @@ export function BoardManagement({
           </div>
         </div>
       )}
-      {state.fields.map((field) => (
+      {visibleFields(state).map((field) => (
         <FieldConfiguration
           key={`${field.id}-${field.version}`}
           field={field}
@@ -494,13 +527,15 @@ export function BoardManagement({
               .split(",")
               .map((item) => item.trim())
               .filter(Boolean),
+            ...(type === "NUMBER" ? { number: { format: newFormat } } : {}),
           });
         }}
       >
         <h4 className="text-sm font-semibold">Add custom field</h4>
         <p className="text-xs text-muted-foreground">
-          Track extra information on every task, such as estimates, links, or
-          review checkboxes. Fields appear in the table and task details.
+          Track extra information on every{" "}
+          {recordOf(state).singular.toLowerCase()}, such as estimates, links,
+          amounts or review checkboxes. Fields appear in the table and details.
         </p>
         <Input
           aria-label="New field name"
@@ -523,6 +558,14 @@ export function BoardManagement({
             </option>
           ))}
         </select>
+        {type === "NUMBER" && (
+          <NumberFormatPick
+            label="New field format"
+            value={newFormat}
+            currency={state.currency}
+            onChange={setNewFormat}
+          />
+        )}
         {["STATUS", "SINGLE_SELECT", "MULTI_SELECT", "TAGS"].includes(type) && (
           <Input
             aria-label="Field options"
@@ -563,5 +606,34 @@ export function BoardManagement({
         </Button>
       </form>
     </section>
+  );
+}
+
+/** Plain, currency or percent; system fields keep theirs. */
+function NumberFormatPick({
+  label,
+  value,
+  locked = false,
+  currency = "PHP",
+  onChange,
+}: {
+  label: string;
+  value: NumberFormat;
+  locked?: boolean;
+  currency?: string;
+  onChange: (value: NumberFormat) => void;
+}) {
+  return (
+    <select
+      aria-label={label}
+      className="task-select"
+      value={value}
+      disabled={locked}
+      onChange={(event) => onChange(event.target.value as NumberFormat)}
+    >
+      <option value="plain">Plain number</option>
+      <option value="currency">Currency ({currency})</option>
+      <option value="percent">Percent</option>
+    </select>
   );
 }

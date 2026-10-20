@@ -68,6 +68,23 @@ import {
   boardScope,
 } from "./team-access";
 import { digest, SetupError } from "./setup/security";
+import { ruleBuiltins, viewBuiltins } from "@/lib/record-usage";
+import {
+  aRecord,
+  asRecordType,
+  builtinKeys,
+  builtinName,
+  builtinColumnKey,
+  recordSettingsSchema,
+  builtinForColumn,
+  dealStages,
+  dealSystemFields,
+  lower,
+  numberConfig,
+  recordDefinitions,
+  resolveRecordConfig,
+  type BuiltinKey,
+} from "@/lib/record-types";
 import { projectAccess } from "./project-access";
 import {
   recordAutomationEvent,
@@ -217,6 +234,57 @@ function checkDateOrder(startDate: string | null, dueDate: string | null) {
 const toDate = (value: string | null | undefined) =>
   value ? new Date(`${value}T00:00:00Z`) : null;
 
+/** Which change key each built-in writes, and its "nothing set" values. */
+const builtinChange: Record<BuiltinKey, { key: string; empty: unknown[] }> = {
+  status: { key: "statusId", empty: [null, undefined] },
+  priority: { key: "priority", empty: [undefined, "NORMAL"] },
+  assignees: { key: "assigneeIds", empty: [undefined] },
+  startDate: { key: "startDate", empty: [null, undefined] },
+  dueDate: { key: "dueDate", empty: [null, undefined] },
+  description: { key: "description", empty: [undefined, ""] },
+  checklist: { key: "checklist", empty: [undefined] },
+};
+/** The board's record type and its effective names and built-ins. */
+export function boardRecord(board: {
+  recordType: string;
+  recordConfig: unknown;
+}) {
+  const type = asRecordType(board.recordType);
+  return { type, config: resolveRecordConfig(type, board.recordConfig) };
+}
+
+/** Rejects changes the board's record type doesn't allow. */
+function checkRecordRules(
+  changes: Record<string, unknown>,
+  board: { recordType: string; recordConfig: unknown },
+) {
+  const { type, config } = boardRecord(board);
+  for (const key of builtinKeys) {
+    if (config.builtins[key].on) continue;
+    const { key: change, empty } = builtinChange[key];
+    const value = changes[change];
+    const isEmpty =
+      empty.includes(value) || (Array.isArray(value) && value.length === 0);
+    if (!isEmpty)
+      throw new SetupError(
+        422,
+        "FIELD_TURNED_OFF",
+        `${builtinName(config, key)} is turned off for ${lower(config.plural)} on this board.`,
+      );
+  }
+  const most = recordDefinitions[type].maxAssignees;
+  if (
+    most !== undefined &&
+    Array.isArray(changes.assigneeIds) &&
+    changes.assigneeIds.length > most
+  )
+    throw new SetupError(
+      422,
+      "TOO_MANY_ASSIGNEES",
+      `${aRecord(config).replace(/^./, (c) => c.toUpperCase())} has one ${lower(builtinName(config, "assignees"))}.`,
+    );
+}
+
 export function validateCore(
   changes: {
     statusId?: string | null;
@@ -226,6 +294,7 @@ export function validateCore(
   board: Awaited<ReturnType<typeof access>>["board"],
   eligible: Set<string>,
 ) {
+  checkRecordRules(changes, board);
   if (
     changes.statusId != null &&
     !options(board).some((option) => option.id === changes.statusId)
@@ -280,9 +349,14 @@ function typedValue(
         .union([z.literal(""), z.string().email().max(320)])
         .parse(input);
       break;
-    case "NUMBER":
-      empty.numberValue = z.number().finite().parse(input);
+    case "NUMBER": {
+      const { min, max } = numberConfig(field.config);
+      let number = z.number().finite();
+      if (min !== undefined) number = number.min(min, `Use ${min} or more.`);
+      if (max !== undefined) number = number.max(max, `Use ${max} or less.`);
+      empty.numberValue = number.parse(input);
       break;
+    }
     case "CHECKBOX":
       empty.booleanValue = z.boolean().parse(input);
       break;
@@ -658,6 +732,17 @@ export async function boardState(
         })),
         canManage: context.canManage,
         canManageManagers: isAdministrator(context.user.role),
+        record: (() => {
+          const { type, config } = boardRecord(context.board);
+          return { type, ...config };
+        })(),
+        currency:
+          (
+            await tx.installationSettings.findUnique({
+              where: { id: "installation" },
+              select: { currency: true },
+            })
+          )?.currency ?? "PHP",
         managerIds: context.board.managers.map((manager) => manager.userId),
         currentUserId: user.id,
         groups: context.board.groups.map(({ id, name }) => ({ id, name })),
@@ -674,6 +759,9 @@ export async function boardState(
           name: field.name,
           type: field.type,
           options: fieldOptions(field.config),
+          ...(field.type === "NUMBER"
+            ? { number: numberConfig(field.config) }
+            : {}),
         })),
         people: await eligiblePeople(tx, context.board),
         tasks: tasks.map(presentTask),
@@ -902,7 +990,7 @@ export async function createTaskRecord(
     boardId: task.boardId,
     taskId: task.id,
     kind: "ASSIGNMENT",
-    message: "assigned you to this task",
+    message: `assigned you to this ${lower(boardRecord(context.board).config.singular)}`,
     eventKey: `task:${task.id}:assignment:1`,
   });
   const created = snapshot((await loadTask(tx, task.id))!);
@@ -1004,7 +1092,7 @@ export async function applyTaskRecord(
       boardId: task.boardId,
       taskId: task.id,
       kind: "ASSIGNMENT",
-      message: "assigned you to this task",
+      message: `assigned you to this ${lower(boardRecord(context.board).config.singular)}`,
       eventKey: `task:${task.id}:assignment:${after!.revision}`,
     });
   await tx.taskActivity.create({
@@ -1138,7 +1226,9 @@ export async function createTaskInTransaction(
     fieldValues: body.fieldValues ?? {},
     statusId:
       body.statusId === undefined
-        ? (options(context.board)[0]?.id ?? null)
+        ? boardRecord(context.board).config.builtins.status.on
+          ? (options(context.board)[0]?.id ?? null)
+          : null
         : body.statusId,
     groupId:
       body.groupId === undefined
@@ -1401,31 +1491,68 @@ export async function manageBoard(
           "MAINTENANCE",
           "Changes are paused during maintenance.",
         );
-      const columns = [
-        { key: "name", name: "Task", type: "TEXT", position: 0 },
+      const recordType = body.recordType;
+      const record = resolveRecordConfig(recordType, body.record ?? {});
+      const label = (key: BuiltinKey) => builtinName(record, key);
+      const columns: {
+        key: string;
+        name: string;
+        type: string;
+        position: number;
+        config?: object;
+      }[] = [
+        { key: "name", name: record.singular, type: "TEXT", position: 0 },
         {
           key: "status",
-          name: "Status",
+          name: label("status"),
           type: "STATUS",
           position: 1,
           config: {
-            options: [
-              { id: "todo", label: "To do" },
-              { id: "in_progress", label: "In progress" },
-              { id: "done", label: "Done" },
-            ],
+            options:
+              recordType === "DEAL"
+                ? dealStages.map((stage) => ({ ...stage }))
+                : [
+                    { id: "todo", label: "To do" },
+                    { id: "in_progress", label: "In progress" },
+                    { id: "done", label: "Done" },
+                  ],
           },
         },
-        { key: "assignees", name: "Assignees", type: "PEOPLE", position: 2 },
-        { key: "priority", name: "Priority", type: "PRIORITY", position: 3 },
-        { key: "start_date", name: "Start date", type: "DATE", position: 4 },
-        { key: "due_date", name: "Due date", type: "DATE", position: 5 },
+        {
+          key: "assignees",
+          name: label("assignees"),
+          type: "PEOPLE",
+          position: 2,
+        },
+        {
+          key: "priority",
+          name: label("priority"),
+          type: "PRIORITY",
+          position: 3,
+        },
+        {
+          key: "start_date",
+          name: label("startDate"),
+          type: "DATE",
+          position: 4,
+        },
+        { key: "due_date", name: label("dueDate"), type: "DATE", position: 5 },
         {
           key: "description",
-          name: "Description",
+          name: label("description"),
           type: "LONG_TEXT",
           position: 6,
         },
+        // Deal boards always carry their money fields.
+        ...(recordType === "DEAL"
+          ? dealSystemFields.map((field, index) => ({
+              key: field.key,
+              name: field.name,
+              type: "NUMBER",
+              position: 7 + index,
+              config: { ...field.config },
+            }))
+          : []),
       ];
       return tx.board.create({
         data: {
@@ -1434,9 +1561,11 @@ export async function manageBoard(
           position,
           name: body.name,
           createdById: user.id,
+          recordType,
+          recordConfig: record,
           managers: { create: { userId: user.id, grantedById: user.id } },
           columns: { create: columns },
-          groups: { create: { name: "Tasks", position: 0 } },
+          groups: { create: { name: record.plural, position: 0 } },
         },
         select: { id: true },
       });
@@ -1507,7 +1636,13 @@ export async function manageBoard(
         throw new SetupError(
           422,
           "CORE_FIELD",
-          "Core task fields cannot be removed.",
+          "Built-in fields can't be removed. Turn them off in Records on this board instead.",
+        );
+      if (numberConfig(field.config).system)
+        throw new SetupError(
+          422,
+          "SYSTEM_FIELD",
+          `${boardRecord(context.board).config.plural} boards keep ${field.name}; it can't be removed.`,
         );
       if (
         body.version !==
@@ -1635,14 +1770,144 @@ export async function manageBoard(
             "An option is used by a task. Move those tasks before removing it.",
           );
       }
+      const current = numberConfig(field.config);
+      if (
+        body.number &&
+        current.system &&
+        body.number.format !== current.format
+      )
+        throw new SetupError(
+          422,
+          "SYSTEM_FIELD",
+          `${field.name} always shows as ${current.format}.`,
+        );
+      // Renaming a built-in also renames it in the board's record settings.
+      const builtin = builtinForColumn(field.key);
+      if (builtin && body.name !== field.name) {
+        const { config } = boardRecord(context.board);
+        await tx.board.update({
+          where: { id: context.board.id },
+          data: {
+            recordConfig: {
+              ...config,
+              builtins: {
+                ...config.builtins,
+                [builtin]: { ...config.builtins[builtin], label: body.name },
+              },
+            },
+          },
+        });
+      }
       return tx.boardColumn.update({
         where: { id: field.id },
         data: {
           name: body.name,
           ...(selected ? { config: { options: body.options } } : {}),
+          ...(field.type === "NUMBER" && body.number
+            ? {
+                config: {
+                  ...(field.config as object),
+                  ...body.number,
+                },
+              }
+            : {}),
         },
         select: { id: true },
       });
+    });
+  }
+  if (action === "record-settings") {
+    const body = recordSettingsSchema.parse(input);
+    return serial(async (tx) => {
+      const context = await access(tx, user.id, body.boardId, true);
+      if (!context.canManage)
+        throw new SetupError(
+          403,
+          "FORBIDDEN",
+          "A board manager must change what this board holds.",
+        );
+      const { type, config: before } = boardRecord(context.board);
+      const after = resolveRecordConfig(type, {
+        ...before,
+        ...body.record,
+        builtins: { ...before.builtins, ...body.record.builtins },
+      });
+      const turnedOff = builtinKeys.filter(
+        (key) => before.builtins[key].on && !after.builtins[key].on,
+      );
+      const [rules, views] = turnedOff.length
+        ? await Promise.all([
+            tx.automationRule.findMany({
+              where: { boardId: body.boardId },
+              select: {
+                name: true,
+                trigger: true,
+                conditions: true,
+                actions: true,
+              },
+              take: 200,
+            }),
+            tx.savedBoardView.findMany({
+              where: { boardId: body.boardId },
+              select: { name: true, config: true },
+              take: 200,
+            }),
+          ])
+        : [[], []];
+      const affected = {
+        rules: rules
+          .filter((rule) =>
+            [...ruleBuiltins(rule as never)].some((key) =>
+              turnedOff.includes(key),
+            ),
+          )
+          .map((rule) => rule.name),
+        views: views
+          .filter((view) =>
+            [...viewBuiltins(view.config as never)].some((key) =>
+              turnedOff.includes(key),
+            ),
+          )
+          .map((view) => view.name),
+      };
+      if (body.preview) return { record: { type, ...after }, affected };
+      await tx.board.update({
+        where: { id: body.boardId },
+        data: { recordConfig: after },
+      });
+      // Keep built-in column names in step with their labels.
+      for (const key of builtinKeys) {
+        const columnKey = builtinColumnKey[key];
+        if (!columnKey) continue;
+        const name = builtinName(after, key);
+        const column = context.board.columns.find(
+          (item) => item.key === columnKey,
+        );
+        if (column && column.name !== name)
+          await tx.boardColumn.update({
+            where: { id: column.id },
+            data: { name },
+          });
+      }
+      const nameColumn = context.board.columns.find(
+        (item) => item.key === "name",
+      );
+      if (nameColumn && nameColumn.name !== after.singular)
+        await tx.boardColumn.update({
+          where: { id: nameColumn.id },
+          data: { name: after.singular },
+        });
+      await tx.boardEvent.create({
+        data: {
+          boardId: body.boardId,
+          actorId: user.id,
+          id: createRecordId(),
+          action: "Changed what this board holds",
+          before: before as object,
+          after: after as object,
+        },
+      });
+      return { boardId: body.boardId, record: { type, ...after }, affected };
     });
   }
   if (action === "remove-group") {
@@ -1787,6 +2052,7 @@ export async function manageBoard(
             id: createRecordId(),
             label,
           })),
+          ...(field.type === "NUMBER" && field.number ? field.number : {}),
         },
       },
       select: { id: true },

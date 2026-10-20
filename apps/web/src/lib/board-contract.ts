@@ -4,6 +4,29 @@ import { z } from "zod";
 import { recordId, personId } from "./id-contract";
 export { recordId, personId } from "./id-contract";
 import {
+  builtinForColumn,
+  recordChoiceSchema,
+  recordConfigSchema,
+  recordDefinitions,
+  recordTypes,
+  numberFormats,
+  numberConfigSchema,
+  type NumberConfig,
+  type RecordConfig,
+  type RecordType,
+} from "./record-types";
+
+export type BoardRecord = RecordConfig & { type: RecordType };
+export const numberDisplaySchema = z
+  .object({
+    format: z.enum(numberFormats),
+    decimals: z.number().int().min(0).max(4).optional(),
+  })
+  .strict();
+/** The board's record settings, with Task defaults for older payloads. */
+export const recordOf = (state: { record?: BoardRecord }): BoardRecord =>
+  state.record ?? { type: "TASK", ...recordDefinitions.TASK.defaults };
+import {
   approvalPolicySchema,
   pendingApprovalSchema,
   type ApprovalPolicy,
@@ -128,6 +151,8 @@ export const fieldSchema = z
     name: z.string().trim().min(1).max(80),
     type: z.enum(fieldTypes),
     options: z.array(z.string().trim().min(1).max(80)).max(50).default([]),
+    /** Number fields: how values show. */
+    number: numberDisplaySchema.optional(),
   })
   .strict();
 export const groupSchema = z
@@ -135,11 +160,11 @@ export const groupSchema = z
   .strict();
 // A board is created either standalone in a workspace or inside a project.
 export const boardCreateSchema = z.union([
-  z
-    .object({ workspaceId: recordId, name: z.string().trim().min(1).max(100) })
+  recordChoiceSchema
+    .extend({ workspaceId: recordId, name: z.string().trim().min(1).max(100) })
     .strict(),
-  z
-    .object({ projectId: recordId, name: z.string().trim().min(1).max(100) })
+  recordChoiceSchema
+    .extend({ projectId: recordId, name: z.string().trim().min(1).max(100) })
     .strict(),
 ]);
 export const statusIcons = [
@@ -186,6 +211,8 @@ export type BoardField = {
   name: string;
   type: string;
   options: BoardOption[];
+  /** Number fields: format, decimals, limits, and whether it's a system field. */
+  number?: NumberConfig;
 };
 export type BoardTask = {
   id: string;
@@ -224,6 +251,10 @@ export type BoardState = {
   boardId: string;
   canManage: boolean;
   canManageManagers: boolean;
+  /** The board's record type, names and built-in switches. */
+  record?: BoardRecord;
+  /** Installation currency for currency number fields. */
+  currency?: string;
   managerIds: string[];
   currentUserId: string;
   groups: { id: string; name: string }[];
@@ -248,6 +279,10 @@ const baseBoardStateSchema = z.object({
   pendingApprovals: z.array(pendingApprovalSchema),
   canManage: z.boolean(),
   canManageManagers: z.boolean(),
+  record: recordConfigSchema
+    .extend({ type: z.enum(recordTypes) })
+    .default({ type: "TASK", ...recordDefinitions.TASK.defaults }),
+  currency: z.string().default("PHP"),
   managerIds: z.array(personId),
   currentUserId: personId,
   groups: z.array(z.object({ id: recordId, name: z.string() })),
@@ -261,6 +296,7 @@ const baseBoardStateSchema = z.object({
       options: z.array(
         optionAppearanceSchema.extend({ id: z.string(), label: z.string() }),
       ),
+      number: numberConfigSchema.optional(),
     }),
   ),
   people: z.array(
@@ -341,6 +377,7 @@ export const configureFieldSchema = z
         }),
       )
       .max(50),
+    number: numberDisplaySchema.optional(),
   })
   .strict();
 export const renameGroupSchema = z
@@ -412,3 +449,12 @@ export const commentHistorySchema = z.array(
     createdAt: z.string(),
   }),
 );
+
+/** Board fields that are on for this board's record type. */
+export function visibleFields(state: { fields: BoardField[]; record?: BoardRecord }) {
+  const record = recordOf(state);
+  return state.fields.filter((field) => {
+    const builtin = builtinForColumn(field.key);
+    return !builtin || record.builtins[builtin].on;
+  });
+}

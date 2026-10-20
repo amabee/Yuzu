@@ -46,6 +46,8 @@ model InstallationSettings {
   initialBoardId             String?    @unique
   /// Lets automation webhooks reach local or private-network addresses.
   allowPrivateWebhooks       Boolean    @default(false)
+  /// ISO 4217 code for currency number fields.
+  currency                   String     @default("PHP")
 }
 
 model User {
@@ -349,6 +351,10 @@ model Board {
   groups           BoardGroup[]
   automationRules  AutomationRule[]
   automationEvents AutomationEvent[]
+  /// TASK, DEAL or CUSTOM (lib/record-types.ts). Fixed after creation.
+  recordType       String               @default("TASK")
+  /// Names and built-in field switches, validated by recordConfigSchema.
+  recordConfig     Json                 @default("{}")
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt
 

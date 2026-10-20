@@ -455,11 +455,11 @@ export async function inviteToProject(input: unknown, headers: Headers) {
         "This invitation was revoked while sending.",
       );
     await recordAccess(db(), {
-        workspaceId: invitation.project.workspaceId,
-        actorId: user.id,
-        action: "PROJECT_INVITATION_SENT",
-        subjectEmail: body.email,
-      });
+      workspaceId: invitation.project.workspaceId,
+      actorId: user.id,
+      action: "PROJECT_INVITATION_SENT",
+      subjectEmail: body.email,
+    });
     return { sent: true };
   } catch (error) {
     await db().projectInvitation.updateMany({
@@ -498,11 +498,11 @@ export async function revokeProjectInvitation(
       data: { revokedAt: new Date() },
     });
     await recordAccess(tx, {
-        workspaceId: project.workspaceId,
-        actorId: current.id,
-        action: "PROJECT_INVITATION_REVOKED",
-        subjectEmail: invite.email,
-      });
+      workspaceId: project.workspaceId,
+      actorId: current.id,
+      action: "PROJECT_INVITATION_REVOKED",
+      subjectEmail: invite.email,
+    });
     return { revoked: true };
   });
 }
@@ -665,11 +665,11 @@ export async function acceptProjectInvitation(
       data: { acceptedAt: new Date() },
     });
     await recordAccess(tx, {
-        workspaceId: current.project.workspaceId,
-        actorId: recipient.id,
-        action: "PROJECT_INVITATION_ACCEPTED",
-        subjectEmail: recipient.email,
-      });
+      workspaceId: current.project.workspaceId,
+      actorId: recipient.id,
+      action: "PROJECT_INVITATION_ACCEPTED",
+      subjectEmail: recipient.email,
+    });
   });
   return { accepted: true, signedIn: Boolean(existing) };
 }
@@ -708,11 +708,11 @@ export async function recoverProject(input: unknown, headers: Headers) {
       update: { role: "MANAGER" },
     });
     await recordAccess(tx, {
-        workspaceId: project.workspaceId,
-        actorId: user.id,
-        action: "PROJECT_ACCESS_RECOVERED",
-        subjectEmail: user.email,
-      });
+      workspaceId: project.workspaceId,
+      actorId: user.id,
+      action: "PROJECT_ACCESS_RECOVERED",
+      subjectEmail: user.email,
+    });
     return {
       name: project.name,
       managerEmails: project.members

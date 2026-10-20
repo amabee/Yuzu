@@ -40,6 +40,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import {
+  builtinName,
+  lower,
+  recordDefinitions,
+  type BuiltinKey,
+} from "@/lib/record-types";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -55,6 +61,7 @@ import {
   type BoardState,
   type BoardTask,
   type FieldValue,
+  recordOf,
 } from "@/lib/board-contract";
 
 export function TaskEditor({
@@ -182,6 +189,10 @@ export function TaskEditor({
   const [accessPerson, setAccessPerson] = useState("");
   const [newChecklistItem, setNewChecklistItem] = useState("");
   const editable = !task || task.canEdit;
+  const record = recordOf(state);
+  const on = (key: BuiltinKey) => record.builtins[key].on;
+  const label = (key: BuiltinKey) => builtinName(record, key);
+  const noun = lower(record.singular);
   const currentGroup = state.groups.find((group) => group.id === draft.groupId);
   const pendingRequest = task
     ? state.pendingApprovals.find((proposal) => proposal.taskId === task.id)
@@ -274,7 +285,7 @@ export function TaskEditor({
               <button
                 type="button"
                 className="task-panel-icon"
-                aria-label="Copy task link"
+                aria-label={`Copy ${noun} link`}
                 title="Copy task link"
                 onClick={() => {
                   const url = new URL(window.location.href);
@@ -295,7 +306,7 @@ export function TaskEditor({
                   type="button"
                   className="task-panel-icon"
                   title={task.archivedAt ? "Restore task" : "Archive task"}
-                  aria-label={task.archivedAt ? "Restore task" : "Archive task"}
+                  aria-label={`${task.archivedAt ? "Restore" : "Archive"} ${noun}`}
                   disabled={pending}
                   onClick={() =>
                     onAction(task.archivedAt ? "restore" : "archive", {
@@ -317,7 +328,7 @@ export function TaskEditor({
                     <button
                       type="button"
                       className="task-panel-icon"
-                      aria-label="More task actions"
+                      aria-label={`More ${noun} actions`}
                       title="More task actions"
                     >
                       <Ellipsis size={16} />
@@ -357,27 +368,33 @@ export function TaskEditor({
           )}
         </div>
         <div className="task-sheet-heading-meta">
-          <label
-            className="task-status-pill"
-            style={optionBadgeStyle(selectedStatus)}
-          >
-            <StatusIcon icon={selectedStatus?.icon} />
-            <select
-              aria-label="Task status"
-              form="task-editor-form"
-              disabled={!editable || pending}
-              value={draft.statusId}
-              onChange={(event) => editDraft({ statusId: event.target.value })}
-            >
-              <option value="">No status</option>
-              {statusOptions.map((option) => (
-                <option value={option.id} key={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <ChevronDown size={14} aria-hidden="true" />
-          </label>
+          {on("status") && (
+            <>
+              <label
+                className="task-status-pill"
+                style={optionBadgeStyle(selectedStatus)}
+              >
+                <StatusIcon icon={selectedStatus?.icon} />
+                <select
+                  aria-label={`${record.singular} status`}
+                  form="task-editor-form"
+                  disabled={!editable || pending}
+                  value={draft.statusId}
+                  onChange={(event) =>
+                    editDraft({ statusId: event.target.value })
+                  }
+                >
+                  <option value="">No status</option>
+                  {statusOptions.map((option) => (
+                    <option value={option.id} key={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown size={14} aria-hidden="true" />
+              </label>
+            </>
+          )}
           {task && (
             <span className="task-reference">
               #{task.id.slice(-6).toUpperCase()}
@@ -385,10 +402,10 @@ export function TaskEditor({
           )}
         </div>
         <SheetTitle className="sr-only">
-          {task ? draft.name : "Create task"}
+          {task ? draft.name : `Create ${noun}`}
         </SheetTitle>
         <textarea
-          aria-label="Task name"
+          aria-label={`${record.singular} name`}
           form="task-editor-form"
           className="task-title-input"
           placeholder="Name this task"
@@ -511,90 +528,118 @@ export function TaskEditor({
             <div
               className="task-props"
               role="group"
-              aria-label="Task properties"
+              aria-label={`${record.singular} properties`}
             >
-              <div className="task-prop">
-                <span className="task-prop-label">Assignees</span>
-                <details className="task-prop-value task-prop-people">
-                  <summary>
-                    {draft.assigneeIds.length ? (
-                      <>
-                        <AssigneeAvatars
-                          ids={draft.assigneeIds}
-                          people={state.people}
-                        />
-                        <span className="truncate">
-                          {draft.assigneeIds
-                            .map(
-                              (id) =>
-                                state.people
-                                  .find((person) => person.id === id)
-                                  ?.name.split(" ")[0] ?? "Former member",
-                            )
-                            .join(", ")}
-                        </span>
-                      </>
-                    ) : (
-                      <span className="task-prop-empty">Add people</span>
-                    )}
-                  </summary>
-                  <div className="task-people-options">
-                    {state.people
-                      .filter(
-                        (person) =>
-                          !person.deactivated ||
-                          draft.assigneeIds.includes(person.id),
-                      )
-                      .map((person) => (
-                        <label key={person.id}>
-                          <input
-                            type="checkbox"
-                            aria-label={`Assign ${person.name}`}
-                            checked={draft.assigneeIds.includes(person.id)}
-                            onChange={(event) =>
-                              editDraft({
-                                assigneeIds: event.target.checked
-                                  ? [...draft.assigneeIds, person.id]
-                                  : draft.assigneeIds.filter(
-                                      (id) => id !== person.id,
-                                    ),
-                              })
-                            }
-                          />
-                          <AssigneeAvatars
-                            ids={[person.id]}
-                            people={state.people}
-                          />
-                          {person.name}
-                        </label>
-                      ))}
+              {on("assignees") && (
+                <>
+                  <div className="task-prop">
+                    <span className="task-prop-label">
+                      {label("assignees")}
+                    </span>
+                    <details className="task-prop-value task-prop-people">
+                      <summary>
+                        {draft.assigneeIds.length ? (
+                          <>
+                            <AssigneeAvatars
+                              ids={draft.assigneeIds}
+                              people={state.people}
+                            />
+                            <span className="truncate">
+                              {draft.assigneeIds
+                                .map(
+                                  (id) =>
+                                    state.people
+                                      .find((person) => person.id === id)
+                                      ?.name.split(" ")[0] ?? "Former member",
+                                )
+                                .join(", ")}
+                            </span>
+                          </>
+                        ) : (
+                          <span className="task-prop-empty">Add people</span>
+                        )}
+                      </summary>
+                      <div className="task-people-options">
+                        {state.people
+                          .filter(
+                            (person) =>
+                              !person.deactivated ||
+                              draft.assigneeIds.includes(person.id),
+                          )
+                          .map((person) => (
+                            <label key={person.id}>
+                              <input
+                                type="checkbox"
+                                aria-label={`Assign ${person.name}`}
+                                checked={draft.assigneeIds.includes(person.id)}
+                                onChange={(event) =>
+                                  editDraft({
+                                    // One-owner types swap rather than add.
+                                    assigneeIds: event.target.checked
+                                      ? recordDefinitions[record.type]
+                                          .maxAssignees === 1
+                                        ? [person.id]
+                                        : [...draft.assigneeIds, person.id]
+                                      : draft.assigneeIds.filter(
+                                          (id) => id !== person.id,
+                                        ),
+                                  })
+                                }
+                              />
+                              <AssigneeAvatars
+                                ids={[person.id]}
+                                people={state.people}
+                              />
+                              {person.name}
+                            </label>
+                          ))}
+                      </div>
+                    </details>
                   </div>
-                </details>
-              </div>
-              <div className="task-prop">
-                <span className="task-prop-label">Dates</span>
-                <div className="task-prop-value task-prop-dates">
-                  <DateChip
-                    label="Task start date"
-                    empty="Start"
-                    value={draft.startDate}
-                    max={draft.dueDate || undefined}
-                    invalid={dateOrderInvalid}
-                    describedBy={
-                      dateOrderInvalid ? "task-date-order" : undefined
-                    }
-                    onChange={(startDate) => editDraft({ startDate })}
-                  />
-                  <ArrowRight size={14} aria-hidden="true" />
-                  <DateChip
-                    label="Task due date"
-                    empty="Due"
-                    value={draft.dueDate}
-                    min={draft.startDate || undefined}
-                    onChange={(dueDate) => editDraft({ dueDate })}
-                  />
-                </div>
-              </div>
+                </>
+              )}
+              {(on("startDate") || on("dueDate")) && (
+                <>
+                  <div className="task-prop">
+                    <span className="task-prop-label">
+                      {on("startDate") && on("dueDate")
+                        ? "Dates"
+                        : label(on("dueDate") ? "dueDate" : "startDate")}
+                    </span>
+                    <div className="task-prop-value task-prop-dates">
+                      {on("startDate") && (
+                        <>
+                          <DateChip
+                            label={`${record.singular} start date`}
+                            empty="Start"
+                            value={draft.startDate}
+                            max={draft.dueDate || undefined}
+                            invalid={dateOrderInvalid}
+                            describedBy={
+                              dateOrderInvalid ? "task-date-order" : undefined
+                            }
+                            onChange={(startDate) => editDraft({ startDate })}
+                          />
+                        </>
+                      )}
+                      {on("startDate") && on("dueDate") && (
+                        <>
+                          <ArrowRight size={14} aria-hidden="true" />
+                        </>
+                      )}
+                      {on("dueDate") && (
+                        <DateChip
+                          label={`${record.singular} ${label("dueDate").toLowerCase()}`}
+                          empty={on("startDate") ? "Due" : label("dueDate")}
+                          value={draft.dueDate}
+                          min={draft.startDate || undefined}
+                          onChange={(dueDate) => editDraft({ dueDate })}
+                        />
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
               {dateOrderInvalid && (
                 <p
                   id="task-date-order"
@@ -604,34 +649,40 @@ export function TaskEditor({
                   The start date must be on or before the due date.
                 </p>
               )}
-              <div className="task-prop">
-                <span className="task-prop-label">Priority</span>
-                <label className="task-prop-value">
-                  <span
-                    className="task-prop-dot"
-                    style={{ background: selectedPriority?.color ?? undefined }}
-                    aria-hidden="true"
-                  />
-                  <select
-                    aria-label="Task priority"
-                    value={draft.priority}
-                    onChange={(event) =>
-                      editDraft({ priority: event.target.value })
-                    }
-                  >
-                    {priorityChoices.map(({ id: priority, label }) => (
-                      <option key={priority} value={priority}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
+              {on("priority") && (
+                <>
+                  <div className="task-prop">
+                    <span className="task-prop-label">Priority</span>
+                    <label className="task-prop-value">
+                      <span
+                        className="task-prop-dot"
+                        style={{
+                          background: selectedPriority?.color ?? undefined,
+                        }}
+                        aria-hidden="true"
+                      />
+                      <select
+                        aria-label={`${record.singular} priority`}
+                        value={draft.priority}
+                        onChange={(event) =>
+                          editDraft({ priority: event.target.value })
+                        }
+                      >
+                        {priorityChoices.map(({ id: priority, label }) => (
+                          <option key={priority} value={priority}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                </>
+              )}
               <div className="task-prop">
                 <span className="task-prop-label">Group</span>
                 <label className="task-prop-value">
                   <select
-                    aria-label="Task group"
+                    aria-label={`${record.singular} group`}
                     value={draft.groupId}
                     onChange={(event) =>
                       editDraft({ groupId: event.target.value })
@@ -771,6 +822,15 @@ export function TaskEditor({
                                     : "text"
                           }
                           step={field.type === "NUMBER" ? "any" : undefined}
+                          min={field.number?.min}
+                          max={field.number?.max}
+                          placeholder={
+                            field.number?.format === "currency"
+                              ? (state.currency ?? "PHP")
+                              : field.number?.format === "percent"
+                                ? "%"
+                                : undefined
+                          }
                           value={
                             typeof value === "string" ||
                             typeof value === "number"
@@ -794,115 +854,148 @@ export function TaskEditor({
                 );
               })}
             </div>
-            <label className="task-field-label">
-              <span className="task-section-heading">
-                <FileText size={15} /> Description
-              </span>
-              <textarea
-                aria-label="Task description"
-                rows={task ? 3 : 4}
-                maxLength={10000}
-                className="task-textarea"
-                value={draft.description}
-                onChange={(event) =>
-                  editDraft({ description: event.target.value })
-                }
-              />
-            </label>
-            <section
-              className="task-checklist-section"
-              aria-label="Task checklist"
-            >
-              <h3 className="task-section-heading">
-                <ListChecks size={15} />
-                Checklist
-                {draft.checklist.length > 0 && (
-                  <span className="ml-auto">
-                    {draft.checklist.filter((item) => item.done).length}/
-                    {draft.checklist.length}
+            {on("description") && (
+              <>
+                <label className="task-field-label">
+                  <span className="task-section-heading">
+                    <FileText size={15} /> {label("description")}
                   </span>
-                )}
-              </h3>
-              {draft.checklist.length > 0 && (
-                <progress
-                  aria-label="Task checklist progress"
-                  value={draft.checklist.filter((item) => item.done).length}
-                  max={draft.checklist.length}
-                />
-              )}
-              {!draft.checklist.length && (
-                <p className="mt-3 text-xs text-muted-foreground">
-                  Add steps for this task. An empty checklist stays off the task
-                  card.
-                </p>
-              )}
-              <ul className="mt-3 space-y-2">
-                {draft.checklist.map((item, index) => (
-                  <li key={item.id} className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      aria-label={`Complete checklist item ${index + 1}`}
-                      checked={item.done}
-                      onChange={(event) =>
-                        editDraft({
-                          checklist: draft.checklist.map((current) =>
-                            current.id === item.id
-                              ? { ...current, done: event.target.checked }
-                              : current,
-                          ),
-                        })
-                      }
+                  <textarea
+                    aria-label={`${record.singular} description`}
+                    rows={task ? 3 : 4}
+                    maxLength={10000}
+                    className="task-textarea"
+                    value={draft.description}
+                    onChange={(event) =>
+                      editDraft({ description: event.target.value })
+                    }
+                  />
+                </label>
+              </>
+            )}
+            {on("checklist") && (
+              <>
+                <section
+                  className="task-checklist-section"
+                  aria-label={`${record.singular} checklist`}
+                >
+                  <h3 className="task-section-heading">
+                    <ListChecks size={15} />
+                    Checklist
+                    {draft.checklist.length > 0 && (
+                      <span className="ml-auto">
+                        {draft.checklist.filter((item) => item.done).length}/
+                        {draft.checklist.length}
+                      </span>
+                    )}
+                  </h3>
+                  {draft.checklist.length > 0 && (
+                    <progress
+                      aria-label={`${record.singular} checklist progress`}
+                      value={draft.checklist.filter((item) => item.done).length}
+                      max={draft.checklist.length}
                     />
+                  )}
+                  {!draft.checklist.length && (
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      Add steps for this task. An empty checklist stays off the
+                      task card.
+                    </p>
+                  )}
+                  <ul className="mt-3 space-y-2">
+                    {draft.checklist.map((item, index) => (
+                      <li key={item.id} className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          aria-label={`Complete checklist item ${index + 1}`}
+                          checked={item.done}
+                          onChange={(event) =>
+                            editDraft({
+                              checklist: draft.checklist.map((current) =>
+                                current.id === item.id
+                                  ? { ...current, done: event.target.checked }
+                                  : current,
+                              ),
+                            })
+                          }
+                        />
+                        <Input
+                          aria-label={`Checklist item ${index + 1}`}
+                          maxLength={300}
+                          required
+                          value={item.text}
+                          className={
+                            item.done
+                              ? "text-muted-foreground line-through"
+                              : ""
+                          }
+                          onChange={(event) =>
+                            editDraft({
+                              checklist: draft.checklist.map((current) =>
+                                current.id === item.id
+                                  ? { ...current, text: event.target.value }
+                                  : current,
+                              ),
+                            })
+                          }
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Remove checklist item ${index + 1}`}
+                          onClick={() =>
+                            editDraft({
+                              checklist: draft.checklist.filter(
+                                (current) => current.id !== item.id,
+                              ),
+                            })
+                          }
+                        >
+                          <Trash2 size={14} />
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-3 flex gap-2">
                     <Input
-                      aria-label={`Checklist item ${index + 1}`}
+                      aria-label="New checklist item"
+                      placeholder="Add a step…"
                       maxLength={300}
-                      required
-                      value={item.text}
-                      className={
-                        item.done ? "text-muted-foreground line-through" : ""
-                      }
+                      value={newChecklistItem}
                       onChange={(event) =>
-                        editDraft({
-                          checklist: draft.checklist.map((current) =>
-                            current.id === item.id
-                              ? { ...current, text: event.target.value }
-                              : current,
-                          ),
-                        })
+                        setNewChecklistItem(event.target.value)
                       }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          if (
+                            newChecklistItem.trim() &&
+                            draft.checklist.length < 100
+                          ) {
+                            editDraft({
+                              checklist: [
+                                ...draft.checklist,
+                                {
+                                  id: createRecordId(),
+                                  text: newChecklistItem.trim(),
+                                  done: false,
+                                },
+                              ],
+                            });
+                            setNewChecklistItem("");
+                          }
+                        }
+                      }}
                     />
                     <Button
                       type="button"
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`Remove checklist item ${index + 1}`}
-                      onClick={() =>
-                        editDraft({
-                          checklist: draft.checklist.filter(
-                            (current) => current.id !== item.id,
-                          ),
-                        })
+                      size="sm"
+                      disabled={
+                        !newChecklistItem.trim() ||
+                        draft.checklist.length >= 100
                       }
-                    >
-                      <Trash2 size={14} />
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-3 flex gap-2">
-                <Input
-                  aria-label="New checklist item"
-                  placeholder="Add a step…"
-                  maxLength={300}
-                  value={newChecklistItem}
-                  onChange={(event) => setNewChecklistItem(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      if (
-                        newChecklistItem.trim() &&
-                        draft.checklist.length < 100
-                      ) {
+                      onClick={() => {
                         editDraft({
                           checklist: [
                             ...draft.checklist,
@@ -914,35 +1007,15 @@ export function TaskEditor({
                           ],
                         });
                         setNewChecklistItem("");
-                      }
-                    }
-                  }}
-                />
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={
-                    !newChecklistItem.trim() || draft.checklist.length >= 100
-                  }
-                  onClick={() => {
-                    editDraft({
-                      checklist: [
-                        ...draft.checklist,
-                        {
-                          id: createRecordId(),
-                          text: newChecklistItem.trim(),
-                          done: false,
-                        },
-                      ],
-                    });
-                    setNewChecklistItem("");
-                  }}
-                >
-                  <Plus size={13} />
-                  Add step
-                </Button>
-              </div>
-            </section>
+                      }}
+                    >
+                      <Plus size={13} />
+                      Add step
+                    </Button>
+                  </div>
+                </section>
+              </>
+            )}
             {checklistFields.map((field) => {
               const stored = draft.fieldValues[field.id];
               const values = Array.isArray(stored) ? stored : [];
@@ -1236,10 +1309,10 @@ export function TaskEditor({
                 : requiresApproval
                   ? task
                     ? "Request approval"
-                    : "Submit task for approval"
+                    : `Submit ${noun} for approval`
                   : task
                     ? "Save changes"
-                    : "Create task"}
+                    : `Create ${noun}`}
             </Button>
           </div>
         )}

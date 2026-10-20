@@ -88,7 +88,7 @@ export const apiEndpoints: ApiEndpoint[] = [
     group: "Boards and tasks",
     summary: "Create a task",
     description:
-      "createKey is a UUID you choose. Send the same one again to safely retry: it returns the task already created.",
+      "Works for every board type (tasks, deals, custom records). createKey is a UUID you choose; send the same one again to safely retry. Built-in fields a board has turned off are refused, and a deal takes one owner.",
     access: "write",
     body: createTaskSchema,
     returns: "The new task's id",

@@ -19,6 +19,8 @@ export const taskSearchResultSchema = z.object({
         description: z.string(),
         boardId: z.string().uuid(),
         boardName: z.string(),
+        /** What the board calls one record: "Task", "Deal"… */
+        recordName: z.string().default("Task"),
         workspaceName: z.string(),
         projectName: z.string().nullable(),
         archived: z.boolean(),

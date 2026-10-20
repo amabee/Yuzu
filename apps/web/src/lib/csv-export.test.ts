@@ -1,5 +1,8 @@
+import { resolveRecordConfig } from "./record-types";
 import { describe, expect, it } from "vitest";
 import {
+  coreHeaders,
+  csvCoreHeaders,
   csvCell,
   csvHeaders,
   csvLine,
@@ -173,5 +176,26 @@ describe("CSV spreadsheet compatibility and safety", () => {
     expect(
       compareBoardView({ ...task, name: "A" }, { ...task, name: "B" }, "name"),
     ).toBeLessThan(0);
+  });
+});
+
+describe("CSV headers follow the board's record type", () => {
+  it("keeps Task exports exactly as before", () => {
+    expect(coreHeaders(resolveRecordConfig("TASK", {}))).toEqual(
+      csvCoreHeaders,
+    );
+  });
+  it("uses a deal's names and drops turned-off fields", () => {
+    const headers = coreHeaders(resolveRecordConfig("DEAL", {}));
+    expect(headers.slice(0, 4)).toEqual([
+      "Deal ID",
+      "Deal",
+      "Description",
+      "Stage",
+    ]);
+    expect(headers).toContain("Owner IDs");
+    expect(headers).toContain("Close date");
+    expect(headers).not.toContain("Priority");
+    expect(headers).not.toContain("Checklist");
   });
 });

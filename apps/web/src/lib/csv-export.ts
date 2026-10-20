@@ -1,3 +1,9 @@
+import {
+  builtinLabels,
+  builtinName,
+  type BuiltinKey,
+  type RecordConfig,
+} from "./record-types";
 import { z } from "zod";
 import { recordId } from "./id-contract";
 import {
@@ -67,13 +73,55 @@ export const csvCoreHeaders = [
   "Created by",
 ];
 
+/** Which built-in each core column belongs to (null: always exported). */
+const coreColumnBuiltin: (BuiltinKey | null)[] = [
+  null,
+  null,
+  "description",
+  "status",
+  "priority",
+  "startDate",
+  "dueDate",
+  null,
+  "assignees",
+  "assignees",
+  "checklist",
+  null,
+  null,
+  null,
+];
+/** Core columns for this board: its names, and only built-ins that are on. */
+export function coreHeaders(record?: RecordConfig) {
+  if (!record) return csvCoreHeaders;
+  const named = csvCoreHeaders.map((header, index) => {
+    if (index === 0) return `${record.singular} ID`;
+    if (index === 1) return record.singular;
+    const key = coreColumnBuiltin[index];
+    if (!key) return header;
+    // Fields with their default names keep the original headers, so Task
+    // exports stay exactly as before and re-import cleanly.
+    const name = builtinName(record, key);
+    if (name === builtinLabels[key]) return header;
+    return index === 9 ? `${name} IDs` : name;
+  });
+  return named.filter((_, index) => {
+    const key = coreColumnBuiltin[index];
+    return !key || record.builtins[key].on;
+  });
+}
+const keepCore = (record: RecordConfig | undefined, index: number) => {
+  const key = coreColumnBuiltin[index];
+  return !record || !key || record.builtins[key].on;
+};
+
 export function customExportFields(fields: BoardField[]) {
   return fields.filter((field) => !coreKeys.includes(field.key));
 }
-export function csvHeaders(fields: BoardField[]) {
-  const used = new Set(csvCoreHeaders.map((name) => name.toLowerCase()));
+export function csvHeaders(fields: BoardField[], record?: RecordConfig) {
+  const core = coreHeaders(record);
+  const used = new Set(core.map((name) => name.toLowerCase()));
   return [
-    ...csvCoreHeaders,
+    ...core,
     ...customExportFields(fields).map((field) => {
       let name = field.name;
       let suffix = 2;
@@ -92,6 +140,7 @@ export type CsvTask = ViewTask & {
   fieldValues: Record<string, FieldValue>;
 };
 export type CsvContext = {
+  record?: RecordConfig;
   fields: BoardField[];
   groups: { id: string; name: string }[];
   people: { id: string; name: string }[];
@@ -108,7 +157,7 @@ export function csvTaskCells(task: CsvTask, context: CsvContext): CsvCell[] {
   const person = (id: string) =>
     context.people.find((person) => person.id === id)?.name ?? "Former member";
   const ids = [...task.assigneeIds].sort();
-  return [
+  const core: CsvCell[] = [
     task.id,
     task.name,
     task.description,
@@ -123,6 +172,9 @@ export function csvTaskCells(task: CsvTask, context: CsvContext): CsvCell[] {
     task.archivedAt,
     task.revision,
     task.createdByName,
+  ];
+  return [
+    ...core.filter((_, index) => keepCore(context.record, index)),
     ...customExportFields(context.fields).map((field) => {
       const value = task.fieldValues[field.id];
       if (value == null) return "";

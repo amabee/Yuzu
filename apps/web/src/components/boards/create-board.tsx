@@ -1,4 +1,10 @@
 "use client";
+import {
+  RecordFieldsEditor,
+  RecordTypePicker,
+  type RecordDraft,
+} from "./record-settings";
+import type { RecordType } from "@/lib/record-types";
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useRouter } from "nextjs-toploader/app";
@@ -20,6 +26,8 @@ export function CreateBoard({
 }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
+  const [recordType, setRecordType] = useState<RecordType>("TASK");
+  const [record, setRecord] = useState<RecordDraft>({});
   const [workspaceId, setWorkspaceId] = useState(workspaces[0]?.id ?? "");
   const router = useRouter();
   const selectedWorkspace =
@@ -29,9 +37,14 @@ export function CreateBoard({
       (
         await apiRequest<{ id: string }>("/api/v1/boards/create-board", {
           method: "POST",
-          json: project
-            ? { projectId: project.id, name }
-            : { workspaceId: selectedWorkspace?.id, name },
+          json: {
+            ...(project
+              ? { projectId: project.id }
+              : { workspaceId: selectedWorkspace?.id }),
+            name,
+            recordType,
+            ...(recordType === "CUSTOM" ? { record } : {}),
+          },
         })
       ).data,
     onSuccess: (board) => {
@@ -52,9 +65,15 @@ export function CreateBoard({
         open={open}
         onOpenChange={setOpen}
         title={project ? `New board in ${project.name}` : "Create board"}
-        description="Start with task names, statuses, assignees, priorities, and dates."
+        description="Choose what the board holds. You can rename fields and turn them off later."
         as="form"
-        footer="Boards start with To do, In progress and Done."
+        footer={
+          recordType === "DEAL"
+            ? "Deals start with stages Lead → Qualified → Proposal → Negotiation → Won / Lost, plus Amount and Probability."
+            : recordType === "TASK"
+              ? "Boards start with To do, In progress and Done."
+              : "Custom boards start with To do, In progress and Done statuses if Status is on."
+        }
         actions={
           <>
             <PauseClose asChild>
@@ -74,6 +93,14 @@ export function CreateBoard({
           mutation.mutate();
         }}
       >
+        <RecordTypePicker value={recordType} onChange={setRecordType} />
+        {recordType === "CUSTOM" && (
+          <RecordFieldsEditor
+            type="CUSTOM"
+            value={record}
+            onChange={setRecord}
+          />
+        )}
         <label className="task-field-label">
           Board name
           <Input

@@ -73,6 +73,7 @@ async function handle(request: Request, action: string) {
           "configure-field",
           "remove-field",
           "rename-group",
+          "record-settings",
           "remove-group",
         ].includes(action)
       )
