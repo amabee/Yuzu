@@ -16,6 +16,7 @@ import {
   reorderTask,
 } from "@/server/board-service";
 import { readSetupBody, SetupError } from "@/server/setup/security";
+import { linkOptions, linkTargets } from "@/server/record-links-service";
 async function handle(request: Request, action: string) {
   const requestId = crypto.randomUUID();
   try {
@@ -39,6 +40,17 @@ async function handle(request: Request, action: string) {
         recordId.parse(new URL(request.url).searchParams.get("boardId")),
         request.headers,
         JSON.parse(new URL(request.url).searchParams.get("query") ?? "{}"),
+      );
+    else if (request.method === "GET" && action === "link-options") {
+      const params = new URL(request.url).searchParams;
+      data = await linkOptions(
+        { fieldId: params.get("fieldId"), q: params.get("q") ?? "" },
+        request.headers,
+      );
+    } else if (request.method === "GET" && action === "link-targets")
+      data = await linkTargets(
+        new URL(request.url).searchParams.get("boardId") ?? "",
+        request.headers,
       );
     else if (request.method === "GET" && action === "comments")
       data = await taskComments(

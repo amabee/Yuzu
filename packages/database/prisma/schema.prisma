@@ -373,8 +373,28 @@ model BoardColumn {
   config     Json             @default("{}")
   archivedAt DateTime?        @db.Timestamptz(3)
   values     TaskFieldValue[]
+  links      RecordLink[]
 
   @@unique([boardId, key])
+}
+
+/// A link between two records through a "Link to board" field. One row
+/// serves both sides: the field's mirror on the other board reads it in reverse.
+model RecordLink {
+  id          String      @id @default(uuid(7))
+  /// The field that owns the link (the one created first, not its mirror).
+  fieldId     String
+  field       BoardColumn @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  fromId      String
+  from        Task        @relation("LinkFrom", fields: [fromId], references: [id], onDelete: Cascade)
+  toId        String
+  to          Task        @relation("LinkTo", fields: [toId], references: [id], onDelete: Cascade)
+  createdById String
+  createdAt   DateTime    @default(now()) @db.Timestamptz(3)
+
+  @@unique([fieldId, fromId, toId])
+  @@index([fieldId, toId])
+  @@index([toId])
 }
 
 model BoardGroup {
@@ -421,6 +441,8 @@ model Task {
   notifications    Notification[]
   automationEvents AutomationEvent[]
   automationRuns   AutomationRun[]
+  linksFrom        RecordLink[]      @relation("LinkFrom")
+  linksTo          RecordLink[]      @relation("LinkTo")
 
   @@unique([createdById, createKey])
   @@index([boardId, archivedAt, createdAt, id])

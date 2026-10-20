@@ -141,6 +141,8 @@ export type CsvTask = ViewTask & {
 };
 export type CsvContext = {
   record?: RecordConfig;
+  /** Linked records the exporter may see; the rest export as private. */
+  linked?: Record<string, { name: string }>;
   fields: BoardField[];
   groups: { id: string; name: string }[];
   people: { id: string; name: string }[];
@@ -180,6 +182,10 @@ export function csvTaskCells(task: CsvTask, context: CsvContext): CsvCell[] {
       if (value == null) return "";
       if (field.type === "PEOPLE")
         return JSON.stringify((Array.isArray(value) ? value : []).map(person));
+      if (field.type === "RELATION")
+        return (Array.isArray(value) ? value : [])
+          .map((id) => context.linked?.[id]?.name ?? "Private item")
+          .join("; ");
       if (Array.isArray(value))
         return JSON.stringify(
           value.map(

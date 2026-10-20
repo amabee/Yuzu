@@ -1,5 +1,10 @@
 "use client";
 import { BoardRecordSettings } from "./record-settings";
+import {
+  LinkFieldSetup,
+  type LinkDraft,
+  type RollupDraft,
+} from "./link-field-setup";
 import type { NumberFormat } from "@/lib/record-types";
 import { useState } from "react";
 import { ApprovalPolicyEditor } from "./approval-policy-editor";
@@ -419,6 +424,17 @@ export function BoardManagement({
   const [type, setType] = useState<string>("TEXT");
   const [options, setOptions] = useState("");
   const [newFormat, setNewFormat] = useState<NumberFormat>("plain");
+  const [link, setLink] = useState<LinkDraft>({
+    targetBoardId: "",
+    many: true,
+    mirrorMany: false,
+    mirrorName: "",
+  });
+  const [rollup, setRollup] = useState<RollupDraft>({
+    relationFieldId: "",
+    aggregate: "count",
+    targetFieldId: null,
+  });
   const [group, setGroup] = useState("");
   const [manager, setManager] = useState("");
   return (
@@ -528,6 +544,8 @@ export function BoardManagement({
               .map((item) => item.trim())
               .filter(Boolean),
             ...(type === "NUMBER" ? { number: { format: newFormat } } : {}),
+            ...(type === "RELATION" ? { relation: link } : {}),
+            ...(type === "ROLLUP" ? { rollup } : {}),
           });
         }}
       >
@@ -553,11 +571,23 @@ export function BoardManagement({
         >
           {fieldTypes.map((type) => (
             <option key={type} value={type}>
-              {type.charAt(0) +
-                type.slice(1).toLowerCase().replaceAll("_", " ")}
+              {type === "RELATION"
+                ? "Link to board"
+                : type.charAt(0) +
+                  type.slice(1).toLowerCase().replaceAll("_", " ")}
             </option>
           ))}
         </select>
+        {(type === "RELATION" || type === "ROLLUP") && (
+          <LinkFieldSetup
+            state={state}
+            type={type}
+            link={link}
+            rollup={rollup}
+            onLink={setLink}
+            onRollup={setRollup}
+          />
+        )}
         {type === "NUMBER" && (
           <NumberFormatPick
             label="New field format"

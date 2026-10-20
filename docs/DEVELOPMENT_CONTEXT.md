@@ -309,11 +309,34 @@ Direction: `docs/Yuzu_CRM_and_Business_Platform_Roadmap.md` (revision 2). Specs:
 - Next: slice 1b (RELATION field + `RecordLink` table, two-way mirror,
   count/sum ROLLUP), then the type-matrix test, then phase 2 CRM MVP.
 
+## Record links (branch `feat/record-links`, phase 1 slice 1b)
+
+- `RecordLink(fieldId, fromId, toId)`: one row per link, owned by the primary
+  `RELATION` column; its mirror on the other board (config `primary: false`,
+  `mirrorFieldId`) reads rows in reverse. Config in `lib/record-links.ts`.
+- `server/record-links-service.ts`: `syncLinks` (inside the record change's
+  transaction; keeps links the editor can't see; new links must be visible and
+  unarchived; one-or-many enforced on both sides → 409 LINK_TAKEN; "Linked /
+  Unlinked" BoardEvents on the other board, refreshed via `after()`),
+  `linkedRecords` (names the viewer may see; the rest are "Private item"),
+  `fillRollups` (count/sum over visible, unarchived links for the loaded
+  page), `linkOptions`, `linkTargets`, `createRelationField` (needs manage
+  rights on both boards), `rollupColumnConfig`, `removeRelationField`
+  (removes mirror, links and dependent rollups).
+- Links are part of a record's `fieldValues` (arrays of ids) via
+  `taskInclude.linksFrom/linksTo` (≤ 200 each); board state carries `linked`.
+  Only the edited record's revision moves.
+- API: link values go in `fieldValues`; `GET /boards/link-options` documented.
+  CSV export writes linked names and rollup values; import skips them.
+- UI: `link-picker.tsx` (chips + search popover), `link-field-setup.tsx`
+  (add field), table names, Kanban chips, read-only rollups in the panel.
+- Tests: `tests/links.spec.ts`, `lib/record-links.test.ts`.
+
 ## Next session
 
-Merge order for the stacked PRs: #27 → #28 → #29 → #30 → record types.
-Continue phase 1 with slice 1b (links and rollups) per
-`docs/specs/record-foundation.md`. Go-live work stays after phase 2 (CRM MVP).
+Merge order: #31 (API, re-landed) → #32 (record types) → record links. All
+target `main`. Phase 1 remaining: the type-matrix contract test, then phase 2
+(CRM MVP: Companies/Contacts/Leads, pipelines, activities, lead conversion).
 
 Small leftovers: the theme switcher still shows on setup, invitation and
 password-reset pages (the user only asked to remove it from sign-in/welcome).

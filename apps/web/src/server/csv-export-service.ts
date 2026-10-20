@@ -1,6 +1,9 @@
 import { getDatabase, createRecordId } from "@yuzu/database";
 import { access, boardRecord, eligiblePeople } from "./board-service";
 import { audit } from "./audit";
+import type { CsvContext } from "@/lib/csv-export";
+import { fillRollups, linkedRecords } from "./record-links-service";
+import { relationConfig } from "@/lib/record-links";
 import { requireIdentity, isAdministrator } from "./team-access";
 import { SetupError } from "./setup/security";
 import {
@@ -98,7 +101,7 @@ export async function exportBoardCsvForActor(
             "This view uses a removed status. Choose a current status before exporting.",
           );
         const record = boardRecord(board).config;
-        const context = {
+        const context: CsvContext = {
           record,
           fields,
           groups: board.groups,
@@ -175,6 +178,11 @@ export async function exportBoardCsvForActor(
                   people: { select: { userId: true } },
                 },
               },
+              linksFrom: { select: { fieldId: true, toId: true }, take: 200 },
+              linksTo: {
+                select: { fromId: true, field: { select: { config: true } } },
+                take: 200,
+              },
             },
             take: 100,
             ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -186,6 +194,36 @@ export async function exportBoardCsvForActor(
             throw tooLarge(
               "Too many tasks to scan. Narrow the status, group, assignee, or priority filter and try again.",
             );
+          // Linked names (private ones stay private) and rollups per batch.
+          const linkValues = (record: (typeof batch)[number]) => {
+            const links: Record<string, string[]> = {};
+            for (const link of record.linksFrom)
+              (links[link.fieldId] ??= []).push(link.toId);
+            for (const link of record.linksTo) {
+              const mirror = relationConfig(link.field.config)?.mirrorFieldId;
+              if (mirror) (links[mirror] ??= []).push(link.fromId);
+            }
+            return links;
+          };
+          const batchLinks = new Map(
+            batch.map((record) => [record.id, linkValues(record)]),
+          );
+          const linked = await linkedRecords(
+            tx,
+            user,
+            [...batchLinks.values()].flatMap((links) =>
+              Object.values(links).flat(),
+            ),
+          );
+          context.linked = { ...context.linked, ...linked };
+          const rollupValues = [...batchLinks.entries()].map(([id, links]) => ({
+            id,
+            fieldValues: { ...links } as Record<string, unknown>,
+          }));
+          await fillRollups(tx, board.columns, rollupValues, linked);
+          const rollups = new Map(
+            rollupValues.map((item) => [item.id, item.fieldValues]),
+          );
           for (const record of batch) {
             const task: CsvTask = {
               ...record,
@@ -214,6 +252,7 @@ export async function exportBoardCsvForActor(
                 }),
               ),
             };
+            Object.assign(task.fieldValues, rollups.get(record.id));
             if (
               config &&
               !matchesBoardView(task, config, user.id, calendarDate)

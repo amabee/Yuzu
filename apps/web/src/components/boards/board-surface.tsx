@@ -569,7 +569,16 @@ export function BoardSurface({
           (id) => field.options.find((option) => option.id === id)?.label ?? id,
         )
         .join(", ");
-    if (field.type === "NUMBER" && typeof value === "number")
+    if (field.type === "RELATION")
+      return (
+        (Array.isArray(value) ? value : [])
+          .map((id) => state.linked?.[id]?.name ?? "Private item")
+          .join(", ") || "—"
+      );
+    if (
+      (field.type === "NUMBER" || field.type === "ROLLUP") &&
+      typeof value === "number"
+    )
       return formatNumber(value, field.number, state.currency);
     return Array.isArray(value)
       ? value.join(", ")

@@ -1,4 +1,5 @@
 "use client";
+import { LinkChips } from "./link-picker";
 import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import {
@@ -575,6 +576,14 @@ function TaskCard({
   const showPriority =
     record.builtins.priority.on && hotPriorities.has(task.priority);
   // Money on the card: currency fields, the way a deal is read at a glance.
+  // Linked records from the board's first link field that has any.
+  const links =
+    visibleFields(state)
+      .filter((field) => field.type === "RELATION")
+      .map((field) => task.fieldValues[field.id])
+      .find(
+        (value): value is string[] => Array.isArray(value) && value.length > 0,
+      ) ?? [];
   const amounts = visibleFields(state)
     .filter(
       (field) =>
@@ -733,6 +742,11 @@ function TaskCard({
           </span>
         ))}
       </div>
+      {links.length > 0 && (
+        <div className="task-card-links">
+          <LinkChips ids={links} linked={state.linked} limit={2} />
+        </div>
+      )}
       <div className="task-card-heading">
         <button
           type="button"
