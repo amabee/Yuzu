@@ -72,9 +72,9 @@ to build every internal system from scratch.
 > [!WARNING]
 > Yuzu is an early-stage project and is **not yet production-ready**.
 
-**Current phase: 4 — Automation.** Board rules (slices 1 and 2) are done; email
-notifications are next, then administration and the API. Release readiness
-(Phase 5) comes after.
+**Current phase: 4 — Automation and integration.** Board rules, email
+notifications, administration and the API are built. Release readiness
+(Phase 5) comes next.
 
 - [x] Foundation, database, UUIDv7 records, and responsive shadcn UI
 - [x] First installation, sign-in, invitations, and password recovery
@@ -90,11 +90,15 @@ notifications are next, then administration and the API. Release readiness
 - [x] Task files and saved views
 - [x] Projects, overview reporting, cross-board search, and CSV import/export
 - [x] Workflow automation: board rules, schedules, task hand-offs, and webhooks
-- [ ] Email notifications and daily digests
-- [ ] Remaining profile/account and workspace lifecycle administration
-- [ ] Complete OpenAPI documentation
+- [x] Email notifications, daily digests, and rule emails
+- [x] People administration (roles, deactivation, ownership), workspaces, and an audit log
+- [x] Personal API tokens, OpenAPI spec, and an in-app API reference
 - [ ] Release deployment, recovery, and pilot verification
 - [ ] Blueprint/App Builder exploration
+
+To connect scripts and tools, create a token in **Settings → API** and send it
+as `Authorization: Bearer <token>`. The same page lists every endpoint a token
+can call; the machine-readable spec is at `/api/v1/openapi.json`.
 
 Use **Boards → Create board** or open an existing board and choose **Add task**.
 New boards use direct editing. Configure approvals in **Board details** and
