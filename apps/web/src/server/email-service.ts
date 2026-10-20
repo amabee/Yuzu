@@ -21,6 +21,7 @@ import {
   unsubscribeToken,
 } from "./email-queue";
 import { visibility } from "./notification-service";
+import { eraseExpiredTrash } from "./trash-service";
 import { requireIdentity } from "./team-access";
 import { configuredOrigin, SetupError } from "./setup/security";
 
@@ -544,6 +545,10 @@ export function startEmailWorker() {
         lastScan = Date.now();
         await scanDigests();
         await warnExpiringTokens();
+        // Trash auto-erase is cheap to check; it erases in bounded batches.
+        await eraseExpiredTrash().catch(() =>
+          console.error(JSON.stringify({ event: "trash_erase_failed" })),
+        );
       }
       while (!stopped && (await processEmailQueue()) === 20);
     } catch {

@@ -1,6 +1,12 @@
 "use client";
 import { PauseSheetDecor } from "@/components/pause/pause-sheet";
 import { ExportCsv } from "./export-csv";
+import { TrashManager } from "@/components/trash/trash-manager";
+import {
+  PauseButton,
+  PauseClose,
+  PauseModal,
+} from "@/components/pause/pause-dialog";
 import { ImportCsv } from "./import-csv";
 import { matchesBoardView } from "@/lib/board-view";
 import { mergeBoardState } from "@/lib/board-cache";
@@ -230,6 +236,7 @@ export function BoardSurface({
   });
   const state = query.data ?? initialState;
   const record = recordOf(state);
+  const [trashOpen, setTrashOpen] = useState(false);
   const noun = lower(record.singular);
   const nouns = lower(record.plural);
   const checklistOn = record.builtins.checklist.on;
@@ -323,7 +330,9 @@ export function BoardSurface({
         : apiRequest(
             action === "approval-policy"
               ? "/api/v1/approvals/configure"
-              : `/api/v1/boards/${action}`,
+              : action.startsWith("trash/")
+                ? `/api/v1/${action}`
+                : `/api/v1/boards/${action}`,
             {
               method: "POST",
               json: input,
@@ -355,9 +364,14 @@ export function BoardSurface({
             : new Error("Could not refresh the board.");
       }
       if (
-        ["create-task", "update", "archive", "restore", "editor"].includes(
-          variables.action,
-        )
+        [
+          "create-task",
+          "update",
+          "archive",
+          "restore",
+          "editor",
+          "trash/delete-record",
+        ].includes(variables.action)
       ) {
         setCreating(false);
         setSelectedId(null);
@@ -371,6 +385,8 @@ export function BoardSurface({
         restore: `${record.singular} restored`,
         editor: `${record.singular} permissions updated`,
         "record-settings": "Board records updated",
+        "trash/delete-record": `${record.singular} moved to Trash`,
+        "trash/restore-record": `${record.singular} restored`,
         field: "Custom field added",
         group: "Group added",
         "configure-field": "Field saved",
@@ -792,6 +808,15 @@ export function BoardSurface({
           >
             {archived ? `Active ${nouns}` : "Archived"}
           </Button>
+          {state.canManage && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setTrashOpen(true)}
+            >
+              Deleted
+            </Button>
+          )}
           <ImportCsv
             state={state}
             onNotice={transferNotice}
@@ -1324,6 +1349,25 @@ export function BoardSurface({
           </div>
         </SheetContent>
       </Sheet>
+      <PauseModal
+        open={trashOpen}
+        onOpenChange={setTrashOpen}
+        title={`Deleted ${nouns}`}
+        description="Restore anything deleted from this board. Admins can erase from Settings → Trash."
+        actions={
+          <PauseClose asChild>
+            <PauseButton>Close</PauseButton>
+          </PauseClose>
+        }
+      >
+        {trashOpen && (
+          <TrashManager
+            currentUserId={state.currentUserId}
+            boardId={state.boardId}
+            onRestored={() => void queryClient.invalidateQueries({ queryKey })}
+          />
+        )}
+      </PauseModal>
       <Sheet
         open={creating || Boolean(selected)}
         onOpenChange={(open) => {

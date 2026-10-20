@@ -135,6 +135,7 @@ export async function previewCsvImport(
       const existing = await tx.task.findMany({
         where: {
           boardId: body.boardId,
+          deletedAt: null,
           OR: [
             {
               name: { in: mapped.map((row) => row.name), mode: "insensitive" },

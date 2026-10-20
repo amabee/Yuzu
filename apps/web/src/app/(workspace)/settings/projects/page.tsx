@@ -16,6 +16,7 @@ export default async function ProjectsDirectoryPage() {
   // Names and managers only: private projects' boards and contents stay
   // hidden until an administrator deliberately recovers access.
   const projects = await getDatabase().project.findMany({
+    where: { deletedAt: null },
     orderBy: [{ workspaceId: "asc" }, { position: "asc" }],
     take: 500,
     select: {

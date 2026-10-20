@@ -91,15 +91,21 @@ export function visibleWorkspaceScope(user: Principal) {
     archivedAt: null,
     OR: [
       { members: { some: { userId: user.id } } },
-      { projects: { some: { members: { some: { userId: user.id } } } } },
+      {
+        projects: {
+          some: { deletedAt: null, members: { some: { userId: user.id } } },
+        },
+      },
     ],
   };
 }
 
 /** Projects the user may see. Private projects are visible only to their
- *  members, not even to admins (they can only recover access, audited). */
+ *  members, not even to admins (they can only recover access, audited).
+ *  Projects in Trash are hidden from everyone. */
 export function projectScope(user: Principal) {
   return {
+    deletedAt: null,
     OR: [
       { visibility: "PUBLIC", workspace: workspaceScope(user) },
       {
@@ -115,9 +121,14 @@ export function projectScope(user: Principal) {
  *  realtime), must filter through this. */
 export function boardScope(user: Principal) {
   return {
+    // Boards in Trash, or in a project in Trash, are hidden from everyone.
+    deletedAt: null,
     OR: [
       { projectId: null, workspace: workspaceScope(user) },
       { project: projectScope(user) },
     ],
   };
 }
+
+/** Records that aren't in Trash. Join every record query with it. */
+export const liveRecord = { deletedAt: null } as const;

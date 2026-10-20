@@ -720,8 +720,20 @@ async function runRule(rule: StoredRule, event: StoredEvent) {
         detail: `Stopped: rules can only trigger each other ${AUTOMATION_MAX_DEPTH} steps deep.`,
       });
     const task = event.taskId ? await loadTask(tx, event.taskId) : null;
-    if (event.taskId && (!task || task.archivedAt))
-      return record({ outcome: "SKIPPED", detail: "The task is archived." });
+    if (event.taskId && (!task || task.archivedAt || task.deletedAt))
+      return record({
+        outcome: "SKIPPED",
+        detail: task?.deletedAt
+          ? "The record is in Trash."
+          : "The task is archived.",
+      });
+    // A board in Trash skips quietly, so restoring it doesn't find its rules paused.
+    const home = await tx.board.findUnique({
+      where: { id: rule.boardId },
+      select: { deletedAt: true, project: { select: { deletedAt: true } } },
+    });
+    if (home?.deletedAt || home?.project?.deletedAt)
+      return record({ outcome: "SKIPPED", detail: "The board is in Trash." });
     let context: Awaited<ReturnType<typeof access>>;
     try {
       context = await access(tx, rule.createdById, rule.boardId, true);
@@ -1247,9 +1259,15 @@ export async function processAutomationEvents(limit = 50) {
  * Queues due-date events for boards with due triggers. Each task fires once
  * per due date; overdue looks back a week so a long backlog doesn't flood.
  */
+/** Rules on boards in Trash (or in a project in Trash) wait until restored. */
+const liveBoard = {
+  deletedAt: null,
+  OR: [{ projectId: null }, { project: { deletedAt: null } }],
+};
+
 export async function scanDueAutomations() {
   const rules = await db().automationRule.findMany({
-    where: { enabled: true },
+    where: { enabled: true, board: liveBoard },
     select: { boardId: true, trigger: true },
   });
   const boards = new Map<string, Set<"due.arrived" | "due.overdue">>();
@@ -1276,6 +1294,7 @@ export async function scanDueAutomations() {
         where: {
           boardId,
           archivedAt: null,
+          deletedAt: null,
           dueDate:
             kind === "due.arrived"
               ? todayDate
@@ -1309,7 +1328,7 @@ export async function scanDueAutomations() {
  */
 export async function scanScheduledAutomations(now = new Date()) {
   const rules = await db().automationRule.findMany({
-    where: { enabled: true },
+    where: { enabled: true, board: liveBoard },
     select: { id: true, boardId: true, trigger: true, lastScheduledAt: true },
   });
   const zone = await installationZone(db() as unknown as DatabaseTransaction);

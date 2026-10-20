@@ -296,7 +296,9 @@ export async function workspacesState(headers: Headers) {
       id: true,
       name: true,
       archivedAt: true,
-      _count: { select: { boards: true, members: true } },
+      _count: {
+        select: { boards: { where: { deletedAt: null } }, members: true },
+      },
     },
   });
   return {

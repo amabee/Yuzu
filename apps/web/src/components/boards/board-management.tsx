@@ -1,5 +1,7 @@
 "use client";
 import { BoardRecordSettings } from "./record-settings";
+import { useRouter } from "nextjs-toploader/app";
+import { DeleteDialog } from "@/components/trash/delete-dialog";
 import {
   LinkFieldSetup,
   type LinkDraft,
@@ -437,6 +439,8 @@ export function BoardManagement({
   });
   const [group, setGroup] = useState("");
   const [manager, setManager] = useState("");
+  const [deletingBoard, setDeletingBoard] = useState(false);
+  const router = useRouter();
   return (
     <section className="space-y-4 border-t pt-5">
       <BoardRecordSettings
@@ -635,6 +639,42 @@ export function BoardManagement({
           Add group
         </Button>
       </form>
+      <div className="space-y-2 border-t pt-4">
+        <h4 className="text-sm font-semibold">Delete board</h4>
+        <p className="text-xs text-muted-foreground">
+          Moves the board and everything on it to Trash. Managers or an admin
+          can restore it from Settings → Trash.
+        </p>
+        <Button
+          size="sm"
+          variant="outline"
+          className="text-destructive"
+          onClick={() => setDeletingBoard(true)}
+        >
+          Delete board…
+        </Button>
+        <DeleteDialog
+          open={deletingBoard}
+          onOpenChange={setDeletingBoard}
+          title="Delete this board?"
+          description={`The board and its ${(() => {
+            const count = Object.values(state.pulse?.statusCounts ?? {}).reduce(
+              (sum, value) => sum + value,
+              0,
+            );
+            return count === 1
+              ? `1 ${recordOf(state).singular.toLowerCase()}`
+              : `${count.toLocaleString()} ${recordOf(state).plural.toLowerCase()}`;
+          })()} move to Trash and disappear for everyone, including links from other boards. You can restore it from Settings → Trash.`}
+          confirm="Delete board"
+          action="delete-board"
+          id={state.boardId}
+          onDeleted={() => {
+            router.push("/boards");
+            router.refresh();
+          }}
+        />
+      </div>
     </section>
   );
 }

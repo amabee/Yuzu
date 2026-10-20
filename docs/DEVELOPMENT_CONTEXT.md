@@ -332,11 +332,37 @@ Direction: `docs/Yuzu_CRM_and_Business_Platform_Roadmap.md` (revision 2). Specs:
   (add field), table names, Kanban chips, read-only rollups in the panel.
 - Tests: `tests/links.spec.ts`, `lib/record-links.test.ts`.
 
+## Soft delete and Trash (branch `feat/trash`)
+
+Spec and mockup: `docs/specs/trash.md`, `docs/mockups/trash.html`. Decisions:
+keep Archive and add Delete → Trash; managers and admins only; admins empty
+Trash or set auto-erase (Never/30/90/365 days).
+
+- `deletedAt/deletedById` on Task, Board, Project;
+  `InstallationSettings.trashRetentionDays`.
+- `boardScope`/`projectScope` exclude deleted boards and projects (so their
+  records vanish with them); record queries add `deletedAt: null`
+  (`taskWhere`, board state, search, dashboard, CSV, links/rollups and link
+  includes, notifications `visibility()`, comments, files, approvals, rules).
+  Loading a deleted record by id answers 404. Rules on boards in Trash skip
+  without pausing.
+- `server/trash-service.ts`: delete/restore record, board, project (restore
+  a record with `withParents` to bring back its board/project), `trashState`,
+  `eraseTrash` (permanent: tasks → boards → projects, files removed after
+  commit), `eraseExpiredTrash` (email worker's minute scan),
+  `setTrashRetention`. Route `api/v1/trash/[action]`; record delete/restore
+  are in the API registry. Audit: BOARD/PROJECT_DELETED/RESTORED,
+  TRASH_ERASED, TRASH_RETENTION_SET.
+- UI: record panel "Delete …" (PauseDialog), board toolbar "Deleted" view,
+  Board details "Delete board…", project "Delete project" button,
+  Settings → Trash (`components/trash/`).
+- Tests: `tests/trash.spec.ts`.
+
 ## Next session
 
-Merge order: #31 (API, re-landed) → #32 (record types) → record links. All
-target `main`. Phase 1 remaining: the type-matrix contract test, then phase 2
-(CRM MVP: Companies/Contacts/Leads, pipelines, activities, lead conversion).
+Merge order: #31 → #32 → #33 → trash. All target `main`. Then the phase 1
+type-matrix contract test (add the "deleted records are invisible" row), and
+phase 2 (CRM MVP).
 
 Small leftovers: the theme switcher still shows on setup, invitation and
 password-reset pages (the user only asked to remove it from sign-in/welcome).

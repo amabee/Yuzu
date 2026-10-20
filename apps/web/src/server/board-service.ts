@@ -501,11 +501,13 @@ const taskInclude = {
   values: { include: { people: true, field: true } },
   // Both directions of "Link to board" fields, bounded per record.
   linksFrom: {
+    where: { to: { deletedAt: null, board: { deletedAt: null } } },
     select: { fieldId: true, toId: true },
     orderBy: { createdAt: "asc" as const },
     take: 200,
   },
   linksTo: {
+    where: { from: { deletedAt: null, board: { deletedAt: null } } },
     select: { fromId: true, field: { select: { config: true } } },
     orderBy: { createdAt: "asc" as const },
     take: 200,
@@ -654,7 +656,7 @@ export async function boardState(
       }).format(new Date());
       const focused = query.taskId
         ? await tx.task.findFirst({
-            where: { id: query.taskId, boardId },
+            where: { id: query.taskId, boardId, deletedAt: null },
             include: taskInclude,
           })
         : null;
@@ -690,20 +692,21 @@ export async function boardState(
       // The pulse covers the whole active board, whatever the filters.
       const pulseCounts = await tx.task.groupBy({
         by: ["statusId"],
-        where: { boardId, archivedAt: null },
+        where: { boardId, archivedAt: null, deletedAt: null },
         _count: true,
       });
       const overdue = await tx.task.count({
         where: {
           boardId,
           archivedAt: null,
+          deletedAt: null,
           dueDate: { lt: new Date(`${calendarDate}T00:00:00Z`) },
           OR: [{ statusId: null }, { statusId: { not: "done" } }],
         },
       });
       const groupCounts = await tx.task.groupBy({
         by: ["groupId"],
-        where: { boardId, groupId: { not: null } },
+        where: { boardId, groupId: { not: null }, deletedAt: null },
         _count: true,
       });
       const pendingApprovalCount = await tx.boardProposal.count({
@@ -1315,6 +1318,7 @@ export async function createTaskInTransaction(
   if (importOptions?.skipDuplicate) {
     const duplicate = await tx.task.findFirst({
       where: {
+        deletedAt: null,
         boardId: body.boardId,
         OR: [
           { name: { equals: body.name, mode: "insensitive" } },
@@ -1398,7 +1402,8 @@ export async function reorderTask(input: unknown, headers: Headers) {
   const { user } = await requireIdentity(headers);
   return serial(async (tx) => {
     const task = await loadTask(tx, body.taskId);
-    if (!task) throw notFound();
+    // Records in Trash are restored from Trash, not changed in place.
+    if (!task || task.deletedAt) throw notFound();
     const context = await access(tx, user.id, task.boardId, true);
     if (!canEdit(task, context))
       throw new SetupError(
@@ -1482,7 +1487,8 @@ export async function mutateTask(
   const { user } = await requireIdentity(headers);
   return serial(async (tx) => {
     const task = await loadTask(tx, body.taskId);
-    if (!task) throw notFound();
+    // Records in Trash are restored from Trash, not changed in place.
+    if (!task || task.deletedAt) throw notFound();
     const context = await access(tx, user.id, task.boardId, true);
     if (
       action === "restore" || action === "editor"
@@ -2220,9 +2226,9 @@ export async function taskComments(taskId: string, headers: Headers) {
   return db().$transaction(async (tx) => {
     const task = await tx.task.findUnique({
       where: { id: taskId },
-      select: { boardId: true, archivedAt: true },
+      select: { boardId: true, archivedAt: true, deletedAt: true },
     });
-    if (!task) throw notFound();
+    if (!task || task.deletedAt) throw notFound();
     const context = await access(tx, user.id, task.boardId);
     const comments = await tx.taskComment.findMany({
       where: { taskId },
@@ -2254,9 +2260,9 @@ export async function createComment(input: unknown, headers: Headers) {
   return serial(async (tx) => {
     const task = await tx.task.findUnique({
       where: { id: body.taskId },
-      select: { boardId: true, archivedAt: true },
+      select: { boardId: true, archivedAt: true, deletedAt: true },
     });
-    if (!task) throw notFound();
+    if (!task || task.deletedAt) throw notFound();
     const context = await access(tx, user.id, task.boardId, true);
     if (task.archivedAt)
       throw new SetupError(
@@ -2327,7 +2333,7 @@ export async function createComment(input: unknown, headers: Headers) {
       eventKey: `comment:${comment.id}:mentions:1`,
     });
     const commented = await loadTask(tx, body.taskId);
-    if (commented && !commented.archivedAt)
+    if (commented && !commented.archivedAt && !commented.deletedAt)
       await recordAutomationEvent(tx, {
         boardId: task.boardId,
         taskId: body.taskId,
@@ -2373,9 +2379,11 @@ export async function changeComment(input: unknown, headers: Headers) {
   return serial(async (tx) => {
     const comment = await tx.taskComment.findUnique({
       where: { id: body.commentId },
-      include: { task: { select: { boardId: true, archivedAt: true } } },
+      include: {
+        task: { select: { boardId: true, archivedAt: true, deletedAt: true } },
+      },
     });
-    if (!comment) throw notFound();
+    if (!comment || comment.task.deletedAt) throw notFound();
     const context = await access(tx, user.id, comment.task.boardId, true);
     if (
       body.action === "edit"
@@ -2509,9 +2517,9 @@ export async function commentHistory(commentId: string, headers: Headers) {
   return db().$transaction(async (tx) => {
     const comment = await tx.taskComment.findUnique({
       where: { id: commentId },
-      include: { task: { select: { boardId: true } } },
+      include: { task: { select: { boardId: true, deletedAt: true } } },
     });
-    if (!comment) throw notFound();
+    if (!comment || comment.task.deletedAt) throw notFound();
     await access(tx, user.id, comment.task.boardId);
     if (comment.deletedAt) return []; // Removal hides the content, including old versions.
     const rows = await tx.commentRevision.findMany({

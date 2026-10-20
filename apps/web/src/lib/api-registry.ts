@@ -146,6 +146,28 @@ export const apiEndpoints: ApiEndpoint[] = [
     returns: "Up to 20 matching records",
   },
   {
+    method: "POST",
+    path: "/trash/delete-record",
+    group: "Boards and tasks",
+    summary: "Move a record to Trash",
+    description:
+      "Board managers and admins only. The record disappears everywhere until restored.",
+    access: "write",
+    body: z.object({ id: recordId }),
+    returns: "The board and record ids",
+  },
+  {
+    method: "POST",
+    path: "/trash/restore-record",
+    group: "Boards and tasks",
+    summary: "Restore a record from Trash",
+    description:
+      "Set withParents to also restore its board and project if they're in Trash.",
+    access: "write",
+    body: z.object({ id: recordId, withParents: z.boolean().optional() }),
+    returns: "The board and record ids",
+  },
+  {
     method: "GET",
     path: "/boards/comments",
     group: "Comments",
