@@ -78,6 +78,8 @@ test("Work and CRM have separate navigation with shared access and responsive co
   page,
   browser,
 }) => {
+  test.setTimeout(process.env.YUZU_E2E_DEV === "1" ? 120_000 : 45_000);
+  const navigationTimeout = process.env.YUZU_E2E_DEV === "1" ? 30_000 : 10_000;
   const { board } = await setup(page);
   await page.goto(`/boards/${board}`);
   const modules = page.getByRole("navigation", {
@@ -88,7 +90,7 @@ test("Work and CRM have separate navigation with shared access and responsive co
     modules.getByRole("link", { name: "Work", exact: true }),
   ).toHaveAttribute("aria-current", "page");
   await modules.getByRole("link", { name: "CRM", exact: true }).click();
-  await expect(page).toHaveURL(/\/crm$/);
+  await expect(page).toHaveURL(/\/crm$/, { timeout: navigationTimeout });
   await expect(
     page.getByRole("heading", { name: "Customer relationships" }),
   ).toBeVisible();
@@ -108,9 +110,47 @@ test("Work and CRM have separate navigation with shared access and responsive co
   await expect(
     page.getByRole("heading", { name: "Customer relationships" }),
   ).toBeVisible();
+  await expect(page.locator(".shell-module-rail")).toBeVisible();
+  await expect(page.locator(".shell-context-search")).toBeVisible();
+  await page
+    .getByRole("button", { name: "Switch module, current module CRM" })
+    .click();
+  await expect(
+    page.getByRole("menuitem", { name: /Work Projects and tasks/ }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.locator(".shell-context-search").click();
+  await expect(
+    page.getByRole("dialog", { name: "Search your workspace" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.screenshot({ path: "../../artifacts/modules/crm-desktop.png" });
+  await page.getByRole("switch", { name: "Dark mode", exact: true }).check();
+  await expect(
+    page.getByRole("switch", { name: "Dark mode", exact: true }),
+  ).toHaveAttribute("aria-disabled", "false");
+  await page.screenshot({ path: "../../artifacts/modules/sidebar-dark.png" });
+  await page.getByRole("switch", { name: "Dark mode", exact: true }).uncheck();
+  await expect(
+    page.getByRole("switch", { name: "Dark mode", exact: true }),
+  ).toHaveAttribute("aria-disabled", "false");
+  await page.getByRole("button", { name: "Toggle navigation" }).click();
+  await expect(page.locator(".shell-context-panel")).toBeHidden();
+  await expect(
+    modules.getByRole("link", { name: "CRM", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /^Account menu/ }),
+  ).toBeVisible();
+  await page.keyboard.press("Control+k");
+  await expect(
+    page.getByRole("dialog", { name: "Search your workspace" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Toggle navigation" }).click();
+  await expect(page.locator(".shell-context-panel")).toBeVisible();
   await page.getByRole("link", { name: "Open Work boards" }).click();
-  await expect(page).toHaveURL(/\/boards$/);
+  await expect(page).toHaveURL(/\/boards$/, { timeout: navigationTimeout });
   await expect(
     page.getByRole("navigation", { name: "Workspace boards" }),
   ).toBeVisible();
@@ -119,6 +159,18 @@ test("Work and CRM have separate navigation with shared access and responsive co
   ).toBe(1);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "Toggle navigation" }).click();
+  await page
+    .getByRole("button", { name: "Search workspace", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Search your workspace" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("dialog", { name: "Sidebar", exact: true }),
+  ).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Toggle navigation" }).click();
+  await page.screenshot({ path: "../../artifacts/modules/sidebar-mobile.png" });
   await page
     .getByRole("navigation", { name: "Modules", exact: true })
     .getByRole("link", { name: "CRM", exact: true })
@@ -138,7 +190,7 @@ test("Work and CRM have separate navigation with shared access and responsive co
   const anonymous = await browser.newContext();
   const visitor = await anonymous.newPage();
   await visitor.goto("/crm");
-  await expect(visitor).toHaveURL(/\/sign-in/);
+  await expect(visitor).toHaveURL(/\/sign-in/, { timeout: navigationTimeout });
   await expect(
     visitor.getByRole("heading", { name: "Customer relationships" }),
   ).toHaveCount(0);
