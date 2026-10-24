@@ -2,6 +2,7 @@ import {
   createRecordId,
   getDatabase,
   type DatabaseTransaction,
+  type Prisma,
 } from "@yuzu/database";
 import { discardAttachmentObject } from "@yuzu/database/attachment-objects";
 import { z } from "zod";
@@ -118,8 +119,9 @@ export async function restoreRecord(input: unknown, headers: Headers) {
   const { user } = await requireIdentity(headers);
   const body = restoreInput.parse(input);
   return serial(async (tx) => {
-    const task = await tx.task.findUnique({
-      where: { id: body.id },
+    const task = await tx.task.findFirst({
+      // Check Trash visibility before even returning a parent name.
+      where: { id: body.id, board: managedBoards(user) },
       include: {
         board: {
           select: {
@@ -451,83 +453,135 @@ export async function trashState(
 // ---------- Erasing (admins) ----------
 
 const eraseInput = z.strictObject({
-  /** Everything in Trash, or one item. */
   all: z.boolean().default(false),
   kind: z.enum(["record", "board", "project"]).optional(),
   id: recordId.optional(),
+  // Continue the same snapshot; newly deleted items wait for another erase.
+  before: z.iso.datetime().optional(),
 });
 
-/** Permanently removes records, then boards, then projects, with their files. */
-async function eraseIn(
-  tx: DatabaseTransaction,
-  target: { taskIds: string[]; boardIds: string[]; projectIds: string[] },
-) {
-  const boardIds = [
-    ...new Set([
-      ...target.boardIds,
-      ...(
-        await tx.board.findMany({
-          where: { projectId: { in: target.projectIds } },
-          select: { id: true },
-        })
-      ).map((board) => board.id),
-    ]),
-  ];
-  const taskWhere = {
-    OR: [{ id: { in: target.taskIds } }, { boardId: { in: boardIds } }],
-  };
-  const files = await tx.taskAttachment.findMany({
-    where: { task: taskWhere },
-    select: { storageKey: true, storageProvider: true, storageBucket: true },
-  });
-  const records = await tx.task.deleteMany({ where: taskWhere });
-  const settings = await tx.installationSettings.findUnique({
-    where: { id: "installation" },
-  });
-  if (settings?.initialBoardId && boardIds.includes(settings.initialBoardId))
-    await tx.installationSettings.update({
-      where: { id: "installation" },
-      data: { initialBoardId: null },
-    });
-  const boards = await tx.board.deleteMany({ where: { id: { in: boardIds } } });
-  const projects = await tx.project.deleteMany({
-    where: { id: { in: target.projectIds } },
-  });
-  return {
-    files,
-    counts: {
-      records: records.count,
-      boards: boards.count,
-      projects: projects.count,
-    },
-  };
+const ERASE_RECORD_LIMIT = 100;
+const ERASE_FILE_LIMIT = 200;
+type EraseSelection = {
+  tasks: Prisma.TaskWhereInput;
+  boards: Prisma.BoardWhereInput;
+  projects: Prisma.ProjectWhereInput;
+};
+
+function eraseSelection(
+  before: Date,
+  target?: { kind: "record" | "board" | "project"; id: string },
+): EraseSelection {
+  const deleted = { deletedAt: { lte: before } };
+  const projects: Prisma.ProjectWhereInput =
+    !target || target.kind === "project"
+      ? { ...deleted, ...(target ? { id: target.id } : {}) }
+      : { id: { in: [] } };
+  const boards: Prisma.BoardWhereInput = !target
+    ? { OR: [deleted, { project: projects }] }
+    : target.kind === "project"
+      ? { project: projects }
+      : target.kind === "board"
+        ? { ...deleted, id: target.id }
+        : { id: { in: [] } };
+  const tasks: Prisma.TaskWhereInput = !target
+    ? { OR: [deleted, { board: boards }] }
+    : target.kind === "record"
+      ? { ...deleted, id: target.id }
+      : { board: boards };
+  return { tasks, boards, projects };
 }
 
-async function finishErase(
+/** One bounded transaction, including descendants of deleted containers.
+ * Parents are removed only after their children have been drained; never let
+ * a cascade turn a small batch into an unbounded board/project deletion.
+ */
+async function eraseBatch(
   actorId: string | null,
-  run: (tx: DatabaseTransaction) => Promise<{
-    files: Parameters<typeof discardAttachmentObject>[0][];
-    counts: { records: number; boards: number; projects: number };
-  }>,
+  selection: EraseSelection,
   why: string,
 ) {
-  const { files, counts } = await serial(async (tx) => {
-    const result = await run(tx);
-    const total = itemCount(result.counts);
-    if (total)
+  const { files, erased, remaining } = await serial(async (tx) => {
+    const tasks = await tx.task.findMany({
+      where: selection.tasks,
+      select: { id: true },
+      orderBy: { id: "asc" },
+      take: ERASE_RECORD_LIMIT,
+    });
+    const ids = tasks.map((task) => task.id);
+    const files = await tx.taskAttachment.findMany({
+      where: { taskId: { in: ids } },
+      select: {
+        id: true,
+        storageKey: true,
+        storageProvider: true,
+        storageBucket: true,
+      },
+      orderBy: { id: "asc" },
+      take: ERASE_FILE_LIMIT,
+    });
+    await tx.taskAttachment.deleteMany({
+      where: { id: { in: files.map((file) => file.id) } },
+    });
+    // A heavily attached record remains until later batches drain its files.
+    const records = await tx.task.deleteMany({
+      where: { id: { in: ids }, attachments: { none: {} } },
+    });
+    const boards = await tx.board.findMany({
+      where: { AND: [selection.boards, { tasks: { none: {} } }] },
+      select: { id: true },
+      orderBy: { id: "asc" },
+      take: 20,
+    });
+    const boardIds = boards.map((board) => board.id);
+    await tx.installationSettings.updateMany({
+      where: { initialBoardId: { in: boardIds } },
+      data: { initialBoardId: null },
+    });
+    const removedBoards = await tx.board.deleteMany({
+      where: { id: { in: boardIds } },
+    });
+    const projects = await tx.project.findMany({
+      where: { AND: [selection.projects, { boards: { none: {} } }] },
+      select: { id: true },
+      orderBy: { id: "asc" },
+      take: 10,
+    });
+    const removedProjects = await tx.project.deleteMany({
+      where: { id: { in: projects.map((project) => project.id) } },
+    });
+    const erased = {
+      records: records.count,
+      boards: removedBoards.count,
+      projects: removedProjects.count,
+    };
+    if (itemCount(erased) || files.length)
       await audit(tx, {
         actorId,
         action: "TRASH_ERASED",
-        subject: `${total} ${total === 1 ? "item" : "items"}`,
-        details: `${why}: ${result.counts.records} records, ${result.counts.boards} boards, ${result.counts.projects} projects, ${result.files.length} files`,
+        subject: `${itemCount(erased)} items`,
+        details: `${why}: ${erased.records} records, ${erased.boards} boards, ${erased.projects} projects, ${files.length} files`,
       });
-    return result;
+    const remaining = Boolean(
+      (await tx.task.findFirst({
+        where: selection.tasks,
+        select: { id: true },
+      })) ||
+      (await tx.board.findFirst({
+        where: selection.boards,
+        select: { id: true },
+      })) ||
+      (await tx.project.findFirst({
+        where: selection.projects,
+        select: { id: true },
+      })),
+    );
+    return { files, erased, remaining };
   });
-  // Files go after the rows are gone; a failure leaves an orphan for the
-  // attachments cleanup, never a row pointing at nothing.
+  // Delete objects after committing their row removals, never before commit.
   for (const file of files)
     await discardAttachmentObject(file).catch(() => undefined);
-  return counts;
+  return { erased, remaining };
 }
 const itemCount = (value: {
   records: number;
@@ -542,71 +596,35 @@ export async function eraseTrash(input: unknown, headers: Headers) {
   const body = eraseInput.parse(input);
   if (!body.all && !(body.kind && body.id))
     throw new SetupError(422, "INVALID_INPUT", "Choose what to erase.");
-  const erased = await finishErase(
+  const before = body.before ? new Date(body.before) : new Date();
+  if (before > new Date())
+    throw new SetupError(422, "INVALID_INPUT", "Choose a past erase snapshot.");
+  const result = await eraseBatch(
     user.id,
-    async (tx) => {
-      const deleted = { deletedAt: { not: null } };
-      if (body.all) {
-        const [tasks, boards, projects] = await Promise.all([
-          tx.task.findMany({ where: deleted, select: { id: true } }),
-          tx.board.findMany({ where: deleted, select: { id: true } }),
-          tx.project.findMany({ where: deleted, select: { id: true } }),
-        ]);
-        return eraseIn(tx, {
-          taskIds: tasks.map((item) => item.id),
-          boardIds: boards.map((item) => item.id),
-          projectIds: projects.map((item) => item.id),
-        });
-      }
-      const found =
-        body.kind === "record"
-          ? await tx.task.findFirst({ where: { id: body.id, ...deleted } })
-          : body.kind === "board"
-            ? await tx.board.findFirst({ where: { id: body.id, ...deleted } })
-            : await tx.project.findFirst({
-                where: { id: body.id, ...deleted },
-              });
-      if (!found) throw notFound();
-      return eraseIn(tx, {
-        taskIds: body.kind === "record" ? [body.id!] : [],
-        boardIds: body.kind === "board" ? [body.id!] : [],
-        projectIds: body.kind === "project" ? [body.id!] : [],
-      });
-    },
+    eraseSelection(
+      before,
+      body.all ? undefined : { kind: body.kind!, id: body.id! },
+    ),
     body.all ? "Emptied Trash" : "Erased from Trash",
   );
-  return { erased };
+  return { ...result, before: before.toISOString() };
 }
 
-/** Auto-erase: items deleted longer ago than the admin's chosen period. */
+/** The worker drains one bounded batch per scan; large containers resume. */
 export async function eraseExpiredTrash(now = new Date()) {
   const settings = await db().installationSettings.findUnique({
     where: { id: "installation" },
   });
   if (settings?.setupState !== "READY" || !settings.trashRetentionDays)
     return 0;
-  const before = {
-    deletedAt: {
-      lt: new Date(now.getTime() - settings.trashRetentionDays * 86_400_000),
-    },
-  };
-  const erased = await finishErase(
+  const result = await eraseBatch(
     null,
-    async (tx) => {
-      const [tasks, boards, projects] = await Promise.all([
-        tx.task.findMany({ where: before, select: { id: true }, take: 1000 }),
-        tx.board.findMany({ where: before, select: { id: true }, take: 100 }),
-        tx.project.findMany({ where: before, select: { id: true }, take: 50 }),
-      ]);
-      return eraseIn(tx, {
-        taskIds: tasks.map((item) => item.id),
-        boardIds: boards.map((item) => item.id),
-        projectIds: projects.map((item) => item.id),
-      });
-    },
+    eraseSelection(
+      new Date(now.getTime() - settings.trashRetentionDays * 86_400_000),
+    ),
     `Auto-erase after ${settings.trashRetentionDays} days`,
   );
-  return itemCount(erased);
+  return itemCount(result.erased);
 }
 
 export async function setTrashRetention(input: unknown, headers: Headers) {
