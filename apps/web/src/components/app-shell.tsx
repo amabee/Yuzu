@@ -472,6 +472,7 @@ export function AppShell({
             <div id={CRUMBS_SLOT} className="shell-crumbs" />
             <div className="shell-actions">
               <WorkspaceSearch
+                projects={projects}
                 workspaces={workspaces}
                 principalId={principalId}
               />

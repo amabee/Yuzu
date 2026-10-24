@@ -120,17 +120,38 @@ test("Work and CRM have separate navigation with shared access and responsive co
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await page.locator(".shell-context-search").click();
+  const command = page.getByRole("dialog", { name: "Search your workspace" });
+  const commandInput = command.getByRole("combobox", {
+    name: "Search workspace records",
+  });
+  await expect(commandInput).toBeFocused();
+  await expect(command.locator(".command-leaf")).toBeVisible();
+  await expect(command.locator(".command-lemon")).toBeVisible();
+  await page.screenshot({ path: "../../artifacts/modules/command-light.png" });
+
   await expect(
     page.getByRole("dialog", { name: "Search your workspace" }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await page.screenshot({ path: "../../artifacts/modules/crm-desktop.png" });
-  await page.getByRole("switch", { name: "Dark mode", exact: true }).check();
+  await page.getByRole("switch", { name: "Dark mode", exact: true }).click();
+  await expect(
+    page.getByRole("switch", { name: "Dark mode", exact: true }),
+  ).toBeChecked();
   await expect(
     page.getByRole("switch", { name: "Dark mode", exact: true }),
   ).toHaveAttribute("aria-disabled", "false");
   await page.screenshot({ path: "../../artifacts/modules/sidebar-dark.png" });
-  await page.getByRole("switch", { name: "Dark mode", exact: true }).uncheck();
+  await page.keyboard.press("Control+k");
+  await expect(
+    page.getByRole("dialog", { name: "Search your workspace" }),
+  ).toBeVisible();
+  await page.screenshot({ path: "../../artifacts/modules/command-dark.png" });
+  await page.keyboard.press("Escape");
+  await page.getByRole("switch", { name: "Dark mode", exact: true }).click();
+  await expect(
+    page.getByRole("switch", { name: "Dark mode", exact: true }),
+  ).not.toBeChecked();
   await expect(
     page.getByRole("switch", { name: "Dark mode", exact: true }),
   ).toHaveAttribute("aria-disabled", "false");
@@ -187,6 +208,24 @@ test("Work and CRM have separate navigation with shared access and responsive co
     ),
   ).toBe(true);
   await page.screenshot({ path: "../../artifacts/modules/crm-mobile.png" });
+  await page.keyboard.press("Control+k");
+  const palette = page.getByRole("dialog", { name: "Search your workspace" });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({ path: "../../artifacts/modules/command-mobile.png" });
+  await palette
+    .getByRole("combobox", { name: "Search workspace records" })
+    .fill("Launch");
+  await expect(palette.getByRole("option", { name: /Launch/ })).toBeVisible();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(new RegExp(`/boards/${board}$`), {
+    timeout: navigationTimeout,
+  });
+  await expect(palette).toHaveCount(0);
   const anonymous = await browser.newContext();
   const visitor = await anonymous.newPage();
   await visitor.goto("/crm");

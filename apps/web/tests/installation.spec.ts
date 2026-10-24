@@ -1845,13 +1845,15 @@ test("reference workspace search, board lanes and details use saved structure", 
   });
   await page.goto("/");
   await page.getByRole("button", { name: "Search workspace" }).click();
-  await page.getByLabel("Search boards", { exact: true }).fill("Team project");
+  await page
+    .getByRole("combobox", { name: "Search workspace records", exact: true })
+    .fill("Team project");
   await expect(
     page.getByRole("dialog").getByText("Restricted project", { exact: true }),
   ).toHaveCount(0);
   await page
     .getByRole("dialog")
-    .getByRole("link", { name: /Team project/ })
+    .getByRole("option", { name: /Team project/ })
     .click();
   await expect(page).toHaveURL(new RegExp(`/boards/${board.id}$`));
   await expect(
@@ -9386,14 +9388,15 @@ test("workspace task search pages across boards, opens task sheets and enforces 
       .getByRole("button", { name: "Search workspace", exact: true })
       .click();
     await team.author.page
-      .getByLabel("Search boards", { exact: true })
+      .getByRole("combobox", { name: "Search workspace records", exact: true })
       .fill("Searchable");
     const matches = team.author.page.getByRole("region", {
       name: "Matching tasks",
     });
-    await expect(matches.getByRole("link")).toHaveCount(20);
-    await matches.getByRole("button", { name: "Show more tasks" }).click();
-    await expect(matches.getByRole("link")).toHaveCount(25);
+    await expect(matches.getByRole("option")).toHaveCount(20);
+    await matches.getByRole("button", { name: "Show more tasks" }).focus();
+    await team.author.page.keyboard.press("Enter");
+    await expect(matches.getByRole("option")).toHaveCount(25);
     expect(
       (
         await postBoard(page, "update", {
@@ -9410,7 +9413,7 @@ test("workspace task search pages across boards, opens task sheets and enforces 
       path: "../../artifacts/task-search.png",
       fullPage: true,
     });
-    await matches.getByRole("link").first().click();
+    await matches.getByRole("option").first().click();
     await expect(team.author.page.getByRole("dialog")).toContainText(
       "Searchable task",
     );
@@ -9429,7 +9432,7 @@ test("workspace task search pages across boards, opens task sheets and enforces 
       .click();
     const sameBoard = team.author.page
       .getByRole("region", { name: "Matching tasks" })
-      .locator(`a[href^="/boards/${openedBoardId}?task="]`)
+      .locator(`[data-href^="/boards/${openedBoardId}?task="]`)
       .nth(1);
     const targetName = await sameBoard.locator("p").first().innerText();
     await sameBoard.click();

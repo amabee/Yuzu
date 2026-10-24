@@ -273,11 +273,6 @@ html.theme-ripple::view-transition-group(root) {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.workspace-search-panel {
-  padding: 28px;
-  gap: 20px;
-  background: var(--card);
-}
 .workspace-breadcrumb {
   display: flex;
   align-items: center;
@@ -4844,9 +4839,6 @@ fieldset:disabled .task-prop-value:hover {
     var(--card);
   box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.45);
 }
-.pause-sheet.workspace-search-panel[data-slot="sheet-content"] {
-  width: min(600px, calc(100vw - 28px));
-}
 .pause-sheet > .task-panel-leaf {
   position: absolute;
   z-index: 2;
@@ -6795,4 +6787,218 @@ body:has(.pause-sheet[data-state="open"]) .yuzu-toast-viewport {
 
 .shell-module-picker > span > span:last-child {
   color: var(--muted-foreground);
+}
+
+/* Yuzu Command: centered keyboard search, with the toast's citrus artwork. */
+.yuzu-command-dialog {
+  width: min(640px, calc(100vw - 32px));
+  max-width: 640px;
+  max-height: calc(100dvh - 32px);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  gap: 0;
+  background: var(--card);
+  color: var(--card-foreground);
+  border-radius: calc(var(--radius) + 8px);
+  overflow: visible;
+}
+.yuzu-command-dialog > .pause-clip {
+  z-index: 0;
+}
+.yuzu-command-dialog .command-leaf {
+  width: 72px;
+  top: -22px;
+  left: -13px;
+}
+.yuzu-command-dialog .command-lemon {
+  width: 175px;
+  height: 175px;
+  right: -42px;
+  bottom: -66px;
+  opacity: 0.16;
+}
+.yuzu-command-heading {
+  position: relative;
+  z-index: 1;
+  padding: 24px 28px 15px;
+}
+.yuzu-command-heading h2 {
+  font-family: var(--theme-heading, inherit);
+  letter-spacing: -0.025em;
+  font-size: 23px;
+  padding-right: 20px;
+}
+.yuzu-command-heading p {
+  margin-top: 5px;
+  font-size: 13px;
+}
+.command-root {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+  z-index: 1;
+}
+.command-input-wrap {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 0 24px;
+  border-block: 1px solid var(--border);
+}
+.command-input-wrap > svg {
+  flex-shrink: 0;
+  color: var(--primary);
+}
+.command-input {
+  width: 100%;
+  min-width: 0;
+  height: 54px;
+  background: transparent;
+  border: 0;
+  outline: none;
+  font-size: 15px;
+  color: inherit;
+}
+.command-input::placeholder {
+  color: var(--muted-foreground);
+}
+.command-input-wrap:focus-within {
+  box-shadow: inset 3px 0 var(--primary);
+}
+.command-controls {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 24px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.command-controls label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+}
+.command-controls input {
+  accent-color: var(--primary);
+}
+.command-list {
+  min-height: 130px;
+  max-height: min(50dvh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 10px 10px;
+  scroll-padding: 10px;
+}
+.command-group [cmdk-group-heading] {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 12px 14px 6px;
+}
+.command-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 42px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  outline: none;
+  font-size: 13px;
+}
+.command-item > svg {
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+.command-item[data-selected="true"] {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.command-item[data-selected="true"] > svg {
+  color: inherit;
+}
+.command-item[data-disabled="true"] {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.command-result-copy {
+  min-width: 0;
+}
+.command-result-copy p {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.command-result-copy small {
+  display: block;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  margin-top: 2px;
+}
+.command-item-hint {
+  margin-left: auto;
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+.command-message {
+  padding: 10px 14px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.command-more {
+  margin: 2px 14px 6px;
+}
+.command-footer {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 13px 24px;
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.command-footer span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.command-footer kbd {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  min-width: 19px;
+  padding: 0 4px;
+  font-family: inherit;
+  text-align: center;
+  background: var(--muted);
+}
+@media (max-width: 480px) {
+  .yuzu-command-heading {
+    padding: 23px 20px 14px;
+  }
+  .command-input-wrap,
+  .command-controls,
+  .command-footer {
+    padding-inline: 18px;
+  }
+  .command-controls > span {
+    display: none;
+  }
+  .command-list {
+    max-height: 43dvh;
+  }
+  .yuzu-command-heading h2 {
+    font-size: 21px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .yuzu-command-dialog {
+    animation: none !important;
+  }
 }
