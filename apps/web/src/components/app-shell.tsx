@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ChevronsUpDown,
+  BriefcaseBusiness,
+  ContactRound,
   Home,
   Inbox,
   LayoutGrid,
@@ -155,6 +157,16 @@ function WorkspaceSidebar({
   approvalCount: number;
 }) {
   const pathname = usePathname();
+  const isCrm = pathname === "/crm" || pathname.startsWith("/crm/");
+  const moduleNavigation = isCrm
+    ? [
+        { href: "/crm", label: "CRM overview", icon: ContactRound },
+        ...navigation.filter(
+          (item) =>
+            item.href === "/approvals" || item.href === "/notifications",
+        ),
+      ]
+    : navigation;
   const { isMobile, setOpenMobile } = useSidebar();
   const close = () => setOpenMobile(false);
   const unread = useUnreadCount(principalId);
@@ -221,13 +233,38 @@ function WorkspaceSidebar({
             </span>
           </span>
         </div>
+        <nav aria-label="Modules" className="shell-module-switcher">
+          {[
+            {
+              href: "/",
+              label: "Work",
+              icon: BriefcaseBusiness,
+              selected: !isCrm,
+            },
+            { href: "/crm", label: "CRM", icon: ContactRound, selected: isCrm },
+          ].map(({ href, label, icon: Icon, selected }) => (
+            <Link
+              key={href}
+              href={href}
+              onClick={close}
+              aria-current={selected ? "page" : undefined}
+              className="shell-module-link"
+              title={`${label} module`}
+            >
+              <Icon size={17} aria-hidden="true" />
+              <span className="group-data-[collapsible=icon]:sr-only">
+                {label}
+              </span>
+            </Link>
+          ))}
+        </nav>
       </SidebarHeader>
       <SidebarContent className="gap-1">
         <SidebarGroup>
           <SidebarGroupContent>
             <nav aria-label="Main navigation">
               <SidebarMenu>
-                {navigation.map(({ href, label, icon: Icon }) => (
+                {moduleNavigation.map(({ href, label, icon: Icon }) => (
                   <SidebarMenuItem key={href}>
                     <SidebarMenuButton
                       asChild
@@ -258,12 +295,14 @@ function WorkspaceSidebar({
             </nav>
           </SidebarGroupContent>
         </SidebarGroup>
-        <ProjectNavigation
-          projects={projects}
-          workspaces={workspaces}
-          creatableWorkspaces={creatableWorkspaces}
-          isAdmin={role === "OWNER" || role === "ADMIN"}
-        />
+        {!isCrm && (
+          <ProjectNavigation
+            projects={projects}
+            workspaces={workspaces}
+            creatableWorkspaces={creatableWorkspaces}
+            isAdmin={role === "OWNER" || role === "ADMIN"}
+          />
+        )}
       </SidebarContent>
       <SidebarFooter className="gap-1 px-3 pb-4 group-data-[collapsible=icon]:px-2">
         <SidebarMenu>
