@@ -6523,42 +6523,6 @@ body:has(.pause-sheet[data-state="open"]) .yuzu-toast-viewport {
   }
 }
 
-/* Module navigation shares the existing shadcn sidebar in expanded/mobile modes. */
-.shell-module-switcher {
-  display: flex;
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid var(--sidebar-border);
-  border-radius: var(--radius);
-}
-.shell-module-link {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  flex: 1;
-  min-height: 36px;
-  border-radius: calc(var(--radius) - 3px);
-  color: var(--sidebar-foreground);
-  font-size: 13px;
-  font-weight: 600;
-}
-.shell-module-link:hover {
-  background: var(--sidebar-accent);
-}
-.shell-module-link[aria-current="page"] {
-  background: var(--sidebar-accent);
-  color: var(--sidebar-accent-foreground);
-  box-shadow: inset 0 0 0 1px var(--sidebar-border);
-}
-.shell-module-link:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 3px;
-}
-.group[data-collapsible="icon"] .shell-module-switcher {
-  flex-direction: column;
-  padding: 2px;
-}
 .crm-module-page {
   max-width: 900px;
   margin: 12px auto;
@@ -6650,4 +6614,185 @@ body:has(.pause-sheet[data-state="open"]) .yuzu-toast-viewport {
     padding: 16px;
     gap: 12px;
   }
+}
+
+/* Permanent module rail and contextual shadcn navigation. */
+.shell-navigation-columns {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.shell-module-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 3.5rem;
+  flex-shrink: 0;
+  padding: 18px 5px 14px;
+  border-right: 1px solid var(--sidebar-border);
+  background: color-mix(in srgb, var(--sidebar-foreground) 3%, var(--sidebar));
+}
+.shell-rail-brand {
+  display: grid;
+  place-items: center;
+  min-height: 32px;
+  margin-bottom: 20px;
+}
+.shell-rail-modules {
+  display: grid;
+  gap: 7px;
+  width: 100%;
+}
+.shell-rail-module {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 50px;
+  border-radius: var(--radius);
+  color: var(--sidebar-foreground);
+  font-size: 10px;
+  line-height: 1.2;
+}
+.shell-rail-module:hover {
+  background: var(--sidebar-accent);
+}
+.shell-rail-module[aria-current="page"] {
+  background: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+}
+.shell-rail-module:focus-visible,
+.shell-rail-brand:focus-visible,
+.shell-context-search:focus-visible,
+.shell-module-picker:focus-visible {
+  outline: 2px solid var(--sidebar-ring);
+  outline-offset: 2px;
+}
+.shell-rail-identity {
+  margin-top: auto;
+  width: 27px;
+  height: 27px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 10px;
+  background: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+}
+.shell-rail-account {
+  display: none;
+  margin-top: auto;
+  width: 100%;
+}
+.shell-account-compact {
+  justify-content: center;
+  padding: 2px;
+}
+.shell-account-compact .shell-avatar {
+  width: 28px;
+  height: 28px;
+}
+.shell-context-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.shell-context-header {
+  padding: 14px 12px 8px;
+  gap: 12px;
+}
+.shell-module-picker {
+  width: 100%;
+  min-width: 0;
+  padding: 10px;
+  gap: 9px;
+  background: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid var(--sidebar-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.shell-module-picker .shell-workspace-mark {
+  width: 28px;
+  height: 32px;
+  border-radius: 7px;
+  font-size: 11px;
+}
+.shell-module-menu {
+  min-width: 250px;
+  padding: 7px;
+}
+.shell-module-menu [role="menuitem"] {
+  gap: 12px;
+  padding: 12px 9px;
+  border-radius: calc(var(--radius) - 2px);
+}
+.shell-module-menu [data-active] {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.shell-context-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 33px;
+  padding: 5px 10px;
+  border: 1px solid var(--sidebar-border);
+  border-radius: calc(var(--radius) - 2px);
+  color: var(--card-foreground);
+  background: var(--card);
+  cursor: pointer;
+  font-size: 12px;
+}
+.shell-context-search kbd {
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid var(--sidebar-border);
+  border-radius: 20px;
+  color: var(--muted-foreground);
+  background: var(--muted);
+  font-family: inherit;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.shell-context-footer {
+  padding: 8px 12px 16px;
+}
+.group[data-collapsible="icon"] .shell-context-panel {
+  display: none;
+}
+.group[data-collapsible="icon"] .shell-rail-identity {
+  display: none;
+}
+.group[data-collapsible="icon"] .shell-rail-account {
+  display: block;
+}
+.shell-topbar .workspace-search-trigger {
+  display: none;
+}
+.yuzu-workspace:has(.group[data-collapsible="icon"])
+  .shell-topbar
+  .workspace-search-trigger {
+  display: inline-flex;
+}
+@media (max-width: 767px) {
+  .shell-topbar .workspace-search-trigger {
+    display: inline-flex;
+  }
+  .shell-module-rail {
+    padding-top: 16px;
+  }
+  .shell-context-header {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+}
+
+.shell-module-picker > span > span:last-child {
+  color: var(--muted-foreground);
 }

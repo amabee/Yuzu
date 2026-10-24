@@ -11,6 +11,7 @@ import {
   CheckCheck,
   LoaderCircle,
 } from "lucide-react";
+import { useSidebar } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -21,6 +22,8 @@ import {
 } from "@/components/ui/sheet";
 import { apiRequest } from "@/lib/api-client";
 import { taskSearchResultSchema } from "@/lib/task-search-contract";
+export const WORKSPACE_SEARCH_EVENT = "yuzu:open-workspace-search";
+
 export type NavigationWorkspace = {
   id: string;
   name: string;
@@ -34,11 +37,16 @@ export function WorkspaceSearch({
   principalId: string;
 }) {
   const [open, setOpen] = useState(false);
+  const { setOpenMobile } = useSidebar();
   const [query, setQuery] = useState("");
   const [archived, setArchived] = useState(false);
   const [term, setTerm] = useState("");
   // Ctrl+K (or Cmd+K) opens search from anywhere in the workspace.
   useEffect(() => {
+    const openSearch = () => {
+      setOpenMobile(false);
+      setOpen(true);
+    };
     const onKey = (event: KeyboardEvent) => {
       if (
         event.key.toLowerCase() === "k" &&
@@ -46,12 +54,16 @@ export function WorkspaceSearch({
         !event.altKey
       ) {
         event.preventDefault();
-        setOpen(true);
+        openSearch();
       }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+    window.addEventListener(WORKSPACE_SEARCH_EVENT, openSearch);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener(WORKSPACE_SEARCH_EVENT, openSearch);
+    };
+  }, [setOpenMobile]);
   useEffect(() => {
     const timer = setTimeout(() => setTerm(query.trim()), 250);
     return () => clearTimeout(timer);
@@ -99,7 +111,10 @@ export function WorkspaceSearch({
         className="workspace-search-trigger"
         aria-label="Search workspace"
         aria-keyshortcuts="Control+K Meta+K"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          setOpenMobile(false);
+          setOpen(true);
+        }}
       >
         <Search size={16} />
         <span>Search tasks and boards</span>

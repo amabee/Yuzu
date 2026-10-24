@@ -4,7 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ChevronsUpDown,
-  BriefcaseBusiness,
+  Check,
+  Search,
   ContactRound,
   Home,
   Inbox,
@@ -44,6 +45,7 @@ import {
 import { ModeSwitcher } from "@/components/appearance/theme-runtime";
 import {
   WorkspaceSearch,
+  WORKSPACE_SEARCH_EVENT,
   type NavigationWorkspace,
 } from "@/components/workspace-search";
 import { useSignOut } from "@/components/sign-out";
@@ -76,7 +78,15 @@ const initials = (name?: string) =>
     .map((part) => part.charAt(0).toUpperCase())
     .join("");
 
-function AccountMenu({ name, role }: { name?: string; role?: string }) {
+function AccountMenu({
+  name,
+  role,
+  compact = false,
+}: {
+  name?: string;
+  role?: string;
+  compact?: boolean;
+}) {
   const signOut = useSignOut();
   const { setOpenMobile } = useSidebar();
   const admin = role === "OWNER" || role === "ADMIN";
@@ -86,18 +96,22 @@ function AccountMenu({ name, role }: { name?: string; role?: string }) {
         <SidebarMenuButton
           size="lg"
           aria-label={`Account menu for ${name ?? "you"}`}
-          className="shell-account"
+          className={
+            compact ? "shell-account shell-account-compact" : "shell-account"
+          }
         >
           <span className="shell-avatar" aria-hidden="true">
             {initials(name)}
           </span>
-          <span className="grid min-w-0 flex-1 text-left leading-tight">
-            <span className="truncate text-sm font-semibold">{name}</span>
-            <span className="truncate text-xs text-sidebar-foreground/65">
-              {roleLabel(role)}
+          {!compact && (
+            <span className="grid min-w-0 flex-1 text-left leading-tight">
+              <span className="truncate text-sm font-semibold">{name}</span>
+              <span className="truncate text-xs text-sidebar-foreground/65">
+                {roleLabel(role)}
+              </span>
             </span>
-          </span>
-          <ChevronsUpDown size={15} className="opacity-60" />
+          )}
+          {!compact && <ChevronsUpDown size={15} className="opacity-60" />}
         </SidebarMenuButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="start" className="w-56">
@@ -187,147 +201,210 @@ function WorkspaceSidebar({
   const active = (href: string) =>
     pathname === href || (href !== "/" && pathname.startsWith(`${href}/`));
   return (
-    <Sidebar collapsible="icon" className="shell-sidebar">
-      <SidebarHeader className="gap-4 px-3 pt-4 group-data-[collapsible=icon]:px-2">
-        <div className="flex items-center justify-between">
+    <Sidebar
+      collapsible="icon"
+      className="shell-sidebar"
+      aria-label={`${installationName} navigation`}
+    >
+      <div className="shell-navigation-columns">
+        <div className="shell-module-rail">
           <Link
             href="/"
             onClick={close}
             aria-label="Yuzu overview"
-            className="shell-brand"
+            className="shell-rail-brand"
           >
-            <Image
-              src="/logo.svg"
-              alt=""
-              width={30}
-              height={30}
-              priority
-              className="shrink-0"
-            />
-            <span className="group-data-[collapsible=icon]:hidden">yuzu</span>
+            <Image src="/logo.svg" alt="" width={27} height={27} priority />
           </Link>
-          {isMobile && (
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Close navigation"
-              onClick={close}
-            >
-              <X size={18} />
-            </Button>
-          )}
-        </div>
-        <div
-          className="shell-workspace group-data-[collapsible=icon]:hidden"
-          aria-label="Current workspace"
-        >
-          <span className="shell-workspace-mark" aria-hidden="true">
-            {workspaceLabel.charAt(0).toUpperCase()}
-          </span>
-          <span className="grid min-w-0 leading-tight">
-            <span className="truncate text-sm font-semibold">
-              {workspaceLabel}
-            </span>
-            <span className="truncate text-xs text-sidebar-foreground/65">
-              {installationName}
-            </span>
-          </span>
-        </div>
-        <nav aria-label="Modules" className="shell-module-switcher">
-          {[
-            {
-              href: "/",
-              label: "Work",
-              icon: BriefcaseBusiness,
-              selected: !isCrm,
-            },
-            { href: "/crm", label: "CRM", icon: ContactRound, selected: isCrm },
-          ].map(({ href, label, icon: Icon, selected }) => (
-            <Link
-              key={href}
-              href={href}
-              onClick={close}
-              aria-current={selected ? "page" : undefined}
-              className="shell-module-link"
-              title={`${label} module`}
-            >
-              <Icon size={17} aria-hidden="true" />
-              <span className="group-data-[collapsible=icon]:sr-only">
-                {label}
-              </span>
-            </Link>
-          ))}
-        </nav>
-      </SidebarHeader>
-      <SidebarContent className="gap-1">
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <nav aria-label="Main navigation">
-              <SidebarMenu>
-                {moduleNavigation.map(({ href, label, icon: Icon }) => (
-                  <SidebarMenuItem key={href}>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={active(href)}
-                      tooltip={label}
-                      className="h-9"
-                    >
-                      <Link
-                        href={href}
-                        onClick={close}
-                        aria-current={active(href) ? "page" : undefined}
-                      >
-                        <Icon size={17} />
-                        <span>{label}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                    {(counts[href] ?? 0) > 0 && (
-                      <SidebarMenuBadge
-                        className="shell-badge"
-                        aria-label={`${counts[href]} ${href === "/approvals" ? "waiting on you" : "unread"}`}
-                      >
-                        {counts[href] > 99 ? "99+" : counts[href]}
-                      </SidebarMenuBadge>
-                    )}
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </nav>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        {!isCrm && (
-          <ProjectNavigation
-            projects={projects}
-            workspaces={workspaces}
-            creatableWorkspaces={creatableWorkspaces}
-            isAdmin={role === "OWNER" || role === "ADMIN"}
-          />
-        )}
-      </SidebarContent>
-      <SidebarFooter className="gap-1 px-3 pb-4 group-data-[collapsible=icon]:px-2">
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              asChild
-              isActive={active("/settings")}
-              tooltip="Settings"
-              className="h-9"
-            >
+          <nav aria-label="Modules" className="shell-rail-modules">
+            {[
+              { href: "/", label: "Work", icon: LayoutGrid, selected: !isCrm },
+              { href: "/crm", label: "CRM", icon: Users, selected: isCrm },
+            ].map(({ href, label, icon: Icon, selected }) => (
               <Link
-                href="/settings"
+                key={href}
+                href={href}
                 onClick={close}
-                aria-current={active("/settings") ? "page" : undefined}
+                aria-current={selected ? "page" : undefined}
+                className="shell-rail-module"
+                title={`${label} module`}
               >
-                <Settings2 size={17} />
-                <span>Settings</span>
+                <Icon size={18} aria-hidden="true" />
+                <span>{label}</span>
               </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <AccountMenu name={ownerName} role={role} />
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarFooter>
+            ))}
+          </nav>
+          <div className="shell-rail-identity" aria-hidden="true">
+            {initials(ownerName)}
+          </div>
+          <div className="shell-rail-account">
+            <AccountMenu name={ownerName} role={role} compact />
+          </div>
+        </div>
+        <div className="shell-context-panel">
+          <SidebarHeader className="shell-context-header">
+            <div className="flex min-w-0 items-center gap-1">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="shell-workspace shell-module-picker"
+                    aria-label={`Switch module, current module ${isCrm ? "CRM" : "Work"}`}
+                  >
+                    <span className="shell-workspace-mark" aria-hidden="true">
+                      {workspaceLabel.charAt(0).toUpperCase()}
+                    </span>
+                    <span className="grid min-w-0 flex-1 text-left leading-tight">
+                      <span className="truncate text-sm font-semibold">
+                        {workspaceLabel}
+                      </span>
+                      <span className="truncate text-xs text-sidebar-foreground/65">
+                        {isCrm ? "CRM" : "Work"}
+                      </span>
+                    </span>
+                    <ChevronsUpDown size={14} aria-hidden="true" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="start"
+                  className="shell-module-menu"
+                >
+                  <div className="px-2 py-1 text-xs font-medium text-muted-foreground">
+                    Modules
+                  </div>
+                  {[
+                    {
+                      href: "/",
+                      label: "Work",
+                      description: "Projects and tasks",
+                      icon: LayoutGrid,
+                      selected: !isCrm,
+                    },
+                    {
+                      href: "/crm",
+                      label: "CRM",
+                      description: "Customers and sales",
+                      icon: Users,
+                      selected: isCrm,
+                    },
+                  ].map(
+                    ({ href, label, description, icon: Icon, selected }) => (
+                      <DropdownMenuItem key={href} asChild>
+                        <Link
+                          href={href}
+                          onClick={close}
+                          data-active={selected || undefined}
+                        >
+                          <Icon size={17} aria-hidden="true" />
+                          <span className="flex-1">
+                            <span className="block font-semibold">{label}</span>
+                            <span className="block text-xs text-muted-foreground">
+                              {description}
+                            </span>
+                          </span>
+                          {selected && <Check size={15} aria-hidden="true" />}
+                        </Link>
+                      </DropdownMenuItem>
+                    ),
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {isMobile && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Close navigation"
+                  onClick={close}
+                >
+                  <X size={16} />
+                </Button>
+              )}
+            </div>
+            <button
+              type="button"
+              className="shell-context-search"
+              aria-label="Search workspace"
+              aria-keyshortcuts="Control+K Meta+K"
+              onClick={() =>
+                window.dispatchEvent(new Event(WORKSPACE_SEARCH_EVENT))
+              }
+            >
+              <Search size={15} aria-hidden="true" />
+              <span>Search</span>
+              <kbd>Ctrl K</kbd>
+            </button>
+          </SidebarHeader>
+          <SidebarContent className="gap-1">
+            <SidebarGroup>
+              <SidebarGroupContent>
+                <nav aria-label="Main navigation">
+                  <SidebarMenu>
+                    {moduleNavigation.map(({ href, label, icon: Icon }) => (
+                      <SidebarMenuItem key={href}>
+                        <SidebarMenuButton
+                          asChild
+                          isActive={active(href)}
+                          tooltip={label}
+                          className="h-9"
+                        >
+                          <Link
+                            href={href}
+                            onClick={close}
+                            aria-current={active(href) ? "page" : undefined}
+                          >
+                            <Icon size={17} />
+                            <span>{label}</span>
+                          </Link>
+                        </SidebarMenuButton>
+                        {(counts[href] ?? 0) > 0 && (
+                          <SidebarMenuBadge
+                            className="shell-badge"
+                            aria-label={`${counts[href]} ${href === "/approvals" ? "waiting on you" : "unread"}`}
+                          >
+                            {counts[href] > 99 ? "99+" : counts[href]}
+                          </SidebarMenuBadge>
+                        )}
+                      </SidebarMenuItem>
+                    ))}
+                  </SidebarMenu>
+                </nav>
+              </SidebarGroupContent>
+            </SidebarGroup>
+            {!isCrm && (
+              <ProjectNavigation
+                projects={projects}
+                workspaces={workspaces}
+                creatableWorkspaces={creatableWorkspaces}
+                isAdmin={role === "OWNER" || role === "ADMIN"}
+              />
+            )}
+          </SidebarContent>
+          <SidebarFooter className="shell-context-footer">
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  isActive={active("/settings")}
+                  tooltip="Settings"
+                  className="h-9"
+                >
+                  <Link
+                    href="/settings"
+                    onClick={close}
+                    aria-current={active("/settings") ? "page" : undefined}
+                  >
+                    <Settings2 size={17} />
+                    <span>Settings</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <AccountMenu name={ownerName} role={role} />
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarFooter>
+        </div>
+      </div>
       <SidebarRail />
     </Sidebar>
   );
@@ -366,7 +443,7 @@ export function AppShell({
       className="yuzu-workspace"
       style={
         {
-          "--sidebar-width": "16.5rem",
+          "--sidebar-width": "20rem",
           "--sidebar-width-icon": "3.5rem",
         } as React.CSSProperties
       }
