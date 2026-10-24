@@ -63,6 +63,7 @@ export default async function ProjectPage({
     db.task.findMany({
       where: {
         boardId: { in: project.boards.map((board) => board.id) },
+        parentId: null,
         archivedAt: null,
         deletedAt: null,
         dueDate: { gte: start, lte: end },
@@ -91,13 +92,19 @@ export default async function ProjectPage({
   const [totals, completed] = await Promise.all([
     db.task.groupBy({
       by: ["boardId"],
-      where: { boardId: { in: boardIds }, archivedAt: null, deletedAt: null },
+      where: {
+        boardId: { in: boardIds },
+        parentId: null,
+        archivedAt: null,
+        deletedAt: null,
+      },
       _count: true,
     }),
     db.task.groupBy({
       by: ["boardId"],
       where: {
         boardId: { in: boardIds },
+        parentId: null,
         archivedAt: null,
         deletedAt: null,
         statusId: COMPLETED_STATUS_ID,

@@ -606,3 +606,141 @@ test("boards archive independently, preserve task states and restore without byp
   });
   expect((await archive(true)).status()).toBe(503);
 });
+
+test("subitem foundation remains gated from released APIs, search, notifications and exports", async ({
+  page,
+}) => {
+  const { owner, workspace, board } = await setup(page);
+  const db = getDatabase();
+  const root = await ok(
+    await post(page, "/api/v1/boards/create-task", {
+      boardId: board,
+      name: "Released root",
+      createKey: createRecordId(),
+    }),
+  );
+  const childId = createRecordId(),
+    proposalId = createRecordId();
+  try {
+    await db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT set_config('yuzu.subitems_internal', 'on', true)`;
+      await tx.task.create({
+        data: {
+          id: childId,
+          boardId: board,
+          parentId: root.taskId,
+          name: "Unreleased child",
+          createdById: owner.id,
+          createKey: createRecordId(),
+          createDigest: "gate-fixture",
+        },
+      });
+      await tx.boardProposal.create({
+        data: {
+          id: proposalId,
+          boardId: board,
+          parentTaskId: root.taskId,
+          authorId: owner.id,
+          operation: "CREATE",
+          requestKey: createRecordId(),
+          requestDigest: "gate-fixture",
+          changes: {
+            boardId: board,
+            parentId: root.taskId,
+            name: "Unreleased proposal",
+            createKey: createRecordId(),
+          },
+          baseline: {},
+          policySnapshot: {},
+          policyVersion: 0,
+        },
+      });
+      await tx.notification.create({
+        data: {
+          recipientId: owner.id,
+          actorId: owner.id,
+          boardId: board,
+          taskId: childId,
+          kind: "ASSIGNMENT",
+          message: "Unreleased child notification",
+          eventKey: createRecordId(),
+        },
+      });
+    });
+    const state = await ok(
+      await page.request.get(
+        `/api/v1/boards/state?boardId=${board}&query=${encodeURIComponent(JSON.stringify({ taskId: childId }))}`,
+      ),
+    );
+    expect(state.tasks.map((task: { id: string }) => task.id)).toEqual([
+      root.taskId,
+    ]);
+    expect(state.focusedTask).toBeNull();
+    expect(state.pendingApprovalCount).toBe(0);
+    expect(state.pendingApprovals).toHaveLength(0);
+    const search = await ok(
+      await page.request.get("/api/v1/search/tasks?q=Unreleased"),
+    );
+    expect(search.total).toBe(0);
+    const queue = await ok(await page.request.get("/api/v1/approvals/queue"));
+    expect(queue.proposals).toHaveLength(0);
+    const inbox = await ok(
+      await page.request.get("/api/v1/notifications/inbox"),
+    );
+    expect(inbox.items).toHaveLength(0);
+    expect(
+      (
+        await post(page, "/api/v1/boards/create-task", {
+          boardId: board,
+          parentId: root.taskId,
+          name: "Bypass",
+          createKey: createRecordId(),
+        })
+      ).status(),
+    ).toBe(422);
+    expect(
+      (
+        await post(page, "/api/v1/boards/update", {
+          taskId: childId,
+          revision: 1,
+          changes: { name: "Bypass" },
+        })
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await page.request.get(`/api/v1/boards/comments?taskId=${childId}`)
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await page.request.get(`/api/v1/attachments?taskId=${childId}`)
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await post(page, "/api/v1/boards/reorder", {
+          taskId: root.taskId,
+          afterId: childId,
+          beforeId: null,
+        })
+      ).status(),
+    ).toBe(409);
+    const dashboard = await ok(
+      await page.request.get(`/api/v1/dashboard?workspaceId=${workspace.id}`),
+    );
+    expect(dashboard.total).toBe(1);
+    const csv = await post(page, "/api/v1/boards/export", {
+      boardId: board,
+      scope: "BOARD",
+      includeArchived: false,
+    });
+    expect(csv.status()).toBe(200);
+    const text = await csv.text();
+    expect(text).toContain("Released root");
+    expect(text).not.toContain("Unreleased child");
+  } finally {
+    await db.boardProposal.deleteMany({ where: { parentTaskId: root.taskId } });
+    await db.task.deleteMany({ where: { parentId: root.taskId } });
+  }
+});

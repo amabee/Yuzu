@@ -31,7 +31,7 @@ async function taskAccess(
   write = false,
 ) {
   const task = await tx.task.findUnique({
-    where: { id: taskId },
+    where: { id: taskId, parentId: null },
     include: { assignees: true, editors: true },
   });
   if (!task || task.deletedAt) throw missing();

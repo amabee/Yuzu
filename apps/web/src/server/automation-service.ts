@@ -1300,6 +1300,7 @@ export async function scanDueAutomations() {
       const tasks = await db().task.findMany({
         where: {
           boardId,
+          parentId: null,
           archivedAt: null,
           deletedAt: null,
           dueDate:

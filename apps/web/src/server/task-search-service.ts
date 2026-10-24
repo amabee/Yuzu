@@ -15,6 +15,7 @@ export async function searchTasks(
   const query = taskSearchQuerySchema.parse(input);
   const { user } = await requireIdentity(headers);
   const where: Prisma.TaskWhereInput = {
+    parentId: null,
     board: boardScope(user),
     deletedAt: null,
     archivedAt: query.archived === "true" ? { not: null } : null,

@@ -132,11 +132,17 @@ test("cards keep a manual order, move between lanes by keyboard and reject bad p
     .toEqual(["Third step", "First step", "Second step"]);
 
   // Keyboard: pick up with Space, move right a lane, drop with Space.
+  await expect(page.locator(".board-surface")).toHaveAttribute(
+    "data-connection",
+    "live",
+  );
   await page
     .getByRole("button", { name: "Drag Second step", exact: true })
     .focus();
   await page.keyboard.press("Space");
+  await expect(page.locator('.task-card[data-overlay="true"]')).toBeVisible();
   await page.keyboard.press("ArrowRight");
+  await expect(lane("In progress")).toHaveAttribute("data-target", "true");
   await page.keyboard.press("Space");
   await expect(
     lane("In progress").getByRole("button", {

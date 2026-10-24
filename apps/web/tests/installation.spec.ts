@@ -3631,8 +3631,25 @@ test("boards sync across people, preserve drafts and recover concurrent non-over
       socket.close();
       return;
     }
-    closeOwnerSocket = () => socket.close();
-    socket.connectToServer();
+    const server = socket.connectToServer();
+    socket.onMessage((message) => {
+      // Navigation/notification sockets share this URL; close only this board.
+      if (typeof message === "string" && message.startsWith("40")) {
+        try {
+          const auth = JSON.parse(message.slice(2)) as { token?: string };
+          const claims = auth.token
+            ? (JSON.parse(
+                Buffer.from(auth.token.split(".")[0]!, "base64url").toString(),
+              ) as { purpose?: string; boardId?: string })
+            : null;
+          if (claims?.purpose === "board" && claims.boardId === boardId)
+            closeOwnerSocket = () => socket.close();
+        } catch {
+          /* Other Socket.IO frames are forwarded unchanged. */
+        }
+      }
+      server.send(message);
+    });
   });
   const lane = (target: Page, name: string) =>
     target

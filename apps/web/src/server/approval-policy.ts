@@ -75,6 +75,7 @@ export async function submitProposal(
   args: {
     boardId: string;
     taskId?: string;
+    parentTaskId?: string;
     authorId: string;
     operation: ApprovalOperation;
     requestKey: string;
@@ -98,6 +99,7 @@ export async function submitProposal(
       id: createRecordId(),
       boardId: args.boardId,
       taskId: args.taskId,
+      parentTaskId: args.parentTaskId,
       authorId: args.authorId,
       operation: args.operation,
       requestKey: args.requestKey,

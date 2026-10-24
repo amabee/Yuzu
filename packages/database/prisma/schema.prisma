@@ -420,45 +420,53 @@ model BoardGroup {
 }
 
 model Task {
-  id               String            @id @default(uuid(7))
-  boardId          String
-  board            Board             @relation(fields: [boardId], references: [id], onDelete: Cascade)
-  name             String
-  description      String            @default("")
-  checklist        Json              @default("[]")
-  statusId         String?
-  priority         String            @default("NORMAL")
-  startDate        DateTime?         @db.Date
-  dueDate          DateTime?         @db.Date
-  groupId          String?
-  group            BoardGroup?       @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  /// One-level Task-only breakdown. Public creation remains gated.
+  parentId               String?
+  parent                 Task?             @relation("TaskChildren", fields: [boardId, parentId], references: [boardId, id], onDelete: Restrict, onUpdate: Cascade, map: "Task_parent_fk")
+  children               Task[]            @relation("TaskChildren")
+  childrenRevision       Int               @default(0)
+  childCreationProposals BoardProposal[]   @relation("SubitemCreationParent")
+  id                     String            @id @default(uuid(7))
+  boardId                String
+  board                  Board             @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  name                   String
+  description            String            @default("")
+  checklist              Json              @default("[]")
+  statusId               String?
+  priority               String            @default("NORMAL")
+  startDate              DateTime?         @db.Date
+  dueDate                DateTime?         @db.Date
+  groupId                String?
+  group                  BoardGroup?       @relation(fields: [groupId], references: [id], onDelete: Restrict)
   /// Manual order on the board; lanes and lists sort by it.
-  position         Float             @default(0)
-  createdById      String
-  createdBy        User              @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  createKey        String
-  createDigest     String
-  revision         Int               @default(1)
-  archivedAt       DateTime?         @db.Timestamptz(3)
-  createdAt        DateTime          @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime          @updatedAt @db.Timestamptz(3)
-  assignees        TaskAssignee[]
-  editors          TaskEditorGrant[]
-  values           TaskFieldValue[]
-  activity         TaskActivity[]
-  comments         TaskComment[]
-  attachments      TaskAttachment[]
-  proposals        BoardProposal[]
-  notifications    Notification[]
-  automationEvents AutomationEvent[]
-  automationRuns   AutomationRun[]
-  linksFrom        RecordLink[]      @relation("LinkFrom")
-  linksTo          RecordLink[]      @relation("LinkTo")
+  position               Float             @default(0)
+  createdById            String
+  createdBy              User              @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createKey              String
+  createDigest           String
+  revision               Int               @default(1)
+  archivedAt             DateTime?         @db.Timestamptz(3)
+  createdAt              DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime          @updatedAt @db.Timestamptz(3)
+  assignees              TaskAssignee[]
+  editors                TaskEditorGrant[]
+  values                 TaskFieldValue[]
+  activity               TaskActivity[]
+  comments               TaskComment[]
+  attachments            TaskAttachment[]
+  proposals              BoardProposal[]   @relation("TaskProposals")
+  notifications          Notification[]
+  automationEvents       AutomationEvent[]
+  automationRuns         AutomationRun[]
+  linksFrom              RecordLink[]      @relation("LinkFrom")
+  linksTo                RecordLink[]      @relation("LinkTo")
   /// In Trash: hidden everywhere until restored (docs/specs/trash.md).
-  deletedAt        DateTime?         @db.Timestamptz(3)
-  deletedById      String?
+  deletedAt              DateTime?         @db.Timestamptz(3)
+  deletedById            String?
 
+  @@unique([boardId, id])
   @@unique([createdById, createKey])
+  @@index([parentId, position, id])
   @@index([boardId, archivedAt, createdAt, id])
   @@index([boardId, archivedAt, position, id])
   @@index([boardId, archivedAt, dueDate, id])
@@ -651,7 +659,9 @@ model BoardProposal {
   boardId         String
   board           Board             @relation(fields: [boardId], references: [id], onDelete: Cascade)
   taskId          String?
-  task            Task?             @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  task            Task?             @relation("TaskProposals", fields: [taskId], references: [id], onDelete: SetNull)
+  parentTaskId    String?
+  parentTask      Task?             @relation("SubitemCreationParent", fields: [boardId, parentTaskId], references: [boardId, id], onDelete: Restrict, onUpdate: Cascade, map: "BoardProposal_parent_fk")
   authorId        String
   author          User              @relation("ProposalAuthor", fields: [authorId], references: [id], onDelete: Restrict)
   operation       ApprovalOperation
@@ -672,6 +682,7 @@ model BoardProposal {
   notifications   Notification[]
 
   @@unique([authorId, requestKey])
+  @@index([parentTaskId, status])
   @@index([boardId, status, createdAt])
   @@index([authorId, status, createdAt])
 }
