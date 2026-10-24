@@ -33,6 +33,7 @@ export async function workspaceDashboard(
     ...(query.projectId ? { projectId: query.projectId } : {}),
   };
   const active: Prisma.TaskWhereInput = {
+    parentId: null,
     board: visibleBoards,
     archivedAt: null,
     deletedAt: null,

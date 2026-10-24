@@ -41,6 +41,15 @@ export async function recordAutomationEvent(
     automation?: AutomationContext;
   },
 ) {
+  if (
+    (
+      await tx.task.findUnique({
+        where: { id: input.taskId },
+        select: { parentId: true },
+      })
+    )?.parentId
+  )
+    return;
   const rules = await tx.automationRule.count({
     where: { boardId: input.boardId, enabled: true },
   });

@@ -9,10 +9,11 @@ export function taskWhere(
   today: string,
 ): Prisma.TaskWhereInput {
   // Records in Trash never show on the board.
-  if (!config) return { boardId, deletedAt: null };
+  if (!config) return { boardId, parentId: null, deletedAt: null };
   const dates = calendarWindow(today);
   return {
     boardId,
+    parentId: null,
     deletedAt: null,
     archivedAt: config.archived ? { not: null } : null,
     ...(config.statusId

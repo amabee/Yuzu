@@ -126,6 +126,7 @@ export const updateTaskSchema = z
 export const taskActionSchema = z
   .object({
     taskId: recordId,
+    childrenRevision: z.number().int().nonnegative().optional(),
     revision: z.number().int().positive(),
     requestKey: recordId.optional(),
   })

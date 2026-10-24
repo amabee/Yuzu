@@ -91,6 +91,7 @@ export async function syncLinks(
         where: {
           id: { in: [...new Set([...requested, ...existing])] },
           boardId: config.targetBoardId,
+          parentId: null,
           board: boardScope(user),
           deletedAt: null,
         },
@@ -185,6 +186,7 @@ export async function linkedRecords(
   const rows = await tx.task.findMany({
     where: {
       id: { in: [...new Set(ids)].slice(0, 5000) },
+      parentId: null,
       board: boardScope(user),
       deletedAt: null,
     },
@@ -270,6 +272,7 @@ export async function linkOptions(
     const options = await tx.task.findMany({
       where: {
         boardId: config.targetBoardId,
+        parentId: null,
         board: boardScope(user),
         archivedAt: null,
         deletedAt: null,

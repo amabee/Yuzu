@@ -1,3 +1,5 @@
+import { guardRootLifecycle } from "./task-hierarchy";
+import { invalidateChildProposals } from "./proposal-finalization";
 import {
   createRecordId,
   getDatabase,
@@ -73,108 +75,142 @@ const restoreInput = z.strictObject({
 
 export async function deleteRecord(input: unknown, headers: Headers) {
   const { user } = await requireIdentity(headers);
-  const { id } = idInput.parse(input);
-  return serial(async (tx) => {
-    const task = await loadTask(tx, id);
-    if (!task || task.deletedAt) throw notFound();
-    const context = await access(tx, user.id, task.boardId, true);
-    if (!context.canManage) throw managersOnly("records");
-    const now = new Date();
-    const updated = await tx.task.updateMany({
-      where: { id, revision: task.revision, deletedAt: null },
-      // A new revision makes any open editor's save conflict instead of
-      // writing to a deleted record.
-      data: {
-        deletedAt: now,
-        deletedById: user.id,
-        revision: { increment: 1 },
-      },
-    });
-    if (!updated.count)
-      throw new SetupError(
-        409,
-        "CONFLICT",
-        "This record changed. Reload it and try again.",
-      );
-    // Requests waiting on it can't be approved any more.
-    await tx.boardProposal.updateMany({
-      where: { taskId: id, status: "PENDING" },
-      data: { status: "STALE", reason: "The record was deleted." },
-    });
-    await tx.boardEvent.create({
-      data: {
-        id: createRecordId(),
-        boardId: task.boardId,
-        actorId: user.id,
-        action: "Deleted record",
-        subjectId: id,
-        after: { taskId: id, name: task.name },
-      },
-    });
-    return { boardId: task.boardId, taskId: id };
+  return serial((tx) => deleteRecordInTransaction(tx, input, user.id));
+}
+export async function deleteRecordInTransaction(
+  tx: DatabaseTransaction,
+  input: unknown,
+  userId: string,
+) {
+  const user = { id: userId };
+  const { id, childrenRevision, revision } = z
+    .strictObject({
+      id: recordId,
+      childrenRevision: z.number().int().nonnegative().optional(),
+      revision: z.number().int().positive().optional(),
+    })
+    .parse(input);
+  const task = await loadTask(tx, id);
+  if (!task || task.deletedAt) throw notFound();
+  const context = await access(tx, user.id, task.boardId, true);
+  if (!context.canManage) throw managersOnly("records");
+  if (
+    (revision !== undefined && revision !== task.revision) ||
+    (childrenRevision !== undefined && revision === undefined)
+  )
+    throw new SetupError(
+      409,
+      "HIERARCHY_CHANGED",
+      "This task changed. Refresh and review it before deleting the breakdown.",
+    );
+  await guardRootLifecycle(tx, task, childrenRevision);
+  await invalidateChildProposals(
+    tx,
+    task.id,
+    user.id,
+    "The parent task was deleted. Review it before submitting again.",
+  );
+  const now = new Date();
+  const updated = await tx.task.updateMany({
+    where: { id, revision: task.revision, deletedAt: null },
+    // A new revision makes any open editor's save conflict instead of
+    // writing to a deleted record.
+    data: {
+      deletedAt: now,
+      deletedById: user.id,
+      revision: { increment: 1 },
+    },
   });
+  if (!updated.count)
+    throw new SetupError(
+      409,
+      "CONFLICT",
+      "This record changed. Reload it and try again.",
+    );
+  // Requests waiting on it can't be approved any more.
+  await tx.boardProposal.updateMany({
+    where: { taskId: id, status: "PENDING" },
+    data: { status: "STALE", reason: "The record was deleted." },
+  });
+  await tx.boardEvent.create({
+    data: {
+      id: createRecordId(),
+      boardId: task.boardId,
+      actorId: user.id,
+      action: "Deleted record",
+      subjectId: id,
+      after: { taskId: id, name: task.name },
+    },
+  });
+  return { boardId: task.boardId, taskId: id };
 }
 
 export async function restoreRecord(input: unknown, headers: Headers) {
   const { user } = await requireIdentity(headers);
+  return serial((tx) => restoreRecordInTransaction(tx, input, user.id));
+}
+export async function restoreRecordInTransaction(
+  tx: DatabaseTransaction,
+  input: unknown,
+  userId: string,
+) {
+  const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });
   const body = restoreInput.parse(input);
-  return serial(async (tx) => {
-    const task = await tx.task.findFirst({
-      // Check Trash visibility before even returning a parent name.
-      where: { id: body.id, board: managedBoards(user) },
-      include: {
-        board: {
-          select: {
-            id: true,
-            name: true,
-            deletedAt: true,
-            projectId: true,
-            project: { select: { name: true, deletedAt: true } },
-          },
+  const task = await tx.task.findFirst({
+    // Check Trash visibility before even returning a parent name.
+    where: { id: body.id, parentId: null, board: managedBoards(user) },
+    include: {
+      board: {
+        select: {
+          id: true,
+          name: true,
+          deletedAt: true,
+          projectId: true,
+          project: { select: { name: true, deletedAt: true } },
         },
       },
-    });
-    if (!task?.deletedAt) throw notFound();
-    if (task.board.project?.deletedAt) {
-      if (!body.withParents)
-        throw new SetupError(
-          409,
-          "PROJECT_DELETED",
-          `Its project, ${task.board.project.name}, is in Trash. Restore it too.`,
-        );
-      await restoreProjectIn(tx, user, task.board.projectId!);
-    }
-    if (task.board.deletedAt) {
-      if (!body.withParents)
-        throw new SetupError(
-          409,
-          "BOARD_DELETED",
-          `Its board, ${task.board.name}, is in Trash. Restore it too.`,
-        );
-      await restoreBoardIn(tx, user, task.board.id);
-    }
-    const context = await access(tx, user.id, task.boardId, true);
-    if (!context.canManage) throw managersOnly("records");
-    await tx.task.update({
-      where: { id: task.id },
-      data: {
-        deletedAt: null,
-        deletedById: null,
-        revision: { increment: 1 },
-      },
-    });
-    await tx.boardEvent.create({
-      data: {
-        id: createRecordId(),
-        boardId: task.boardId,
-        actorId: user.id,
-        action: "Restored record",
-        subjectId: task.id,
-        after: { taskId: task.id, name: task.name },
-      },
-    });
-    return { boardId: task.boardId, taskId: task.id };
+    },
   });
+  if (!task?.deletedAt) throw notFound();
+  if (task.board.project?.deletedAt) {
+    if (!body.withParents)
+      throw new SetupError(
+        409,
+        "PROJECT_DELETED",
+        `Its project, ${task.board.project.name}, is in Trash. Restore it too.`,
+      );
+    await restoreProjectIn(tx, user, task.board.projectId!);
+  }
+  if (task.board.deletedAt) {
+    if (!body.withParents)
+      throw new SetupError(
+        409,
+        "BOARD_DELETED",
+        `Its board, ${task.board.name}, is in Trash. Restore it too.`,
+      );
+    await restoreBoardIn(tx, user, task.board.id);
+  }
+  const context = await access(tx, user.id, task.boardId, true);
+  if (!context.canManage) throw managersOnly("records");
+  await tx.task.update({
+    where: { id: task.id },
+    data: {
+      deletedAt: null,
+      deletedById: null,
+      revision: { increment: 1 },
+    },
+  });
+  await tx.boardEvent.create({
+    data: {
+      id: createRecordId(),
+      boardId: task.boardId,
+      actorId: user.id,
+      action: "Restored record",
+      subjectId: task.id,
+      after: { taskId: task.id, name: task.name },
+    },
+  });
+  return { boardId: task.boardId, taskId: task.id };
 }
 
 // ---------- Boards ----------
@@ -330,6 +366,7 @@ export async function trashState(
     const [records, boards, projects] = await Promise.all([
       tx.task.findMany({
         where: {
+          parentId: null,
           deletedAt: { not: null },
           ...(boardId ? { boardId } : {}),
           board: managedBoards(user),
@@ -468,7 +505,7 @@ type EraseSelection = {
   projects: Prisma.ProjectWhereInput;
 };
 
-function eraseSelection(
+export function eraseSelection(
   before: Date,
   target?: { kind: "record" | "board" | "project"; id: string },
 ): EraseSelection {
@@ -489,21 +526,21 @@ function eraseSelection(
     : target.kind === "record"
       ? { ...deleted, id: target.id }
       : { board: boards };
-  return { tasks, boards, projects };
+  return { tasks: { OR: [tasks, { parent: tasks }] }, boards, projects };
 }
 
 /** One bounded transaction, including descendants of deleted containers.
  * Parents are removed only after their children have been drained; never let
  * a cascade turn a small batch into an unbounded board/project deletion.
  */
-async function eraseBatch(
+export async function eraseBatch(
   actorId: string | null,
   selection: EraseSelection,
   why: string,
 ) {
   const { files, erased, remaining } = await serial(async (tx) => {
     const tasks = await tx.task.findMany({
-      where: selection.tasks,
+      where: { AND: [selection.tasks, { children: { none: {} } }] },
       select: { id: true },
       orderBy: { id: "asc" },
       take: ERASE_RECORD_LIMIT,
@@ -524,6 +561,7 @@ async function eraseBatch(
       where: { id: { in: files.map((file) => file.id) } },
     });
     // A heavily attached record remains until later batches drain its files.
+    await tx.boardProposal.deleteMany({ where: { parentTaskId: { in: ids } } });
     const records = await tx.task.deleteMany({
       where: { id: { in: ids }, attachments: { none: {} } },
     });

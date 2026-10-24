@@ -135,6 +135,14 @@ test("timeline shows spans and markers, and edits dates by keyboard and pointer"
     "data-dragging",
     "true",
   );
+  await expect(
+    bar("Build engine").locator('.timeline-handle[data-edge="end"]'),
+  ).toBeVisible();
+  // Keyboard focus can scroll the bar beneath the sticky task-name column.
+  // Reset the viewport before using raw pointer coordinates.
+  await page.locator(".timeline-scroll").evaluate((element) => {
+    element.scrollTo({ left: 0, behavior: "instant" });
+  });
   const width = 36;
   let box = (await bar("Build engine").boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -148,7 +156,9 @@ test("timeline shows spans and markers, and edits dates by keyboard and pointer"
   );
   await page.mouse.up();
   await expect.poll(() => dates(build)).toEqual([day(9), day(14)]);
-  await page.waitForTimeout(800);
+  await expect(
+    bar("Build engine").locator('.timeline-handle[data-edge="end"]'),
+  ).toBeVisible();
   box = (await bar("Build engine").boundingBox())!;
   await page.mouse.move(box.x + box.width - 2, box.y + box.height / 2);
   await page.mouse.down();
@@ -159,7 +169,9 @@ test("timeline shows spans and markers, and edits dates by keyboard and pointer"
   await expect.poll(() => dates(build)).toEqual([day(9), day(13)]);
 
   // Drag an unscheduled task onto the timeline to give it that day.
-  await page.waitForTimeout(800);
+  await expect(
+    bar("Build engine").locator('.timeline-handle[data-edge="end"]'),
+  ).toBeVisible();
   const chip = (await page
     .getByRole("region", { name: /Not scheduled/ })
     .getByRole("button", { name: /Someday idea/ })

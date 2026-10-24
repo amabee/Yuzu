@@ -1,3 +1,12 @@
+import {
+  parentTaskSelect,
+  parentCanEdit,
+  taskAvailable,
+  guardRootLifecycle,
+  lockTaskRoot,
+  markChildrenChanged,
+} from "./task-hierarchy";
+import { invalidateChildProposals } from "./proposal-finalization";
 import { taskWhere, taskOrder } from "./task-query";
 import {
   TIMELINE_TASK_LIMIT,
@@ -244,7 +253,10 @@ function options(board: { columns: { key: string; config: unknown }[] }) {
   );
 }
 /** A task can't start after it is due; the database enforces the same rule. */
-function checkDateOrder(startDate: string | null, dueDate: string | null) {
+export function checkDateOrder(
+  startDate: string | null,
+  dueDate: string | null,
+) {
   if (startDate && dueDate && startDate > dueDate)
     throw new SetupError(
       422,
@@ -495,7 +507,8 @@ export async function saveValues(
       });
   }
 }
-const taskInclude = {
+export const taskInclude = {
+  parent: { select: parentTaskSelect },
   _count: {
     select: {
       comments: { where: { deletedAt: null } },
@@ -508,13 +521,17 @@ const taskInclude = {
   values: { include: { people: true, field: true } },
   // Both directions of "Link to board" fields, bounded per record.
   linksFrom: {
-    where: { to: { deletedAt: null, board: { deletedAt: null } } },
+    where: {
+      to: { parentId: null, deletedAt: null, board: { deletedAt: null } },
+    },
     select: { fieldId: true, toId: true },
     orderBy: { createdAt: "asc" as const },
     take: 200,
   },
   linksTo: {
-    where: { from: { deletedAt: null, board: { deletedAt: null } } },
+    where: {
+      from: { parentId: null, deletedAt: null, board: { deletedAt: null } },
+    },
     select: { fromId: true, field: { select: { config: true } } },
     orderBy: { createdAt: "asc" as const },
     take: 200,
@@ -531,8 +548,15 @@ const taskInclude = {
   },
 };
 type LoadedTask = NonNullable<Awaited<ReturnType<typeof loadTask>>>;
-export async function loadTask(tx: DatabaseTransaction, id: string) {
-  return tx.task.findUnique({ where: { id }, include: taskInclude });
+export async function loadTask(
+  tx: DatabaseTransaction,
+  id: string,
+  includeSubitems = false,
+) {
+  return tx.task.findFirst({
+    where: { id, ...(includeSubitems ? {} : { parentId: null }) },
+    include: taskInclude,
+  });
 }
 export function canEdit(
   task: LoadedTask,
@@ -540,7 +564,10 @@ export function canEdit(
 ) {
   return (
     !context.readOnly &&
-    (context.canManage ||
+    taskAvailable(task) &&
+    !task.parent?.archivedAt &&
+    (parentCanEdit(task, context.user.id) ||
+      context.canManage ||
       task.createdById === context.user.id ||
       task.assignees.some((person) => person.userId === context.user.id) ||
       task.editors.some((person) => person.userId === context.user.id))
@@ -549,6 +576,10 @@ export function canEdit(
 export function snapshot(task: LoadedTask) {
   return JSON.parse(
     JSON.stringify({
+      ...(task.parentId ? { parentId: task.parentId } : {}),
+      ...(task.childrenRevision
+        ? { childrenRevision: task.childrenRevision }
+        : {}),
       name: task.name,
       description: task.description,
       checklist: checklistSchema.parse(task.checklist),
@@ -556,7 +587,7 @@ export function snapshot(task: LoadedTask) {
       priority: task.priority,
       startDate: task.startDate?.toISOString().slice(0, 10) ?? null,
       dueDate: task.dueDate?.toISOString().slice(0, 10) ?? null,
-      groupId: task.groupId,
+      groupId: task.parentId ? task.parent!.groupId : task.groupId,
       assigneeIds: task.assignees.map((person) => person.userId),
       editorIds: task.editors.map((person) => person.userId),
       fieldValues: valueMap(task),
@@ -628,6 +659,8 @@ export async function boardState(
       const visiblePending = await tx.boardProposal.findMany({
         where: {
           boardId,
+          parentTaskId: null,
+          AND: [{ OR: [{ taskId: null }, { task: { parentId: null } }] }],
           status: "PENDING",
           ...(context.canManage ||
           [policy.primaryApproverId, policy.backupApproverId].includes(user.id)
@@ -664,7 +697,12 @@ export async function boardState(
       }).format(new Date());
       const focused = query.taskId
         ? await tx.task.findFirst({
-            where: { id: query.taskId, boardId, deletedAt: null },
+            where: {
+              id: query.taskId,
+              boardId,
+              parentId: null,
+              deletedAt: null,
+            },
             include: taskInclude,
           })
         : null;
@@ -700,12 +738,13 @@ export async function boardState(
       // The pulse covers the whole active board, whatever the filters.
       const pulseCounts = await tx.task.groupBy({
         by: ["statusId"],
-        where: { boardId, archivedAt: null, deletedAt: null },
+        where: { boardId, parentId: null, archivedAt: null, deletedAt: null },
         _count: true,
       });
       const overdue = await tx.task.count({
         where: {
           boardId,
+          parentId: null,
           archivedAt: null,
           deletedAt: null,
           dueDate: { lt: new Date(`${calendarDate}T00:00:00Z`) },
@@ -714,12 +753,19 @@ export async function boardState(
       });
       const groupCounts = await tx.task.groupBy({
         by: ["groupId"],
-        where: { boardId, groupId: { not: null }, deletedAt: null },
+        where: {
+          boardId,
+          parentId: null,
+          groupId: { not: null },
+          deletedAt: null,
+        },
         _count: true,
       });
       const pendingApprovalCount = await tx.boardProposal.count({
         where: {
           boardId,
+          parentTaskId: null,
+          AND: [{ OR: [{ taskId: null }, { task: { parentId: null } }] }],
           status: "PENDING",
           ...(context.canManage ||
           [policy.primaryApproverId, policy.backupApproverId].includes(user.id)
@@ -1080,18 +1126,20 @@ export async function createTaskRecord(
   actorId = authorId,
   activityAction = "Created task",
   automation?: AutomationContext,
+  parentId?: string,
 ) {
   validateCore(body, context.board, people);
   validateValues(body.fieldValues, context.board, people);
   checkDateOrder(body.startDate ?? null, body.dueDate ?? null);
   // New tasks join the end of the board's manual order.
   const last = await tx.task.aggregate({
-    where: { boardId: context.board.id },
+    where: { boardId: context.board.id, parentId: parentId ?? null },
     _max: { position: true },
   });
   const task = await tx.task.create({
     data: {
       boardId: context.board.id,
+      parentId: parentId ?? null,
       position: (last._max.position ?? 0) + POSITION_STEP,
       name: body.name,
       description: body.description ?? "",
@@ -1126,7 +1174,8 @@ export async function createTaskRecord(
     message: `assigned you to this ${lower(boardRecord(context.board).config.singular)}`,
     eventKey: `task:${task.id}:assignment:1`,
   });
-  const created = snapshot((await loadTask(tx, task.id))!);
+  if (parentId) await markChildrenChanged(tx, parentId);
+  const created = snapshot((await loadTask(tx, task.id, Boolean(parentId)))!);
   await tx.taskActivity.create({
     data: {
       taskId: task.id,
@@ -1162,7 +1211,25 @@ export async function applyTaskRecord(
   activityAction?: string,
   /** Set when a rule makes this change, so chains can be limited. */
   automation?: AutomationContext,
+  hierarchyRevision?: number,
 ) {
+  if (!taskAvailable(task)) throw notFound();
+  if (task.parentId) {
+    const root = await lockTaskRoot(tx, task.parentId, task.boardId);
+    if (root.archivedAt || root.deletedAt)
+      throw new SetupError(
+        403,
+        "PARENT_UNAVAILABLE",
+        "Restore the parent task before changing its subitems.",
+      );
+    if (changes && "groupId" in changes)
+      throw new SetupError(
+        422,
+        "INHERITED_GROUP",
+        "Subitems inherit their parent's group.",
+      );
+  } else if (action === "archive")
+    await guardRootLifecycle(tx, task, hierarchyRevision);
   const before = snapshot(task);
   if (changes) {
     validateCore(changes, context.board, people);
@@ -1222,7 +1289,15 @@ export async function applyTaskRecord(
     people,
     context.user,
   );
-  const after = await loadTask(tx, task.id);
+  if (task.parentId) await markChildrenChanged(tx, task.parentId);
+  else if (action === "archive")
+    await invalidateChildProposals(
+      tx,
+      task.id,
+      actorId,
+      "The parent task was archived. Review it before submitting again.",
+    );
+  const after = await loadTask(tx, task.id, Boolean(task.parentId));
   if (assigneeIds)
     await createNotifications(tx, {
       recipientIds: assigneeIds.filter(
@@ -1436,7 +1511,7 @@ export async function reorderTask(input: unknown, headers: Headers) {
         Boolean(id),
       );
       const rows = await tx.task.findMany({
-        where: { id: { in: ids }, boardId: task.boardId },
+        where: { id: { in: ids }, boardId: task.boardId, parentId: null },
         select: { id: true, position: true },
       });
       if (rows.length !== ids.length)
@@ -1472,7 +1547,7 @@ export async function reorderTask(input: unknown, headers: Headers) {
         UPDATE "Task" AS t SET "position" = ordered.rank * ${POSITION_STEP}
         FROM (
           SELECT "id", ROW_NUMBER() OVER (ORDER BY "position", "createdAt", "id") AS rank
-          FROM "Task" WHERE "boardId" = ${task.boardId}
+          FROM "Task" WHERE "boardId" = ${task.boardId} AND "parentId" IS NULL
         ) AS ordered
         WHERE t."id" = ordered."id"`;
       around = await neighbours();
@@ -1494,86 +1569,108 @@ export async function mutateTask(
   input: unknown,
   headers: Headers,
 ): Promise<TaskMutationResult> {
+  const { user } = await requireIdentity(headers);
+  return serial((tx) => mutateTaskInTransaction(tx, action, input, user.id));
+}
+/** Internal service; no public JSON option enables subitems. */
+export async function mutateTaskInTransaction(
+  tx: DatabaseTransaction,
+  action: string,
+  input: unknown,
+  userId: string,
+  includeSubitems = false,
+): Promise<TaskMutationResult> {
+  const user = { id: userId };
   const patch = action === "update" ? updateTaskSchema.parse(input) : undefined;
   const grant =
     action === "editor" ? editorGrantSchema.parse(input) : undefined;
   const body = patch ?? grant ?? taskActionSchema.parse(input);
-  const { user } = await requireIdentity(headers);
-  return serial(async (tx) => {
-    const task = await loadTask(tx, body.taskId);
-    // Records in Trash are restored from Trash, not changed in place.
-    if (!task || task.deletedAt) throw notFound();
-    const context = await access(tx, user.id, task.boardId, true);
-    if (
-      action === "restore" || action === "editor"
-        ? !context.canManage
-        : !canEdit(task, context)
-    )
-      throw new SetupError(
-        403,
-        "FORBIDDEN",
-        "You do not have permission to change this task.",
-      );
-    const requestDigest = digest(stableJson({ action, ...body }));
-    const requestKey = body.requestKey ?? requestDigest;
-    if (["update", "archive"].includes(action)) {
-      const cached = await existingProposal(
-        tx,
-        user.id,
-        requestKey,
-        requestDigest,
-      );
-      if (cached) return cached;
-    }
-    if (task.archivedAt && action !== "restore")
-      throw new SetupError(
-        409,
-        "TASK_ARCHIVED",
-        "Archived tasks are read-only. Ask a board manager to restore it first.",
-      );
-    if (task.revision !== body.revision) throw conflict();
-    const people = new Set(
-      (await eligiblePeople(tx, context.board)).map((person) => person.id),
+  const task = await loadTask(tx, body.taskId, includeSubitems);
+  if (task?.parentId) await lockTaskRoot(tx, task.parentId, task.boardId);
+  // Records in Trash are restored from Trash, not changed in place.
+  if (!task || !taskAvailable(task)) throw notFound();
+  const context = await access(tx, user.id, task.boardId, true);
+  if (
+    action === "restore" || action === "editor"
+      ? !context.canManage
+      : !canEdit(task, context)
+  )
+    throw new SetupError(
+      403,
+      "FORBIDDEN",
+      "You do not have permission to change this task.",
     );
-    const changes = patch?.changes;
-    if (changes) {
-      validateCore(changes, context.board, people);
-      validateValues(changes.fieldValues, context.board, people);
-    }
-    const policy = await readApprovalPolicy(tx, context.board);
-    const operation = action === "archive" ? "ARCHIVE" : "UPDATE";
-    const proposedChanges = actualApprovalChanges(
-      snapshot(task),
-      changes ?? {},
+  const requestDigest = digest(stableJson({ action, ...body }));
+  const requestKey = body.requestKey ?? requestDigest;
+  if (["update", "archive"].includes(action)) {
+    const cached = await existingProposal(
+      tx,
+      user.id,
+      requestKey,
+      requestDigest,
     );
-    if (
-      ["update", "archive"].includes(action) &&
-      needsApproval(policy, operation, proposedChanges, context.board.columns)
-    )
-      return submitProposal(tx, {
-        boardId: task.boardId,
-        taskId: task.id,
-        authorId: user.id,
-        operation,
-        requestKey,
-        requestDigest,
-        changes: proposedChanges,
-        baseline: snapshot(task),
-        policy,
-        eligible: people,
-        sourceRevision: task.revision,
-      });
-    return applyTaskRecord(
+    if (cached) return cached;
+  }
+  if (task.archivedAt && action !== "restore")
+    throw new SetupError(
+      409,
+      "TASK_ARCHIVED",
+      "Archived tasks are read-only. Ask a board manager to restore it first.",
+    );
+  if (task.revision !== body.revision) throw conflict();
+  if (action === "archive" && !task.parentId)
+    await guardRootLifecycle(
       tx,
       task,
-      context,
-      people,
-      user.id,
-      action,
-      changes,
-      grant,
+      "childrenRevision" in body ? body.childrenRevision : undefined,
     );
-  });
+  const people = new Set(
+    (await eligiblePeople(tx, context.board)).map((person) => person.id),
+  );
+  const changes = patch?.changes;
+  if (task.parentId && changes && "groupId" in changes)
+    throw new SetupError(
+      422,
+      "INHERITED_GROUP",
+      "Subitems inherit their parent's group.",
+    );
+  if (changes) {
+    validateCore(changes, context.board, people);
+    validateValues(changes.fieldValues, context.board, people);
+  }
+  const policy = await readApprovalPolicy(tx, context.board);
+  const operation = action === "archive" ? "ARCHIVE" : "UPDATE";
+  const proposedChanges = actualApprovalChanges(snapshot(task), changes ?? {});
+  if (
+    ["update", "archive"].includes(action) &&
+    needsApproval(policy, operation, proposedChanges, context.board.columns)
+  )
+    return submitProposal(tx, {
+      boardId: task.boardId,
+      taskId: task.id,
+      authorId: user.id,
+      operation,
+      requestKey,
+      requestDigest,
+      changes: proposedChanges,
+      baseline: snapshot(task),
+      policy,
+      eligible: people,
+      sourceRevision: task.revision,
+    });
+  return applyTaskRecord(
+    tx,
+    task,
+    context,
+    people,
+    user.id,
+    action,
+    changes,
+    grant,
+    undefined,
+    undefined,
+    "childrenRevision" in body ? body.childrenRevision : undefined,
+  );
 }
 export async function manageBoard(
   action: string,
@@ -2239,7 +2336,7 @@ export async function taskComments(taskId: string, headers: Headers) {
   const { user } = await requireIdentity(headers);
   return db().$transaction(async (tx) => {
     const task = await tx.task.findUnique({
-      where: { id: taskId },
+      where: { id: taskId, parentId: null },
       select: { boardId: true, archivedAt: true, deletedAt: true },
     });
     if (!task || task.deletedAt) throw notFound();
@@ -2277,7 +2374,7 @@ export async function createComment(input: unknown, headers: Headers) {
   const { user } = await requireIdentity(headers);
   return serial(async (tx) => {
     const task = await tx.task.findUnique({
-      where: { id: body.taskId },
+      where: { id: body.taskId, parentId: null },
       select: { boardId: true, archivedAt: true, deletedAt: true },
     });
     if (!task || task.deletedAt) throw notFound();
@@ -2396,7 +2493,7 @@ export async function changeComment(input: unknown, headers: Headers) {
   const { user } = await requireIdentity(headers);
   return serial(async (tx) => {
     const comment = await tx.taskComment.findUnique({
-      where: { id: body.commentId },
+      where: { id: body.commentId, task: { parentId: null } },
       include: {
         task: { select: { boardId: true, archivedAt: true, deletedAt: true } },
       },
@@ -2534,7 +2631,7 @@ export async function commentHistory(commentId: string, headers: Headers) {
   const { user } = await requireIdentity(headers);
   return db().$transaction(async (tx) => {
     const comment = await tx.taskComment.findUnique({
-      where: { id: commentId },
+      where: { id: commentId, task: { parentId: null } },
       include: { task: { select: { boardId: true, deletedAt: true } } },
     });
     if (!comment || comment.task.deletedAt) throw notFound();
