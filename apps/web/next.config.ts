@@ -10,6 +10,6 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["file-type"],
   poweredByHeader: false,
   devIndicators: false,
-  experimental: { authInterrupts: true },
+  experimental: { authInterrupts: true, agentUpgrade: "security" },
 };
 export default nextConfig;

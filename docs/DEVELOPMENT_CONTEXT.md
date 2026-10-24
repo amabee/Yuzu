@@ -382,3 +382,17 @@ request. Consult `README.md` for operational detail, the roadmap
 (`docs/Yuzu_CRM_and_Business_Platform_Roadmap.md`) for direction, and
 `docs/specs/` for feature specs; history lives in Git. Older notes saying CSV jobs require keeping
 the board open, or that files/search/reporting are still unimplemented, are stale.
+
+## Next.js security patch (2026-10-24)
+
+Upgrade branch: `fix/next-16.4.3-security`, based on main through PR #35.
+Next.js and eslint-config-next are pinned to 16.4.3 (previously 16.4.0).
+`experimental.agentUpgrade` is explicitly `"security"`; existing configuration
+and Node 24 / pnpm 11.9.0 requirements remain unchanged. pnpm added exact-version
+release-age exceptions for the requested Next.js patch and its matching packages.
+The change was prepared in a separate worktree to preserve local edits.
+Validation: frozen-lockfile install, exact Next.js version, formatting, lint,
+workspace types, 184 web unit tests, realtime/protocol checks (Redis-only test
+skipped), production build, and three focused welcome/setup/health browser tests
+passed. Docker was initially stopped; browser verification passed after starting
+it. The first build completed with database-unavailable warnings.
