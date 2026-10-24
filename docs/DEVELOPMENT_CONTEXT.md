@@ -415,3 +415,12 @@ realtime/protocol checks (Redis-only test skipped), production build, and all fo
 Trash browser tests pass. Regression coverage includes hidden private parent
 names, 205-record containers, 201 attachments, snapshot cutoffs, UI batch
 continuation, and worker retention. Full browser suite was not rerun.
+
+## CRM planning continuation (2026-10-24)
+
+`docs/crm-pipeline-spec` is documentation-only and stacked on PR #37. The CRM
+planning draft records confirmed separate Leads and multi-company Contacts,
+proposed detailed pipeline/renewal/reporting rules, and a source-verified approval
+engine gap table. Existing approval is already patch/field-conflict based, not
+whole-record staleness. Review remaining proposed decisions (including 30-day
+expiry) before coding. No CRM runtime implementation has started.
