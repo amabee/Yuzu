@@ -22,8 +22,8 @@ later. This branch is based on the documentation in PR #37.
 ## Proposed delivery slices
 
 1. Companies/Contacts and validated relationships; related-record panels.
-2. Pipelines/Deals and the approval extensions defined below. Specify migration
-   of existing generic Deal boards before changing behavior.
+2. Pipelines/Deals: first spike the policy dependency read-set and prove its
+   fallback, then implement the migration and approval extensions below.
 3. Lead qualification/conversion with matching, association and retry protection.
 4. Activities/follow-ups and shared timelines. Notification email already exists;
    mailbox integration is separate scope, not implied by an email activity.
@@ -33,17 +33,46 @@ later. This branch is based on the documentation in PR #37.
 Preserve board views, approvals, revisions, private scopes, Trash, CSV, API,
 automation, search and realtime. Extend the record compatibility suite per type.
 Activity storage and detailed fields for each type still need their own specs.
+Companies/Contacts is NOT ready to code: required/optional fields, normalization,
+relationship constraints, validation, permissions and migration must first be
+written and reviewed in its field-level specification.
 
 ## Pipeline decisions — proposed MVP contract
 
 ### Ownership, stages and concurrency
 
 Each Deal board owns one pipeline. Each stage has category Open, Won or Lost;
-multiple stages per category are allowed. Create pipelines with one of each.
+multiple stages per category are allowed. New pipelines use these defaults:
+
+| Order | Name        | Category | New Deal default |
+| ----- | ----------- | -------- | ---------------- |
+| 1     | New         | Open     | Yes              |
+| 2     | Qualified   | Open     | No               |
+| 3     | Proposal    | Open     | No               |
+| 4     | Negotiation | Open     | No               |
+| 5     | Won         | Won      | No               |
+| 6     | Lost        | Lost     | No               |
+
+Stage records use UUIDv7 IDs and stable board-local keys; labels can be renamed.
+The name New avoids confusing an opportunity stage with the separate Lead type.
+Every pipeline stores one default stage, which must be Open. A caller omitting
+the stage gets that default. Changing/removing the default requires designating
+another Open stage in the same transaction.
+
 At least one stage per category must remain after creation, deletion and category
 changes. Check and mutate in one serializable transaction with bounded retries;
 use a common pipeline row lock for stage-configuration writers. Two concurrent
 administrators must not remove the last valid category.
+
+Stage-request creation, direct moves and approval application must take the same
+pipeline lock as stage configuration and validate source/target existence in
+that serializable transaction. Store Deal.stageId as a real foreign key with
+RESTRICT on deletion; JSON proposal patches alone cannot enforce references.
+Store requestKind (including DEAL_STAGE_CHANGE) on proposals. A raw SQL migration
+adds a partial unique index on taskId WHERE status = PENDING AND requestKind =
+DEAL_STAGE_CHANGE, plus checks requiring taskId for stage requests. Prisma schema
+declarations alone do not express this partial index; document and test the SQL
+constraint and map uniqueness failures to the existing-pending-request response.
 
 Stages referenced by live, archived or trashed Deals, or Pending stage requests,
 cannot be deleted or change category. Names/order may change without rewriting
@@ -65,10 +94,55 @@ recovery; the blocker response does not grant recovery or access itself.
 A permitted manager can cancel a blocking request without seeing private
 request details, receiving only a generic confirmation and an audit entry.
 
+### Existing Deal board migration — core contract
+
+Activation is explicit per Deal board, with a manager-reviewed preview. Ordinary
+Task/custom boards and their status columns are unaffected. Migration maps the
+STATUS column's option IDs (the current Kanban lanes), not BoardGroup IDs or
+labels, to new pipeline stage IDs. Groups remain independent organization.
+
+- Preserve existing option names/order and stable legacy-ID aliases so saved
+  views, filters, policies, automations and API/CSV references can be rewritten
+  or resolved deterministically. Never guess categories from translated names.
+- For known built-in option IDs, lead/qualified/proposal/negotiation map to Open,
+  won maps to Won and lost maps to Lost. Preserve an existing Lead label for
+  compatibility; renaming it is a separate manager choice. Other options require
+  an explicit category in the preview. Add missing category stages from the
+  defaults; existing custom configurations do not get silently replaced.
+- The manager selects an Open default. The built-in lead stage is preselected
+  where available; otherwise require selection or create the New default.
+- Preview all live, archived and trashed Deals, null/unknown status references,
+  pending drafts and affected saved configurations using bounded pages and full
+  counts. A missing/orphan status requires an explicit assignment, or manager
+  acceptance of a generated Unmapped/Open stage. No Deal is dropped; activation
+  is blocked until mapping and configuration-reference validation are complete.
+- Stage all backfill in bounded resumable batches under a versioned migration
+  checkpoint. Serialize activation against board mutations, request submission,
+  decisions and the worker. Freeze that board's writes during its final backfill
+  and cutover, with a clear retryable migration response; reads use the old model
+  until activation. Recheck the preview revision and mapping before cutover.
+  Partial backfill is not an active pipeline. Retry uses the same mappings/IDs.
+- At activation, atomically mark all still-Pending legacy proposals on that Deal
+  board that lack the versioned dependency snapshot Stale, including create,
+  update and archive requests. Notify permitted requesters once, invalidate
+  reviewer queues and show Review and resubmit. Do not grandfather weaker checks
+  or silently manufacture approval baselines. Preserve terminal request history.
+- Preserve records, links, revisions/history, customer data and forecast dates.
+  Do not infer actual closure from dueDate, updatedAt or the migration time.
+  Existing Won/Lost Deals with no proven closure event have closed_at = null
+  and closure-time-unknown metadata. Show them in an Undated legacy bucket for
+  current-state reports; exclude them from dated transition totals. Record an
+  explicit migration baseline, never a fabricated sale/closure transition.
+
+Detailed schema/backfill/rollback scripts and compatibility tests are required
+before shipping activation. Before activation, failed migration can discard
+staged data and resume legacy reads/writes; after activation, rollback requires a
+validated reverse migration, never a casual version downgrade.
+
 ### Pending requests and relevant changes
 
-Keep the card in its last confirmed stage, with an indicator visible only to
-people entitled to see that request. Reports use confirmed data. Enforce one
+Keep the card in its last committed stage, with an indicator visible only to
+people entitled to see that request. Reports use committed data. Enforce one
 Pending stage request per Deal across UI, API and automation, with a database
 constraint (not just a preflight query). Another drag opens the request for
 participants; others see only "A stage change is already pending."
@@ -78,8 +152,8 @@ Dependencies include source stage/category, target stage/category, amount and
 currency, owner, expected close date, explicit customer identity, and fields
 read by the applicable policy. Store a policy version/snapshot and a schema
 version for the dependency set. Compare canonical field values, not the whole
-record revision. Ordinary title/note/contact edits do not stale a request unless
-that field is explicitly a dependency. Renewal fields become dependencies if
+record revision. Ordinary title/note/contact edits do not stale a request only
+when proven outside the exact or conservative dependency set described below. Renewal fields become dependencies if
 used by the applicable policy.
 
 Any accepted write changing a dependency marks matching Pending requests Stale
@@ -90,6 +164,26 @@ scoped invalidations after commit. A worker reconciles expiry and missed access
 changes in bounded batches. Opening/dragging/deciding performs a final validation
 as a safeguard and offers "Review and resubmit" if stale. Resubmission creates a
 new idempotency key and fresh snapshot; it never revives a terminal request.
+
+### First pipeline spike: policy read-set
+
+Before implementing the pipeline approval UX, build a small design/test spike
+that enumerates every field a policy can read, including conditional branches,
+source/target stage metadata and related-record values. Persist canonical
+field/reference identifiers and dependency schema/policy versions per request.
+Do not infer the read-set from the requested patch or only an executed branch.
+
+If exact enumeration cannot be proved, persist the conservative superset of all
+fields that that policy could read, together with mandatory domain dependencies.
+Any accepted change in that set eagerly makes the request Stale. Under this
+fallback, a title/note/contact edit may stale a request if the policy could read
+it; make that explicit in request details. If even a complete superset cannot be
+established, block activation of that policy for pipeline approvals. Never ship
+an incomplete set or compensate with an unchecked approve-anyway action.
+
+The spike must prove unrelated-edit preservation, relevant-edit invalidation,
+conditional branches, related-record/access changes, atomic apply and policy
+schema changes. Its reviewed result determines the slice's schema and ordering.
 
 ### Request state machine and clearing blocked requests
 
@@ -106,7 +200,9 @@ Only Pending can transition; terminal records are immutable history.
 | Invalidated | Deal/board/project deleted or requester deactivated; reason recorded           |
 | Expired     | Pending for 30 days; create a fresh request if still needed                    |
 
-Expiry is a fixed proposed MVP duration, not a new installation setting.
+Expiry is a fixed proposed MVP duration, not a new installation setting. Owner
+review of 30 days may run in parallel with the read-set spike; keep the duration
+a named constant so changing it does not require redesigning request states.
 Deactivation invalidates requests eagerly in the account operation; large fan-out
 requires a bounded reconciliation path. Every decision blocks a deactivated
 requester immediately even before reconciliation. Deletion invalidates dependent
@@ -119,8 +215,16 @@ resolve already-invalid/expired requests before presenting pending blockers.
 
 Applied, Rejected, Stale, Cancelled, Invalidated and Expired notify the requester
 if still active and authorized. Withdrawal immediately confirms to its author
-and notifies its reviewer. Other terminal transitions remove/update the reviewer
-queue; a resolved detail page explains the reason. Deactivated/inaccessible
+and notifies the currently designated eligible reviewer, resolved inside the
+transaction using current routing: primary if eligible and independent, otherwise
+backup, otherwise no notification recipient. This is not a broadcast to every
+manager or everyone who can open the queue. Invalidate all authorized cached
+queue copies so former reviewers do not retain a pending item.
+A manager's cancellation reason is visible to an active requester who still has
+request access, in the resolved detail page. Use a public-safe reason code/text;
+restricted dependency details belong only in a separately authorized audit entry,
+never in requester-visible text or notification payloads.
+Other terminal transitions remove/update the reviewer queue; a resolved detail page explains the reason. Deactivated/inaccessible
 recipients get no content-bearing message. Invalidation is audited even when no
 notification can be delivered. Email uses the same current visibility checks.
 
@@ -142,9 +246,10 @@ checks to allow unrelated edits. A losing concurrent decision returns a stable
 
 Policies can explicitly match source AND target categories, including leaving
 Won/Lost; this capability needs implementation. Allow Won ↔ Lost directly,
-requiring an explicit confirmation and reason, plus applicable approval. Reopen
-to any valid Open stage under the same policy path. Nothing changes until an
-approval-required transition is confirmed.
+requiring an explicit user confirmation dialog and reason, plus applicable approval. Reopen
+to any valid Open stage under the same policy path. A confirmation dialog only
+submits the command; it does not grant approval. Committed state changes only
+when a direct command is authorized or its approval is Applied.
 
 Use distinct domain fields: `expected_close_date` (forecast date), `closed_at`
 (actual closure timestamp), and immutable closure-event amount/currency snapshots.
@@ -152,6 +257,8 @@ Physical Prisma naming can follow repository camelCase conventions. Reopening
 clears closed_at, preserves forecast/value, and records a reopen event. Entering
 Won/Lost from another category sets closed_at; moving within the same closed
 category preserves it and does not create another win/loss transition.
+Explicitly: Won → Lost sets closed_at to the new commit time and records a Lost
+transition; Lost → Won does the inverse. The earlier closure event is immutable.
 
 Current-state revenue reports include only currently Won Deals, using their
 latest closed_at and current amount/currency. Historical transition reports use
@@ -173,7 +280,11 @@ access to both records and edit permission on the changed record.
 Validate self-links/cycles over the full lineage on the server, including hidden
 records, in the transaction. Use bounded recursive traversal with cycle detection;
 reject chains deeper than 100 renewal edges rather than assuming they are
-valid. Errors never reveal hidden names or IDs. Serialize relevant lineage and
+valid. Self-link, cycle and depth-limit failures use the SAME restricted-
+dependencies error code and generic message as hidden blockers, whether or not
+the lineage is visible. Do not distinguish these cases in client/API payloads;
+this prevents traversal errors from becoming an oracle for hidden lineage.
+Keep diagnostic distinctions only in authorized internal logs. Serialize relevant lineage and
 customer changes so simultaneous edge/customer updates cannot bypass validation.
 
 Block customer changes that would invalidate incoming or outgoing renewal links.
@@ -211,11 +322,15 @@ These are verified source observations, not claims that proposed CRM behavior sh
 
 ## Before coding and acceptance gate
 
-Review the pipeline proposals, default stages and 30-day expiry with the owner.
-Specify Deal board migration, Activity storage, typed customer relations,
+Review the pipeline proposals, listed default stages and 30-day expiry with the owner.
+Complete the policy read-set spike first in the pipeline slice, then its detailed
+Deal-board migration/backfill/rollback spec. Specify Activity storage, typed customer relations,
 conversion matching and template scope in their respective slice specs.
 
-Tests must cover concurrent stage edits/approvers, unrelated versus relevant
+Tests must cover default-stage assignment, legacy/custom/null/orphan mappings,
+legacy Pending invalidation and resumable activation; raw SQL pending-stage
+uniqueness; target deletion racing with request submission/direct moves/approval;
+concurrent stage edits/approvers, unrelated versus relevant
 edits, all terminal states, inactive requesters, hidden and archived/trashed
 blockers, purge tombstones, private cyclic lineage, customer edits on either end,
 policy-required reopen/Won↔Lost, September/October reporting, and replay safety.

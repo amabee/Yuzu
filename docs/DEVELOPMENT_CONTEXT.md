@@ -424,3 +424,12 @@ proposed detailed pipeline/renewal/reporting rules, and a source-verified approv
 engine gap table. Existing approval is already patch/field-conflict based, not
 whole-record staleness. Review remaining proposed decisions (including 30-day
 expiry) before coding. No CRM runtime implementation has started.
+
+CRM spec review follow-up: default New/Qualified/Proposal/Negotiation/Won/Lost
+stages are explicit. Core legacy Deal migration rules now cover option-ID mapping,
+unmapped records, legacy Pending invalidation, resumable activation and unknown
+historical close dates. The pipeline slice starts with a policy read-set spike
+and a conservative complete-superset fallback. Stage/request locking and raw SQL
+partial uniqueness are required. Companies/Contacts still needs a reviewed
+field-level spec before coding. Pipeline decisions and 30-day expiry remain
+proposals; no runtime changes were made.
