@@ -347,3 +347,193 @@ test("links to deleted records hide, and admins erase Trash for good", async ({
     })
     .toBe(0);
 });
+
+test("restore does not disclose private parent names before authorization", async ({
+  page,
+}) => {
+  const { owner, workspace } = await setup(page);
+  const db = getDatabase();
+  const project = await db.project.create({
+    data: {
+      name: "Confidential acquisition",
+      color: PROJECT_COLOR,
+      position: 0,
+      workspaceId: workspace.id,
+      visibility: "PRIVATE",
+      createdById: owner.id,
+      deletedAt: new Date(),
+    },
+  });
+  const board = await db.board.create({
+    data: {
+      name: "Secret diligence",
+      workspaceId: workspace.id,
+      projectId: project.id,
+      createdById: owner.id,
+      deletedAt: new Date(),
+    },
+  });
+  const record = await db.task.create({
+    data: {
+      name: "Hidden record",
+      boardId: board.id,
+      createdById: owner.id,
+      createKey: createRecordId(),
+      createDigest: "fixture",
+      deletedAt: new Date(),
+    },
+  });
+  // Even an admin must recover private-project access before seeing names.
+  for (const withParents of [false, true]) {
+    const response = await post(page, "/api/v1/trash/restore-record", {
+      id: record.id,
+      withParents,
+    });
+    expect(response.status()).toBe(404);
+    const text = await response.text();
+    expect(text).not.toContain(project.name);
+    expect(text).not.toContain(board.name);
+  }
+  expect(
+    (await db.project.findUniqueOrThrow({ where: { id: project.id } }))
+      .deletedAt,
+  ).not.toBeNull();
+  await db.projectMember.create({
+    data: {
+      projectId: project.id,
+      userId: owner.id,
+      grantedById: owner.id,
+      role: "MANAGER",
+    },
+  });
+  const visible = await post(page, "/api/v1/trash/restore-record", {
+    id: record.id,
+  });
+  expect(visible.status()).toBe(409);
+  expect(await visible.text()).toContain(project.name);
+  await ok(
+    await post(page, "/api/v1/trash/restore-record", {
+      id: record.id,
+      withParents: true,
+    }),
+  );
+  expect(
+    (await db.task.findUniqueOrThrow({ where: { id: record.id } })).deletedAt,
+  ).toBeNull();
+});
+
+test("erase drains large containers and attachment sets in bounded resumable batches", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const { owner, workspace, board } = await setup(page);
+  const db = getDatabase();
+  const project = await db.project.create({
+    data: {
+      name: "Old project",
+      color: PROJECT_COLOR,
+      position: 0,
+      workspaceId: workspace.id,
+      createdById: owner.id,
+      deletedAt: new Date(),
+    },
+  });
+  await db.board.update({
+    where: { id: board },
+    data: { projectId: project.id },
+  });
+  const ids = Array.from({ length: 205 }, () => createRecordId());
+  await db.task.createMany({
+    data: ids.map((id) => ({
+      id,
+      boardId: board,
+      name: "Old record",
+      createdById: owner.id,
+      createKey: id,
+      createDigest: "fixture",
+    })),
+  });
+  await db.taskAttachment.createMany({
+    data: Array.from({ length: 201 }, () => {
+      const id = createRecordId();
+      return {
+        id,
+        taskId: ids[0],
+        uploadedById: owner.id,
+        uploadKey: id,
+        storageKey: `test-missing/${id}`,
+        fileName: "fixture.txt",
+        mimeType: "text/plain",
+        sizeBytes: 1,
+        sha256: "fixture",
+      };
+    }),
+  });
+  const first = await ok(
+    await post(page, "/api/v1/trash/erase", { all: true }),
+  );
+  expect(first.remaining).toBe(true);
+  expect(first.erased.records).toBeLessThanOrEqual(100);
+  expect(await db.taskAttachment.count()).toBe(1);
+  expect(await db.project.count({ where: { id: project.id } })).toBe(1);
+  // A deletion after the initial snapshot must wait for a separate command.
+  const later = await create(
+    page,
+    (await db.board.findFirstOrThrow({ where: { name: "Start" } })).id,
+    "Later deletion",
+  );
+  await db.task.update({
+    where: { id: later },
+    data: { deletedAt: new Date(new Date(first.before).getTime() + 1000) },
+  });
+  let remaining = true;
+  let batches = 1;
+  while (remaining && batches < 10) {
+    const batch = await ok(
+      await post(page, "/api/v1/trash/erase", {
+        all: true,
+        before: first.before,
+      }),
+    );
+    expect(batch.erased.records).toBeLessThanOrEqual(100);
+    remaining = batch.remaining;
+    batches++;
+  }
+  expect(remaining).toBe(false);
+  expect(batches).toBeGreaterThan(1);
+  expect(await db.task.count({ where: { boardId: board } })).toBe(0);
+  expect(await db.taskAttachment.count()).toBe(0);
+  expect(await db.board.count({ where: { id: board } })).toBe(0);
+  expect(await db.project.count({ where: { id: project.id } })).toBe(0);
+  expect(await db.task.count({ where: { id: later } })).toBe(1);
+  // The UI must continue more than one batch before showing success.
+  const seed = await db.board.findFirstOrThrow({ where: { name: "Start" } });
+  const uiIds = Array.from({ length: 205 }, () => createRecordId());
+  await db.task.createMany({
+    data: uiIds.map((id) => ({
+      id,
+      boardId: seed.id,
+      name: "UI erase fixture",
+      createdById: owner.id,
+      createKey: id,
+      createDigest: "fixture",
+      deletedAt: new Date(),
+    })),
+  });
+  let eraseRequests = 0;
+  page.on("request", (request) => {
+    if (request.url().endsWith("/api/v1/trash/erase")) eraseRequests++;
+  });
+  await page.goto("/settings/trash");
+  await page.getByRole("button", { name: "Empty Trash…" }).click();
+  const dialog = page.getByRole("dialog", {
+    name: /^Erase \d+ items? for good\?$/,
+  });
+  await dialog.getByLabel("Type erase to confirm").fill("erase");
+  await dialog.getByRole("button", { name: "Erase for good" }).click();
+  await expect(
+    page.getByText("Erased for good.", { exact: true }),
+  ).toBeVisible();
+  expect(eraseRequests).toBeGreaterThanOrEqual(3);
+  expect(await db.task.count({ where: { id: { in: uiIds } } })).toBe(0);
+});

@@ -78,12 +78,26 @@ export function TrashManager({
     onError: fail,
   });
   const erase = useMutation({
-    mutationFn: async (input: { kind: Kind; id: string } | "all") =>
-      apiRequest("/api/v1/trash/erase", {
-        method: "POST",
-        json:
-          input === "all" ? { all: true } : { kind: input.kind, id: input.id },
-      }),
+    mutationFn: async (input: { kind: Kind; id: string } | "all") => {
+      let before: string | undefined;
+      let remaining = true;
+      while (remaining) {
+        const response = await apiRequest<{
+          before: string;
+          remaining: boolean;
+        }>("/api/v1/trash/erase", {
+          method: "POST",
+          json: {
+            ...(input === "all"
+              ? { all: true }
+              : { kind: input.kind, id: input.id }),
+            before,
+          },
+        });
+        before = response.data.before;
+        remaining = response.data.remaining;
+      }
+    },
     onSuccess: () => {
       setErasing(null);
       setTyped("");
