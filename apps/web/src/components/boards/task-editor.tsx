@@ -192,7 +192,7 @@ export function TaskEditor({
   const [deleting, setDeleting] = useState(false);
   const [accessPerson, setAccessPerson] = useState("");
   const [newChecklistItem, setNewChecklistItem] = useState("");
-  const editable = !task || task.canEdit;
+  const editable = !state.readOnly && (!task || task.canEdit);
   const record = recordOf(state);
   const on = (key: BuiltinKey) => record.builtins[key].on;
   const label = (key: BuiltinKey) => builtinName(record, key);

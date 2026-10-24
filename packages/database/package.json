@@ -19,7 +19,9 @@
     "attachments:cleanup": "tsx src/cleanup-attachments.ts",
     "attachments:migrate-s3": "tsx src/migrate-attachments-s3.ts",
     "test:storage": "tsx --test src/attachment-objects.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:subitems-safety": "tsx --test --test-concurrency=1 spikes/subitems-safety/policy.test.ts spikes/subitems-safety/postgres.test.ts",
+    "typecheck:subitems-safety": "tsc -p spikes/subitems-safety/tsconfig.json"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1151.0",

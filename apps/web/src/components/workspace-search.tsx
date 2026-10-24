@@ -26,7 +26,7 @@ import {
 import { PauseLeaf, PauseSlice } from "@/components/pause/decor";
 import { apiRequest } from "@/lib/api-client";
 import { taskSearchResultSchema } from "@/lib/task-search-contract";
-import type { ProjectSummary } from "@/lib/project-contract";
+import { navigationSearchResultSchema } from "@/lib/navigation-search-contract";
 export const WORKSPACE_SEARCH_EVENT = "yuzu:open-workspace-search";
 
 export type NavigationWorkspace = {
@@ -34,15 +34,49 @@ export type NavigationWorkspace = {
   name: string;
   boards: { id: string; name: string; projectId?: string | null }[];
 };
-export function WorkspaceSearch({
-  workspaces,
-  principalId,
-  projects = [],
-}: {
-  workspaces: NavigationWorkspace[];
-  principalId: string;
-  projects?: ProjectSummary[];
-}) {
+function useNavigationSearch(
+  kind: "board" | "project",
+  principalId: string,
+  q: string,
+  archived: boolean,
+  enabled: boolean,
+) {
+  return useInfiniteQuery({
+    queryKey: [
+      "principal",
+      principalId,
+      "task-search",
+      "navigation",
+      kind,
+      q,
+      archived,
+    ],
+    enabled,
+    initialPageParam: null as string | null,
+    queryFn: async ({ signal, pageParam }) => {
+      const params = new URLSearchParams({
+        kind,
+        q,
+        archived: String(archived),
+      });
+      if (pageParam) params.set("cursor", pageParam);
+      return navigationSearchResultSchema.parse(
+        (
+          await apiRequest(`/api/v1/search/navigation?${params}`, {
+            signal,
+            cache: "no-store",
+          })
+        ).data,
+      );
+    },
+    getNextPageParam: (last) => last.nextCursor,
+    staleTime: 0,
+    retry: false,
+    refetchInterval: enabled ? 30_000 : false,
+  });
+}
+
+export function WorkspaceSearch({ principalId }: { principalId: string }) {
   const [open, setOpen] = useState(false);
   const router = useRouter();
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -82,18 +116,6 @@ export function WorkspaceSearch({
     const timer = setTimeout(() => setTerm(query.trim()), 250);
     return () => clearTimeout(timer);
   }, [query]);
-  const results = workspaces
-    .flatMap((workspace) =>
-      workspace.boards.map((board) => ({
-        ...board,
-        workspace: workspace.name,
-      })),
-    )
-    .filter((board) =>
-      `${board.name} ${board.workspace}`
-        .toLocaleLowerCase()
-        .includes(query.trim().toLocaleLowerCase()),
-    );
   const search = useInfiniteQuery({
     queryKey: ["principal", principalId, "task-search", term, archived],
     enabled: open && term.length >= 2,
@@ -124,9 +146,20 @@ export function WorkspaceSearch({
   const waiting = query.trim().length >= 2 && (!settled || search.isPending);
   const matches = (text: string) =>
     text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
-  const projectResults = projects
-    .filter((project) => matches(project.name))
-    .slice(0, 20);
+  const boardSearch = useNavigationSearch(
+    "board",
+    principalId,
+    term,
+    archived,
+    open && settled,
+  );
+  const projectSearch = useNavigationSearch(
+    "project",
+    principalId,
+    term,
+    archived,
+    open && settled,
+  );
   const shortcuts = [
     { label: "Work overview", href: "/", icon: LayoutGrid },
     { label: "CRM overview", href: "/crm", icon: Users },
@@ -206,7 +239,7 @@ export function WorkspaceSearch({
               checked={archived}
               onChange={(event) => setArchived(event.target.checked)}
             />
-            Search archived tasks
+            Search archived
           </label>
           <span>Only what you can access</span>
         </div>
@@ -319,47 +352,101 @@ export function WorkspaceSearch({
               </Button>
             )}
           </section>
-          {projectResults.length > 0 && (
-            <CommandGroup heading="Projects">
-              {projectResults.map((project) => (
-                <CommandItem
-                  key={project.id}
-                  value={`project:${project.id}`}
-                  onSelect={() => navigate(`/projects/${project.id}`)}
+          {(
+            [
+              ["project", projectSearch, FolderOpen],
+              ["board", boardSearch, Columns3],
+            ] as const
+          ).map(([kind, resource, Icon]) => {
+            const label = kind === "project" ? "projects" : "boards";
+            const items = settled
+              ? (resource.data?.pages.flatMap((page) => page.items) ?? [])
+              : [];
+            return (
+              <section
+                key={kind}
+                aria-label={`Matching ${label}`}
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Enter" &&
+                    event.target instanceof HTMLButtonElement
+                  )
+                    event.stopPropagation();
+                }}
+              >
+                <CommandGroup
+                  heading={kind === "project" ? "Projects" : "Boards"}
                 >
-                  <FolderOpen size={17} aria-hidden="true" />
-                  <span>{project.name}</span>
-                  <span className="command-item-hint">Project</span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          )}
-          <section aria-label="Matching boards">
-            <CommandGroup heading="Boards">
-              {results.slice(0, 20).map((board) => (
-                <CommandItem
-                  key={board.id}
-                  value={`board:${board.id}`}
-                  onSelect={() => navigate(`/boards/${board.id}`)}
-                >
-                  <Columns3 size={17} aria-hidden="true" />
-                  <div className="command-result-copy">
-                    <p>{board.name}</p>
-                    <small>{board.workspace}</small>
-                  </div>
-                </CommandItem>
-              ))}
-              {!results.length && (
-                <p className="command-message">No matching boards.</p>
-              )}
-              {results.length > 20 && (
-                <p className="command-message">
-                  Showing the first 20 boards. Keep typing to narrow the
-                  results.
-                </p>
-              )}
-            </CommandGroup>
-          </section>
+                  {!settled || resource.isPending ? (
+                    <p className="command-message" role="status">
+                      Searching {label}…
+                    </p>
+                  ) : resource.isError ? (
+                    <div className="command-message" role="alert">
+                      <p>{resource.error.message}</p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void resource.refetch()}
+                      >
+                        Retry {label}
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      {items.map((item) => (
+                        <CommandItem
+                          key={item.id}
+                          value={`${kind}:${item.id}`}
+                          onSelect={() =>
+                            navigate(
+                              `/${kind === "project" ? "projects" : "boards"}/${item.id}`,
+                            )
+                          }
+                        >
+                          <Icon size={17} aria-hidden="true" />
+                          <div className="command-result-copy">
+                            <p>{item.name}</p>
+                            <small>
+                              {item.workspaceName}
+                              {item.projectName ? ` / ${item.projectName}` : ""}
+                            </small>
+                          </div>
+                          {item.archived && (
+                            <span className="command-item-hint">
+                              {kind === "board" &&
+                              item.archiveSource === "project"
+                                ? "Archived project"
+                                : "Archived"}
+                            </span>
+                          )}
+                        </CommandItem>
+                      ))}
+                      {!items.length && (
+                        <p className="command-message">
+                          No matching {archived ? "archived " : ""}
+                          {label}.
+                        </p>
+                      )}
+                    </>
+                  )}
+                </CommandGroup>
+                {settled && resource.hasNextPage && (
+                  <Button
+                    className="command-more"
+                    size="sm"
+                    variant="ghost"
+                    disabled={resource.isFetchingNextPage}
+                    onClick={() => void resource.fetchNextPage()}
+                  >
+                    {resource.isFetchingNextPage
+                      ? `Loading ${label}…`
+                      : `Show more ${label}`}
+                  </Button>
+                )}
+              </section>
+            );
+          })}
         </CommandList>
         <footer className="command-footer">
           <span>

@@ -101,7 +101,7 @@ export async function visibleProjects(
     include: {
       members: { where: { userId: user.id }, select: { role: true } },
       boards: {
-        where: { deletedAt: null },
+        where: { deletedAt: null, archivedAt: null },
         select: { id: true, name: true, position: true },
         orderBy: [{ position: "asc" }, { createdAt: "asc" }],
         take: 200,

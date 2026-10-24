@@ -1,5 +1,6 @@
 "use client";
 import { PauseSheetDecor } from "@/components/pause/pause-sheet";
+import { BoardArchiveControls } from "./board-archive-controls";
 import { ExportCsv } from "./export-csv";
 import { TrashManager } from "@/components/trash/trash-manager";
 import {
@@ -664,6 +665,7 @@ export function BoardSurface({
         notice={notice}
         pinnedNotices={Object.values(pendingTransfers)}
       />
+      <BoardArchiveControls state={state} name={name} />
       <BoardPulse
         state={state}
         tone={(statusId, index) =>
@@ -677,6 +679,7 @@ export function BoardSurface({
         config={viewConfig}
         userId={state.currentUserId}
         canManage={state.canManage}
+        readOnly={state.readOnly}
         boardId={state.boardId}
         onApply={(view, config) => {
           setActiveView(view);
@@ -790,7 +793,7 @@ export function BoardSurface({
           </span>
           <Button
             size="sm"
-            disabled={busy}
+            disabled={busy || state.readOnly}
             onClick={() => {
               mutation.reset();
               setCreateDueDate(undefined);
@@ -937,7 +940,7 @@ export function BoardSurface({
           }}
           statuses={savedStatuses}
           people={state.people}
-          pending={busy}
+          pending={busy || state.readOnly === true}
           onOpen={(taskId) => {
             setSelectedId(taskId);
           }}
@@ -972,7 +975,7 @@ export function BoardSurface({
           state={state}
           busy={busy || archived}
           manualOrder={manualOrder}
-          canAdd={!archived}
+          canAdd={!archived && !state.readOnly}
           formatCustom={formatCustom}
           onOpen={(task) => {
             mutation.reset();

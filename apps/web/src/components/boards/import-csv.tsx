@@ -188,7 +188,12 @@ export function ImportCsv({
   }
   return (
     <>
-      <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+      <Button
+        disabled={state.readOnly}
+        variant="outline"
+        size="sm"
+        onClick={() => setOpen(true)}
+      >
         <FileUp size={14} />
         {mutation.isPending ? "Importing…" : "Import CSV"}
       </Button>

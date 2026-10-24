@@ -552,7 +552,7 @@ export function TaskComments({
             )}
             {!comment.deletedAt && (
               <div className="mt-3 flex flex-wrap gap-2">
-                {!task.archivedAt && comment.canEdit && (
+                {!state.readOnly && !task.archivedAt && comment.canEdit && (
                   <Button
                     type="button"
                     size="sm"
@@ -564,7 +564,7 @@ export function TaskComments({
                     Edit
                   </Button>
                 )}
-                {!task.archivedAt && comment.canRemove && (
+                {!state.readOnly && !task.archivedAt && comment.canRemove && (
                   <Button
                     type="button"
                     size="sm"
@@ -629,7 +629,8 @@ export function TaskComments({
           </li>
         ))}
       </ul>
-      {!task.archivedAt &&
+      {!state.readOnly &&
+        !task.archivedAt &&
         (composerTarget
           ? active && createPortal(composer, composerTarget)
           : composer)}

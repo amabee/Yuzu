@@ -337,6 +337,44 @@ test("two-way links, one-or-many limits, rollups and private records", async ({
   });
   expect(await csv.text()).toContain("Kickoff call; Scope doc; Design review");
 
+  // An active board cannot mutate a mirror or its links on an archived board.
+  const archiveVersion = (await state(page, delivery)).boardVersion;
+  await ok(
+    await post(page, "/api/v1/boards/archive-board", {
+      boardId: delivery,
+      archived: true,
+      version: archiveVersion,
+    }),
+  );
+  const beforeBlocked = await dealRow();
+  const blockedUnlink = await post(page, "/api/v1/boards/update", {
+    taskId: checkout,
+    revision: beforeBlocked.revision,
+    requestKey: createRecordId(),
+    changes: { fieldValues: { [link.id]: [] } },
+  });
+  expect(blockedUnlink.status()).toBe(403);
+  expect((await dealRow()).revision).toBe(beforeBlocked.revision);
+  const blockedField = (await state(page, deals)).fields.find(
+    (item: { id: string }) => item.id === link.id,
+  );
+  expect(
+    (
+      await post(page, "/api/v1/boards/remove-field", {
+        boardId: deals,
+        fieldId: link.id,
+        version: blockedField.version,
+      })
+    ).status(),
+  ).toBe(403);
+  await ok(
+    await post(page, "/api/v1/boards/archive-board", {
+      boardId: delivery,
+      archived: false,
+      version: (await state(page, delivery)).boardVersion,
+    }),
+  );
+
   // Removing the link field removes its mirror, links and rollups.
   const fresh = (await state(page, deals)).fields.find(
     (item: { id: string }) => item.id === link.id,
