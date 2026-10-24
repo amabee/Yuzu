@@ -333,6 +333,8 @@ model AccessEvent {
 }
 
 model Board {
+  /// Independent archive flag; project archiving remains inherited.
+  archivedAt       DateTime?            @db.Timestamptz(3)
   id               String               @id @default(uuid(7))
   name             String
   workspaceId      String
@@ -368,6 +370,7 @@ model Board {
 
   @@index([workspaceId])
   @@index([projectId, position])
+  @@index([workspaceId, archivedAt])
 }
 
 model BoardColumn {

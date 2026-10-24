@@ -27,6 +27,7 @@ export async function workspaceDashboard(
   const visibleBoards: Prisma.BoardWhereInput = {
     ...boardScope(user),
     recordType: "TASK",
+    archivedAt: null,
     ...(query.workspaceId ? { workspaceId: query.workspaceId } : {}),
     // boardScope above still applies, so a hidden project matches nothing.
     ...(query.projectId ? { projectId: query.projectId } : {}),

@@ -46,7 +46,7 @@ async function taskAccess(
   });
   return {
     task,
-    canEdit: !task.archivedAt && canEdit,
+    canEdit: !context.readOnly && !task.archivedAt && canEdit,
     canManage: context.canManage,
     settings,
   };

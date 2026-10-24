@@ -248,6 +248,11 @@ export type BoardTask = {
   activity: { id: string; action: string; actor: string; createdAt: string }[];
 };
 export type BoardState = {
+  readOnly?: boolean;
+  archivedAt?: string | null;
+  projectArchived?: boolean;
+  canArchive?: boolean;
+  boardVersion?: string;
   pagination?: BoardPagination;
   focusedTask?: BoardTask | null;
   pendingApprovalCount?: number;
@@ -281,7 +286,18 @@ export type BoardState = {
   pendingApprovals: PendingApproval[];
 };
 
+export const boardArchiveSchema = z.strictObject({
+  boardId: recordId,
+  archived: z.boolean(),
+  version: z.string().datetime(),
+});
+
 const baseBoardStateSchema = z.object({
+  readOnly: z.boolean().default(false),
+  archivedAt: z.string().nullable().default(null),
+  projectArchived: z.boolean().default(false),
+  canArchive: z.boolean().default(false),
+  boardVersion: z.string().optional(),
   calendarDate: dateOnly.optional(),
   savedViews: z.array(savedViewSchema).default([]),
   selectedViewId: recordId.nullable().default(null),

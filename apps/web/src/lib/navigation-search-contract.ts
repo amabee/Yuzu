@@ -16,6 +16,7 @@ export const navigationSearchResultSchema = z.object({
         workspaceName: z.string(),
         projectName: z.string().nullable(),
         archived: z.boolean(),
+        archiveSource: z.enum(["board", "project"]).nullable().optional(),
       }),
     )
     .max(NAVIGATION_SEARCH_PAGE_SIZE),

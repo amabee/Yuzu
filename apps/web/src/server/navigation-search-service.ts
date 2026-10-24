@@ -55,13 +55,19 @@ export async function searchNavigation(
           })),
         };
       }
-      // Board has no independent archivedAt; a board's archive context is its project.
+      // Independent archive and inherited project archive share one archive mode.
       const where: Prisma.BoardWhereInput = {
         AND: [
           boardScope(user),
           archived
-            ? { project: { is: { archivedAt: { not: null } } } }
+            ? {
+                OR: [
+                  { archivedAt: { not: null } },
+                  { project: { is: { archivedAt: { not: null } } } },
+                ],
+              }
             : {
+                archivedAt: null,
                 OR: [
                   { projectId: null },
                   { project: { is: { archivedAt: null } } },
@@ -91,6 +97,7 @@ export async function searchNavigation(
         select: {
           id: true,
           name: true,
+          archivedAt: true,
           workspace: { select: { name: true } },
           project: { select: { name: true, archivedAt: true } },
         },
@@ -103,7 +110,12 @@ export async function searchNavigation(
         items: page.map((row) => ({
           id: row.id,
           name: row.name,
-          archived: Boolean(row.project?.archivedAt),
+          archived: Boolean(row.archivedAt || row.project?.archivedAt),
+          archiveSource: row.archivedAt
+            ? "board"
+            : row.project?.archivedAt
+              ? "project"
+              : null,
           workspaceName: row.workspace.name,
           projectName: row.project?.name ?? null,
         })),

@@ -20,6 +20,7 @@ export default async function WorkspaceLayout({
   const boards = await getDatabase().board.findMany({
     where: {
       workspaceId: { in: workspaces.map((item) => item.id) },
+      archivedAt: null,
       // Boards of archived projects stay readable by link but leave navigation.
       AND: [
         boardScope(user),

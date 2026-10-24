@@ -414,7 +414,8 @@ export function WorkspaceSearch({ principalId }: { principalId: string }) {
                           </div>
                           {item.archived && (
                             <span className="command-item-hint">
-                              {kind === "board"
+                              {kind === "board" &&
+                              item.archiveSource === "project"
                                 ? "Archived project"
                                 : "Archived"}
                             </span>

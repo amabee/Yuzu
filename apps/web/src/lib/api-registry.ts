@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  boardArchiveSchema,
   commentChangeSchema,
   commentCreateSchema,
   createTaskSchema,
@@ -53,6 +54,15 @@ const withViewQuery = (schema: z.ZodType) => {
 };
 
 export const apiEndpoints: ApiEndpoint[] = [
+  {
+    method: "POST",
+    path: "/boards/archive-board",
+    group: "Boards and tasks",
+    summary: "Archive or restore a board",
+    access: "write",
+    body: boardArchiveSchema,
+    returns: "Board id and archive state; managers only, version checked",
+  },
   {
     method: "GET",
     path: "/boards/state",

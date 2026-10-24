@@ -32,6 +32,22 @@ type Column = {
   config: unknown;
 };
 
+async function requireUnarchivedLinkedBoard(
+  tx: DatabaseTransaction,
+  boardId: string,
+) {
+  const board = await tx.board.findUnique({
+    where: { id: boardId },
+    select: { archivedAt: true, project: { select: { archivedAt: true } } },
+  });
+  if (board?.archivedAt || board?.project?.archivedAt)
+    throw new SetupError(
+      403,
+      "BOARD_ARCHIVED",
+      "A linked board is archived. Restore it before changing its links or fields.",
+    );
+}
+
 const invalid = (message: string) =>
   new SetupError(422, "INVALID_LINK", message);
 
@@ -102,6 +118,7 @@ export async function syncLinks(
   const added = [...final].filter((id) => !existing.has(id));
   const removed = rows.filter((row) => !final.has(other(row)));
   if (!added.length && !removed.length) return;
+  await requireUnarchivedLinkedBoard(tx, config.targetBoardId);
   const mirror = await tx.boardColumn.findUnique({
     where: { id: config.mirrorFieldId },
   });
@@ -411,6 +428,7 @@ export async function removeRelationField(
 ) {
   const config = relationConfig(field.config);
   if (!config) return [];
+  await requireUnarchivedLinkedBoard(tx, config.targetBoardId);
   const ids = [field.id, config.mirrorFieldId];
   await tx.recordLink.deleteMany({
     where: { fieldId: config.primary ? field.id : config.mirrorFieldId },
