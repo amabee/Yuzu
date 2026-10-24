@@ -157,6 +157,12 @@ export async function access(
     },
   });
   if (!board) throw notFound();
+  if (write && board.archivedAt)
+    throw new SetupError(
+      403,
+      "BOARD_ARCHIVED",
+      "This board is archived. Restore the board to make changes.",
+    );
   if (write && board.project?.archivedAt)
     throw new SetupError(
       403,
@@ -179,6 +185,7 @@ export async function access(
   return {
     user,
     board,
+    readOnly: Boolean(board.archivedAt || board.project?.archivedAt),
     canManage:
       isAdministrator(user.role) ||
       board.managers.some((manager) => manager.userId === user.id),
@@ -532,10 +539,11 @@ export function canEdit(
   context: Awaited<ReturnType<typeof access>>,
 ) {
   return (
-    context.canManage ||
-    task.createdById === context.user.id ||
-    task.assignees.some((person) => person.userId === context.user.id) ||
-    task.editors.some((person) => person.userId === context.user.id)
+    !context.readOnly &&
+    (context.canManage ||
+      task.createdById === context.user.id ||
+      task.assignees.some((person) => person.userId === context.user.id) ||
+      task.editors.some((person) => person.userId === context.user.id))
   );
 }
 export function snapshot(task: LoadedTask) {
@@ -824,8 +832,14 @@ export async function boardState(
           name: proposal.task?.name ?? "New task request",
           createdAt: proposal.createdAt.toISOString(),
         })),
-        canManage: context.canManage,
-        canManageManagers: isAdministrator(context.user.role),
+        readOnly: context.readOnly,
+        archivedAt: context.board.archivedAt?.toISOString() ?? null,
+        projectArchived: Boolean(context.board.project?.archivedAt),
+        canArchive: context.canManage,
+        boardVersion: context.board.updatedAt.toISOString(),
+        canManage: context.canManage && !context.readOnly,
+        canManageManagers:
+          isAdministrator(context.user.role) && !context.readOnly,
         record: (() => {
           const { type, config } = boardRecord(context.board);
           return { type, ...config };
@@ -2246,8 +2260,12 @@ export async function taskComments(taskId: string, headers: Headers) {
       mentions: comment.deletedAt ? [] : comment.mentions,
       deletedAt: comment.deletedAt?.toISOString() ?? null,
       canEdit:
-        !task.archivedAt && !comment.deletedAt && comment.authorId === user.id,
+        !context.readOnly &&
+        !task.archivedAt &&
+        !comment.deletedAt &&
+        comment.authorId === user.id,
       canRemove:
+        !context.readOnly &&
         !task.archivedAt &&
         !comment.deletedAt &&
         (comment.authorId === user.id || context.canManage),

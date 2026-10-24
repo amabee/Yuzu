@@ -762,10 +762,15 @@ test("project page sections, search, dashboard filter and admin recovery", async
     await mp.getByRole("button", { name: "Restore" }).click();
     await expect(mp.getByText("This project is archived.")).toHaveCount(0);
 
-    // In the icon-only sidebar, a project's badge opens its boards.
+    // Collapsing keeps the module rail; boards live in the contextual panel.
     await mp.getByRole("button", { name: "Toggle navigation" }).click();
-    await mp.getByRole("button", { name: "Hidden plans boards" }).click();
-    await mp.getByRole("menuitem", { name: "Roadmap" }).click();
+    await expect(mp.locator(".shell-module-rail")).toBeVisible();
+    await expect(mp.locator(".shell-context-panel")).toBeHidden();
+    await mp.getByRole("button", { name: "Toggle navigation" }).click();
+    await mp
+      .getByRole("navigation", { name: "Projects", exact: true })
+      .getByRole("link", { name: "Roadmap", exact: true })
+      .click();
     await expect(mp).toHaveURL(new RegExp(`/boards/${boardId}$`));
   } finally {
     await miaSession.context.close();

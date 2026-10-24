@@ -35,7 +35,7 @@ export default async function ProjectPage({
         },
       },
       boards: {
-        where: { deletedAt: null },
+        where: { deletedAt: null, archivedAt: null },
         orderBy: [{ position: "asc" }, { createdAt: "asc" }],
         take: 200,
         select: { id: true, name: true },

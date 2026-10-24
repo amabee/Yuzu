@@ -730,10 +730,16 @@ async function runRule(rule: StoredRule, event: StoredEvent) {
     // A board in Trash skips quietly, so restoring it doesn't find its rules paused.
     const home = await tx.board.findUnique({
       where: { id: rule.boardId },
-      select: { deletedAt: true, project: { select: { deletedAt: true } } },
+      select: {
+        deletedAt: true,
+        archivedAt: true,
+        project: { select: { deletedAt: true, archivedAt: true } },
+      },
     });
     if (home?.deletedAt || home?.project?.deletedAt)
       return record({ outcome: "SKIPPED", detail: "The board is in Trash." });
+    if (home?.archivedAt || home?.project?.archivedAt)
+      return record({ outcome: "SKIPPED", detail: "The board is archived." });
     let context: Awaited<ReturnType<typeof access>>;
     try {
       context = await access(tx, rule.createdById, rule.boardId, true);
@@ -1262,7 +1268,8 @@ export async function processAutomationEvents(limit = 50) {
 /** Rules on boards in Trash (or in a project in Trash) wait until restored. */
 const liveBoard = {
   deletedAt: null,
-  OR: [{ projectId: null }, { project: { deletedAt: null } }],
+  archivedAt: null,
+  OR: [{ projectId: null }, { project: { deletedAt: null, archivedAt: null } }],
 };
 
 export async function scanDueAutomations() {

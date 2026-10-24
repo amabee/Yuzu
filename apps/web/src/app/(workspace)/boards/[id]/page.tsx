@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import { PersonAvatar } from "@/components/boards/board-presentation";
 import { PageCrumbs } from "@/components/page-crumbs";
-import { PauseAlert } from "@/components/pause/pause-alert";
 import { getDatabase } from "@yuzu/database";
 import { workspaceContext } from "@/server/workspace-access";
 import { boardScope, isAdministrator } from "@/server/team-access";
@@ -76,6 +75,7 @@ export default async function BoardPage({
     }));
   const canMove =
     manageSource &&
+    !board.archivedAt &&
     !board.project?.archivedAt &&
     (moveTargets.some((item) => item.id !== board.projectId) ||
       (board.projectId !== null && manageBoard));
@@ -115,11 +115,6 @@ export default async function BoardPage({
           { label: board.name },
         ]}
       />
-      {board.project?.archivedAt && (
-        <PauseAlert intent="warning" className="mb-4">
-          Archived project, read-only. Restore the project to make edits.
-        </PauseAlert>
-      )}
       <div className="board-heading">
         <div className="min-w-0 flex-1">
           <h1 className="board-title">{board.name}</h1>

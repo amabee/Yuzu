@@ -32,6 +32,7 @@ export function SavedViewControls({
   config,
   userId,
   canManage,
+  readOnly = false,
   boardId,
   onApply,
   onRefresh,
@@ -42,6 +43,7 @@ export function SavedViewControls({
   config: ViewConfig;
   userId: string;
   canManage: boolean;
+  readOnly?: boolean;
   boardId: string;
   onApply: (view: SavedView | null, config: ViewConfig) => void;
   onRefresh: () => Promise<unknown>;
@@ -50,6 +52,7 @@ export function SavedViewControls({
   const [editor, setEditor] = useState<Editor | null>(null);
   const latest = views.find((view) => view.id === active?.id);
   const canEdit =
+    !readOnly &&
     active &&
     (active.visibility === "SHARED" ? canManage : active.ownerId === userId) &&
     !!latest;
@@ -173,7 +176,7 @@ export function SavedViewControls({
           <Button
             variant="outline"
             size="sm"
-            disabled={mutation.isPending}
+            disabled={mutation.isPending || readOnly}
             onClick={() => {
               mutation.reset();
               setEditor({
