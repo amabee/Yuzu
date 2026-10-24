@@ -1,5 +1,6 @@
 "use client";
 import { useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { io, type Socket } from "socket.io-client";
 import { z } from "zod";
@@ -19,6 +20,7 @@ const configuration = z.discriminatedUnion("enabled", [
  *  no data; the refresh reads through the normal access scope. */
 export function useNavigationLiveSync(principalId: string) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   useEffect(() => {
     const abort = new AbortController();
     let socket: Socket | undefined;
@@ -40,7 +42,12 @@ export function useNavigationLiveSync(principalId: string) {
     const refresh = () => {
       // Coalesce bursts, such as a reorder followed by a rename.
       clearTimeout(pending);
-      pending = setTimeout(() => router.refresh(), 400);
+      pending = setTimeout(() => {
+        void queryClient.invalidateQueries({
+          queryKey: ["principal", principalId, "task-search", "navigation"],
+        });
+        router.refresh();
+      }, 400);
     };
     const renew = async () => {
       if (stopped || !socket) return;
@@ -104,5 +111,5 @@ export function useNavigationLiveSync(principalId: string) {
       clearTimeout(pending);
       socket?.removeAllListeners();
     };
-  }, [principalId, router]);
+  }, [principalId, router, queryClient]);
 }

@@ -942,3 +942,93 @@ test("a rule message can replace the built-in assignment notice", async ({
       "AUTOMATION: The task “Sample task” is yours now, from Team Owner 🎉",
     ]);
 });
+
+test("archived boards skip queued rules without pausing them and resume after restore", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  const { owner, boardId } = await ownerBoard(page);
+  const db = getDatabase();
+  const made = await post(page, "/api/v1/boards/create-task", {
+    boardId,
+    name: "Before archive",
+    createKey: crypto.randomUUID(),
+  });
+  expect(made.status()).toBe(200);
+  const taskId = (await made.json()).data.taskId as string;
+  const saved = await post(page, "/api/v1/automations/save", {
+    boardId,
+    name: "Prioritize new work",
+    trigger: { kind: "task.created" },
+    actions: [{ kind: "set.priority", value: "URGENT" }],
+  });
+  expect(saved.status()).toBe(200);
+  const rule = await db.automationRule.findFirstOrThrow({ where: { boardId } });
+  const archive = async (archived: boolean) => {
+    const stateResponse = await page.request.get(
+      `/api/v1/boards/state?boardId=${boardId}`,
+    );
+    const version = (await stateResponse.json()).data.boardVersion;
+    expect(
+      (
+        await post(page, "/api/v1/boards/archive-board", {
+          boardId,
+          archived,
+          version,
+        })
+      ).status(),
+    ).toBe(200);
+  };
+  await archive(true);
+  const event = await db.automationEvent.create({
+    data: {
+      boardId,
+      taskId,
+      kind: "task.created",
+      actorId: owner.id,
+      payload: {
+        after: {
+          statusId: "todo",
+          priority: "NORMAL",
+          groupId: null,
+          assigneeIds: [],
+          startDate: null,
+          dueDate: null,
+          fieldValues: {},
+        },
+      },
+    },
+  });
+  await expect
+    .poll(() => db.automationRun.count({ where: { eventId: event.id } }), {
+      timeout: 20_000,
+    })
+    .toBe(1);
+  const run = await db.automationRun.findFirstOrThrow({
+    where: { eventId: event.id },
+  });
+  expect(run.outcome).toBe("SKIPPED");
+  expect(run.detail).toBe("The board is archived.");
+  expect(
+    (await db.automationRule.findUniqueOrThrow({ where: { id: rule.id } }))
+      .enabled,
+  ).toBe(true);
+  expect(
+    (await db.task.findUniqueOrThrow({ where: { id: taskId } })).priority,
+  ).toBe("NORMAL");
+  await archive(false);
+  const next = await post(page, "/api/v1/boards/create-task", {
+    boardId,
+    name: "After restore",
+    createKey: crypto.randomUUID(),
+  });
+  expect(next.status()).toBe(200);
+  const nextId = (await next.json()).data.taskId as string;
+  await expect
+    .poll(
+      async () =>
+        (await db.task.findUniqueOrThrow({ where: { id: nextId } })).priority,
+      { timeout: 20_000 },
+    )
+    .toBe("URGENT");
+});

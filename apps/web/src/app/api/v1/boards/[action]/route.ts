@@ -1,3 +1,4 @@
+import { setBoardArchived } from "@/server/board-archive-service";
 import { mutateSavedView } from "@/server/saved-view-service";
 import { z } from "zod";
 import { notifyBoardMutation, notifyNavigationChange } from "@/server/realtime";
@@ -64,7 +65,9 @@ async function handle(request: Request, action: string) {
       );
     else if (request.method === "POST") {
       const body = await readSetupBody(request, 262_144);
-      if (["save-view", "select-view", "remove-view"].includes(action))
+      if (action === "archive-board")
+        data = await setBoardArchived(body, request.headers);
+      else if (["save-view", "select-view", "remove-view"].includes(action))
         data = await mutateSavedView(action, body, request.headers);
       else if (action === "comment")
         data = await createComment(body, request.headers);
@@ -96,6 +99,10 @@ async function handle(request: Request, action: string) {
         data,
       );
       // A new board appears in other people's sidebars.
+      if (action === "archive-board")
+        void notifyNavigationChange({
+          boardId: (data as { boardId: string }).boardId,
+        });
       if (action === "create-board") {
         const created = data as { id?: unknown };
         if (typeof created?.id === "string")

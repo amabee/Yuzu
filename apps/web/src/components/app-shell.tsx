@@ -471,10 +471,7 @@ export function AppShell({
             <SidebarTrigger aria-label="Toggle navigation" />
             <div id={CRUMBS_SLOT} className="shell-crumbs" />
             <div className="shell-actions">
-              <WorkspaceSearch
-                workspaces={workspaces}
-                principalId={principalId}
-              />
+              <WorkspaceSearch principalId={principalId} />
               <ModeSwitcher />
               <NotificationBell principalId={principalId} />
             </div>
