@@ -72,9 +72,11 @@ to build every internal system from scratch.
 > [!WARNING]
 > Yuzu is an early-stage project and is **not yet production-ready**.
 
-**Current phase: 4 — Automation and integration.** Board rules, email
-notifications, administration and the API are built. Release readiness
-(Phase 5) comes next.
+**Current phase: CRM MVP planning (revised roadmap, Phase 2).** Automation,
+email, administration/API, typed records, cross-board links/rollups and Trash are
+implemented. Task and Deal boards share compatibility coverage. The Next.js
+16.4.3 security patch is merged. CRM design comes next; deployment/go-live
+remains deferred. Blueprint and App Builder are later phases.
 
 - [x] Foundation, database, UUIDv7 records, and responsive shadcn UI
 - [x] First installation, sign-in, invitations, and password recovery
@@ -93,6 +95,8 @@ notifications, administration and the API are built. Release readiness
 - [x] Email notifications, daily digests, and rule emails
 - [x] People administration (roles, deactivation, ownership), workspaces, and an audit log
 - [x] Personal API tokens, OpenAPI spec, and an in-app API reference
+- [x] Typed Task/Deal/custom records, cross-board links, rollups, and Trash
+- [ ] CRM MVP (planning)
 - [ ] Release deployment, recovery, and pilot verification
 - [ ] Blueprint/App Builder exploration
 
@@ -495,14 +499,30 @@ matures.
 
 ## Roadmap
 
-| Phase | Focus                    | Scope                                                                                            |
-| :---: | ------------------------ | ------------------------------------------------------------------------------------------------ |
-|   1   | **Foundation**           | Repository structure, database, validation, and shared components.                               |
-|   2   | **Core work management** | Authentication, workspaces, boards, items, custom fields, and views.                             |
-|   3   | **Collaboration**        | Task details, comments, activity, notifications, and reporting.                                  |
-|   4   | **Automation** _(now)_   | Triggers, conditions, actions, workflow execution, and monitoring.                               |
-|   5   | **Beta readiness**       | Permissions testing, deployment documentation, backups, restore testing, and security hardening. |
-|   6   | **Extensibility**        | Yuzu Blueprint, internal App Builder, and integration tooling.                                   |
+The original foundation, work-management, collaboration and automation phases
+are implemented. The revised platform roadmap continues below; implemented does
+not mean production-ready.
+
+| Phase | Focus                       | Status and scope                                                                                               |
+| :---: | --------------------------- | -------------------------------------------------------------------------------------------------------------- |
+|   1   | **Record foundation**       | Implemented: Task/Deal/custom board records, links, count/sum rollups, and compatibility tests.                |
+|   2   | **CRM MVP**                 | **Planning next:** Companies, Contacts, lead lifecycle/conversion, pipelines, activities and delivery handoff. |
+|   3   | **Release gate**            | Deferred: deployment, backup/restore, upgrade procedures and operational security verification.                |
+|   4   | **Work platform depth**     | Later: subitems, formulas, richer reporting, forms and configurable dashboards.                                |
+|   5   | **Blueprint / App Builder** | Later: reusable system definitions and internal applications.                                                  |
+
+See [CRM planning](docs/specs/crm-mvp-plan.md) for the proposed slices and open
+product decisions.
+
+### Finding Trash
+
+Open **Settings → Trash** (`/settings/trash`) to restore deleted records, boards
+and projects you manage. Admins can permanently erase items and configure
+retention. On a project page, managers can use the trash-can button beside Edit
+and Archive to delete the project. On a board, **Deleted** opens its record Trash.
+Private projects remain hidden from people without access, including admins.
+Erasing large selections continues in bounded batches; interruptions leave the
+remaining items in Trash, where erasure can be retried.
 
 ## Security
 

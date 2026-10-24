@@ -1,24 +1,20 @@
 # Yuzu development handoff
 
-Snapshot: 2026-10-19, end of day (Asia/Singapore). Read this before older progress notes.
+Snapshot: 2026-10-24 (Asia/Singapore). Read this before older progress notes.
 Verify live Git, process, and Docker state when resuming; this is a snapshot.
 
 ## Where we are
 
-Yuzu is a self-hosted work-management app, initially for a small internal team.
-The user plans to run it on their computer first, then a shared server. Phases
-1–3 are merged, plus Projects, saved-view layouts, Calendar/Timeline, task start
-dates, the app redesign, the "pause point" design system, the task panel, the
-Kanban redesign and the notification bell dropdown. **Phase 4 (automation)
-slices 1 and 2 are merged; email notifications are in PRs #27/#28,
-administration in #29 and the API on `feat/api-tokens`.** The application remains
-pre-production.
+Yuzu is a self-hosted, single-tenant business/work-management platform and remains
+pre-production. The original phases 1–4 are implemented, including automation,
+email (#27/#28), administration (#29), API tokens (#31), typed records (#32),
+cross-board links/rollups (#33), Trash (#34), and Task/Deal compatibility coverage
+(#35). Main includes the Next.js 16.4.3 security patch (#36, merge `5812853`).
 
-Main: merge of PR #25 (`b66dfbe`). Recent PRs: #20 finish-up pass (pause style
-everywhere, bell dropdown, no theme switcher on sign-in/welcome), #21 automation
-engine, #22 Kanban hydration fix, #23 automations UI, #24 automation slice 2
-engine, #25 slice 2 builder, custom notification messages and the rule
-notification visibility fix.
+**Next product work is planning revised Phase 2: CRM MVP**, following the existing
+business-platform roadmap. Blueprint/App Builder is a later phase.
+Deployment/go-live remains deferred. See `docs/specs/crm-mvp-plan.md` for proposed delivery slices and open
+decisions. Plan and agree substantial behavior before implementing CRM.
 
 Unrelated local modifications are usually present in the working tree (many
 files show CRLF-only churn). Stage only files with real changes
@@ -369,9 +365,10 @@ Contact, Lead, Activity in phase 2) to its `types` list. Phase 1 is complete.
 
 ## Next session
 
-Merge order: #31 → #32 → #33 → #34 → type matrix. All target `main`.
-Then plan phase 2 (CRM MVP) with the user. Open decision first: Lead as its
-own record that converts, or a lifecycle stage on Contact.
+PRs #31–#36 are merged. Finish/review `fix/trash-access-and-batching`, then
+resume CRM planning with the user. Lead as an independent record versus a Contact
+lifecycle is still an open decision; do not assume it is settled. Blueprint/App
+Builder and deployment are not next implementation tasks.
 
 Small leftovers: the theme switcher still shows on setup, invitation and
 password-reset pages (the user only asked to remove it from sign-in/welcome).
@@ -396,3 +393,25 @@ workspace types, 184 web unit tests, realtime/protocol checks (Redis-only test
 skipped), production build, and three focused welcome/setup/health browser tests
 passed. Docker was initially stopped; browser verification passed after starting
 it. The first build completed with database-unavailable warnings.
+
+## Trash hardening (2026-10-24)
+
+Branch `fix/trash-access-and-batching` starts from main after #36.
+
+- Record restore checks managed Trash visibility before disclosing parent names
+  or attempting parent restoration, including for admins outside private projects.
+- Erase responses include `before` (snapshot cutoff), `remaining` and batch counts.
+  Each request removes at most 100 records, 200 attachment rows, 20 empty boards
+  and 10 empty projects. Parents are deleted only when empty. The UI continues
+  batches with the original cutoff; newly deleted roots wait for another command.
+  Interrupted erasure is partial and irreversible for completed batches; retry
+  from Trash to finish the remainder. Object deletion follows commit as before.
+- Auto-retention drains one batch per worker scan; large containers take multiple
+  scans. Each changed batch is audited. No migration is required.
+- Navigation: Settings → Trash; project-page trash icon (managers); board Deleted.
+
+Validation: formatting, lint, workspace types, 184 web unit tests plus
+realtime/protocol checks (Redis-only test skipped), production build, and all four
+Trash browser tests pass. Regression coverage includes hidden private parent
+names, 205-record containers, 201 attachments, snapshot cutoffs, UI batch
+continuation, and worker retention. Full browser suite was not rerun.
