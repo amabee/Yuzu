@@ -7112,3 +7112,20 @@ body:has(.pause-sheet[data-state="open"]) .yuzu-toast-viewport {
   outline: 2px solid var(--ring);
   outline-offset: 3px;
 }
+
+/* CRM overview: live sections link to their screens. */
+.crm-module-link {
+  color: var(--primary);
+  text-decoration: none;
+}
+.crm-module-link:hover {
+  text-decoration: underline;
+}
+.crm-module-planned {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.crm-module-areas li[data-ready] svg {
+  color: var(--primary);
+}

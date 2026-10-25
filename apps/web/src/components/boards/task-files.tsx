@@ -47,8 +47,8 @@ export function TaskFiles({
   onTransferNotice,
   uploads,
 }: {
-  state: BoardState;
-  task: BoardTask;
+  state: Pick<BoardState, "boardId" | "currentUserId">;
+  task: Pick<BoardTask, "id" | "archivedAt">;
   active: boolean;
   syncInterval: number;
   onNotice: (message: string, kind: "success" | "error") => void;

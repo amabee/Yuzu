@@ -39,6 +39,7 @@ const coreKeys: Record<string, string> = {
   assigneeIds: "assignees",
   startDate: "start_date",
   dueDate: "due_date",
+  legalName: "legal_name",
 };
 function displayValue(value: unknown, key: string, proposal: Proposal): string {
   if (key === "checklist" && Array.isArray(value))
