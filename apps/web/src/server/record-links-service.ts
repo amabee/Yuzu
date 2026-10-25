@@ -1,3 +1,4 @@
+import { workBoardWhere } from "@/lib/record-types";
 import { hierarchyScope } from "./task-hierarchy";
 import { after } from "next/server";
 import {
@@ -319,6 +320,8 @@ export async function linkTargets(boardId: string, headers: Headers) {
       where: {
         workspaceId: context.board.workspaceId,
         ...boardScope(context.user),
+        // Links to Companies and Contacts come with the CRM link slice.
+        ...workBoardWhere,
       },
       orderBy: { name: "asc" },
       take: 200,

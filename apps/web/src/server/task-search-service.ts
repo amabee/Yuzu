@@ -1,3 +1,5 @@
+import { crmRecordHref } from "@/lib/crm-contract";
+import { isCrmRecordType } from "@/lib/record-types";
 import { hierarchyScope } from "./task-hierarchy";
 import { asRecordType, resolveRecordConfig } from "@/lib/record-types";
 import { getDatabase, type Prisma } from "@yuzu/database";
@@ -70,6 +72,9 @@ export async function searchTasks(
           archived: Boolean(task.archivedAt || task.parent?.archivedAt),
           boardId: task.board.id,
           boardName: task.board.name,
+          ...(isCrmRecordType(task.board.recordType)
+            ? { href: crmRecordHref(task.board.recordType, task.id) }
+            : {}),
           recordName: task.parentId
             ? "Subitem"
             : resolveRecordConfig(

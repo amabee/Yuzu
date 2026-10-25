@@ -1,3 +1,4 @@
+import { workBoardWhere } from "@/lib/record-types";
 import Link from "next/link";
 import { PageCrumbs } from "@/components/page-crumbs";
 import { getDatabase } from "@yuzu/database";
@@ -19,6 +20,7 @@ export default async function BoardsPage({
     where: {
       AND: [
         boardScope(user),
+        workBoardWhere,
         archived
           ? {
               OR: [

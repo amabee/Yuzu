@@ -1,3 +1,4 @@
+import { workBoardWhere } from "@/lib/record-types";
 import { CsvTransferRuntime } from "@/components/transfers/csv-transfer-runtime";
 import { workspaceContext } from "@/server/workspace-access";
 import {
@@ -21,6 +22,8 @@ export default async function WorkspaceLayout({
     where: {
       workspaceId: { in: workspaces.map((item) => item.id) },
       archivedAt: null,
+      // Companies and Contacts appear in CRM, not Work navigation.
+      ...workBoardWhere,
       // Boards of archived projects stay readable by link but leave navigation.
       AND: [
         boardScope(user),

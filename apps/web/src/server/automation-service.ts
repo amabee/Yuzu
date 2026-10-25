@@ -1,3 +1,5 @@
+import { refuseCrmCollection } from "./crm-profile";
+import { workBoardWhere } from "@/lib/record-types";
 import {
   taskAvailable,
   taskArchived,
@@ -352,6 +354,7 @@ export async function listAutomations(boardId: string, headers: Headers) {
       where: {
         id: { not: boardId },
         ...boardScope(user),
+        ...workBoardWhere,
         ...(isAdministrator(user.role)
           ? {}
           : { managers: { some: { userId: user.id } } }),
@@ -428,6 +431,7 @@ export async function mutateAutomation(
   input: unknown,
   headers: Headers,
 ) {
+  await refuseCrmCollection(input, "Automations");
   const { user } = await requireIdentity(headers);
   if (action === "save-automation") {
     const body = automationRuleInputSchema.parse(input);

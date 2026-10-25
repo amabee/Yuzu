@@ -2,6 +2,7 @@ import { boardPaginationSchema, type BoardPagination } from "./board-query";
 import { savedViewSchema, type SavedView } from "./saved-view-contract";
 import { z } from "zod";
 import { recordId, personId } from "./id-contract";
+import { profileColumnKeys, profileSchemas } from "./crm-contract";
 export { recordId, personId } from "./id-contract";
 import {
   builtinForColumn,
@@ -67,6 +68,8 @@ export const coreKeys = [
   "priority",
   "start_date",
   "due_date",
+  // Company/Contact profile columns; their values live in the profile.
+  ...profileColumnKeys,
 ];
 const names = z.string().trim().min(1).max(200);
 export const checklistSchema = z
@@ -104,6 +107,8 @@ const changes = z
     groupId: recordId.nullable(),
     assigneeIds: ids,
     fieldValues: z.record(recordId, z.unknown()),
+    // Company/Contact boards only; the server rejects them elsewhere.
+    ...profileSchemas,
   })
   .strict();
 export const createTaskSchema = changes

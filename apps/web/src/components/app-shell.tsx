@@ -3,6 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Building2,
   ChevronsUpDown,
   Check,
   Search,
@@ -174,7 +175,9 @@ function WorkspaceSidebar({
   const isCrm = pathname === "/crm" || pathname.startsWith("/crm/");
   const moduleNavigation = isCrm
     ? [
-        { href: "/crm", label: "CRM overview", icon: ContactRound },
+        { href: "/crm", label: "CRM overview", icon: Home },
+        { href: "/crm/companies", label: "Companies", icon: Building2 },
+        { href: "/crm/contacts", label: "Contacts", icon: ContactRound },
         ...navigation.filter(
           (item) =>
             item.href === "/approvals" || item.href === "/notifications",
@@ -198,8 +201,10 @@ function WorkspaceSidebar({
       ),
   );
   const workspaceLabel = activeWorkspace?.name ?? workspaceName;
+  // Overview links match only themselves; sections match their pages too.
   const active = (href: string) =>
-    pathname === href || (href !== "/" && pathname.startsWith(`${href}/`));
+    pathname === href ||
+    (href !== "/" && href !== "/crm" && pathname.startsWith(`${href}/`));
   return (
     <Sidebar
       collapsible="icon"
