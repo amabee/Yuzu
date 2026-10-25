@@ -13,6 +13,7 @@ import { SetupError } from "./setup/security";
 import { requireAdministrator, requireIdentity } from "./team-access";
 import { allowSignIn } from "./auth-rate-limit";
 import { audit } from "./audit";
+import { invalidateStageRequests } from "./stage-requests";
 import {
   disconnectPeople,
   notifyNavigationChange,
@@ -185,6 +186,13 @@ export async function deactivatePerson(input: unknown, headers: Headers) {
       where: { userId: target.id, revokedAt: null },
       data: { revokedAt: new Date(), revokedById: me.id },
     });
+    // Their waiting stage requests can't be approved any more.
+    await invalidateStageRequests(
+      tx,
+      { authorId: target.id },
+      me.id,
+      "The person who asked was deactivated.",
+    );
     const emails = await tx.emailMessage.updateMany({
       where: { userId: target.id, status: "QUEUED" },
       data: { status: "SKIPPED", error: "The account was deactivated." },

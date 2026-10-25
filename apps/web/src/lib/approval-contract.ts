@@ -34,7 +34,11 @@ export const proposalStatusSchema = z.enum([
   "REJECTED",
   "WITHDRAWN",
   "STALE",
+  "CANCELLED",
+  "INVALIDATED",
+  "EXPIRED",
 ]);
+export const proposalKindSchema = z.enum(["TASK", "DEAL_STAGE"]);
 export const pendingApprovalSchema = z.object({
   id: recordId,
   taskId: recordId.nullable(),
@@ -52,6 +56,9 @@ export const approvalQueueSchema = z.object({
     pendingApprovalSchema.extend({
       boardId: recordId,
       boardName: z.string(),
+      kind: proposalKindSchema,
+      /** Stage requests: where the deal is asked to move. */
+      stage: z.object({ from: z.string(), to: z.string() }).nullable(),
       status: proposalStatusSchema,
       changes: values,
       baseline: values,
@@ -70,6 +77,7 @@ export const approvalQueueSchema = z.object({
       reviewerName: z.string().nullable(),
       canDecide: z.boolean(),
       canWithdraw: z.boolean(),
+      canCancel: z.boolean(),
       reason: z.string().nullable(),
       decidedByName: z.string().nullable(),
       decidedAt: z.string().nullable(),
@@ -81,13 +89,17 @@ export type ApprovalQueue = z.infer<typeof approvalQueueSchema>;
 export const proposalDecisionSchema = z
   .object({
     proposalId: recordId,
-    action: z.enum(["approve", "reject", "withdraw"]),
+    action: z.enum(["approve", "reject", "withdraw", "cancel"]),
     reason: z.string().trim().max(500).optional(),
   })
   .strict()
   .refine(
     (body) => body.action !== "reject" || Boolean(body.reason),
     "Give a short reason for rejection.",
+  )
+  .refine(
+    (body) => body.action !== "cancel" || Boolean(body.reason),
+    "Say why you're cancelling this request.",
   );
 export const taskMutationResultSchema = z.discriminatedUnion("outcome", [
   z.object({

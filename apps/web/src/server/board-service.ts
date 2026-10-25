@@ -120,9 +120,17 @@ import {
   pipelineOf,
   prepareDeal,
   splitDeal,
-  stageApprovalBlocked,
   updateDeal,
 } from "./deal-profile";
+import {
+  lockPipelineRow,
+  pendingStageRequest,
+  reconcileStageRequest,
+  requestStageChange,
+  seesStageRequests,
+  stageRequestPending,
+} from "./stage-requests";
+import { stageNeedsApproval, type StageCategory } from "@/lib/deal-contract";
 import {
   checkProfileRules,
   createProfile,
@@ -1300,6 +1308,8 @@ export async function applyTaskRecord(
   /** Set when a rule makes this change, so chains can be limited. */
   automation?: AutomationContext,
   hierarchyRevision?: number,
+  /** Set when an approved stage request makes this change. */
+  approval?: { proposalId: string; requestedById: string },
 ) {
   if (!taskAvailable(task)) throw notFound();
   if (task.parentId) {
@@ -1331,6 +1341,7 @@ export async function applyTaskRecord(
   const deal = changes
     ? await prepareDeal(tx, context.board, context.user, changes, task)
     : null;
+  if (deal && approval) deal.requestedById = approval.requestedById;
   const { profile, rest } = splitProfile(changes ?? {});
   const {
     rest: { assigneeIds, fieldValues, dueDate, startDate, ...scalar },
@@ -1393,6 +1404,15 @@ export async function applyTaskRecord(
       "The parent task was archived. Review it before submitting again.",
     );
   const after = await loadTask(tx, task.id, Boolean(task.parentId));
+  if (after!.dealProfile)
+    await reconcileStageRequest(
+      tx,
+      task.id,
+      snapshot(after!),
+      actorId,
+      action,
+      approval?.proposalId,
+    );
   if (assigneeIds)
     await createNotifications(tx, {
       recipientIds: assigneeIds.filter(
@@ -1566,16 +1586,33 @@ export async function createTaskInTransaction(
   };
   validateCore(initial, context.board, people);
   validateValues(initial.fieldValues, context.board, people);
-  await prepareDeal(tx, context.board, context.user, initial, null);
+  const deal = await prepareDeal(
+    tx,
+    context.board,
+    context.user,
+    initial,
+    null,
+  );
   const policy = await readApprovalPolicy(tx, context.board);
-  // New Deals start in the default stage while stage approvals are paused.
-  if (
-    policy.enabled &&
-    pipeline &&
-    initial.stageId &&
-    initial.stageId !== pipeline.defaultStageId
-  )
-    throw stageApprovalBlocked();
+  // A deal can't skip a stage request by starting in the stage it asks for.
+  if (policy.enabled && pipeline && deal) {
+    const start = pipeline.stages.find(
+      (stage) => stage.id === pipeline.defaultStageId,
+    )!;
+    if (
+      deal.target.id !== start.id &&
+      stageNeedsApproval(
+        pipeline.stageApproval as "CLOSING" | "ALL",
+        start.category as StageCategory,
+        deal.target.category as StageCategory,
+      )
+    )
+      throw new SetupError(
+        409,
+        "STAGE_APPROVAL_REQUIRED",
+        `Moving to ${deal.target.name} needs approval on this pipeline. Create the deal in ${start.name}, then request the move.`,
+      );
+  }
   if (needsApproval(policy, "CREATE", initial, context.board.columns))
     return submitProposal(tx, {
       boardId: body.boardId,
@@ -1764,19 +1801,72 @@ export async function mutateTaskInTransaction(
       "INHERITED_GROUP",
       "Subitems inherit their parent's group.",
     );
+  let deal: Awaited<ReturnType<typeof prepareDeal>> = null;
   if (changes) {
     validateCore(changes, context.board, people);
     validateValues(changes.fieldValues, context.board, people);
-    await prepareDeal(tx, context.board, context.user, changes, task);
+    deal = await prepareDeal(tx, context.board, context.user, changes, task);
   }
   const policy = await readApprovalPolicy(tx, context.board);
-  if (policy.enabled && changes && movesStage(changes, task))
-    throw stageApprovalBlocked();
   const operation = action === "archive" ? "ARCHIVE" : "UPDATE";
   const proposedChanges = actualApprovalChanges(snapshot(task), changes ?? {});
+  // Stage moves follow the pipeline's stage rule, not protected fields.
+  const otherChanges = Object.fromEntries(
+    Object.entries(proposedChanges).filter(
+      ([key]) => key !== "stageId" && key !== "stageReason",
+    ),
+  );
+  const others = deal ? otherChanges : proposedChanges;
+  if (deal && changes && movesStage(changes, task)) {
+    const rule = await lockPipelineRow(tx, task.boardId);
+    const waiting = await pendingStageRequest(tx, task.id);
+    if (waiting)
+      throw stageRequestPending(
+        seesStageRequests(
+          context.user,
+          context.canManage,
+          policy,
+        )(waiting.authorId),
+      );
+    const fromCategory = deal.source!.category as StageCategory;
+    const toCategory = deal.target.category as StageCategory;
+    if (policy.enabled) {
+      if (
+        Object.keys(otherChanges).length &&
+        (stageNeedsApproval(rule!, fromCategory, toCategory) ||
+          needsApproval(policy, operation, others, context.board.columns))
+      )
+        throw new SetupError(
+          422,
+          "STAGE_CHANGE_ALONE",
+          "Move the stage on its own while this pipeline has approvals on, then change the other fields.",
+        );
+      if (stageNeedsApproval(rule!, fromCategory, toCategory))
+        return requestStageChange(tx, {
+          boardId: task.boardId,
+          taskId: task.id,
+          authorId: user.id,
+          requestKey,
+          requestDigest,
+          changes: {
+            stageId: deal.target.id,
+            ...(changes.stageReason
+              ? { stageReason: changes.stageReason }
+              : {}),
+          },
+          snapshot: snapshot(task),
+          policy,
+          eligible: people,
+          sourceRevision: task.revision,
+          rule: rule!,
+          from: deal.source!,
+          to: deal.target,
+        });
+    }
+  }
   if (
     ["update", "archive"].includes(action) &&
-    needsApproval(policy, operation, proposedChanges, context.board.columns)
+    needsApproval(policy, operation, others, context.board.columns)
   )
     return submitProposal(tx, {
       boardId: task.boardId,

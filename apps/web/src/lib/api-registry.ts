@@ -118,7 +118,7 @@ export const apiEndpoints: ApiEndpoint[] = [
     group: "Boards and tasks",
     summary: "Change a task",
     description:
-      "Send the task's current revision. If someone changed it since, you get 409 and nothing is overwritten. Changes that need approval become a request.",
+      "Send the task's current revision. If someone changed it since, you get 409 and nothing is overwritten. Changes that need approval become a request. On CRM pipelines with approvals on, send a stage move on its own: moves the pipeline's stage rule covers become a stage request, one per deal at a time.",
     access: "write",
     body: updateTaskSchema,
     returns: "The task's new revision, or the approval request",
@@ -450,7 +450,7 @@ export const apiEndpoints: ApiEndpoint[] = [
     group: "CRM deals",
     summary: "Change a pipeline's stages",
     description:
-      "Add, rename, recategorize, move or remove a stage, or choose the default, against the pipeline version. A pipeline keeps an Open, a Won and a Lost stage; stages in use can't be removed or recategorized.",
+      "Add, rename, recategorize, move or remove a stage, choose the default, or set which stage moves need approval (CLOSING or ALL), against the pipeline version. A pipeline keeps an Open, a Won and a Lost stage; stages used by deals or waiting stage requests can't be removed or recategorized.",
     access: "write",
     body: stageCommandSchema,
     returns: "The new pipeline version",

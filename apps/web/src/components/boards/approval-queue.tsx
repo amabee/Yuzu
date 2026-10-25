@@ -16,6 +16,7 @@ import { YuzuToast, type YuzuToastNotice } from "@/components/ui/yuzu-toast";
 import { apiRequest } from "@/lib/api-client";
 import {
   approvalQueueSchema,
+  proposalStatusSchema,
   type ApprovalQueue,
 } from "@/lib/approval-contract";
 import { useApprovalLiveSync } from "./use-board-live-sync";
@@ -28,12 +29,17 @@ const states = {
   REJECTED: "Rejected",
   WITHDRAWN: "Withdrawn",
   STALE: "Needs resubmission",
+  CANCELLED: "Cancelled",
+  INVALIDATED: "No longer valid",
+  EXPIRED: "Expired",
 };
 const operations = {
   CREATE: "Create task",
   UPDATE: "Change task",
   ARCHIVE: "Archive task",
 };
+const operationOf = (proposal: Proposal) =>
+  proposal.kind === "DEAL_STAGE" ? "Move deal" : operations[proposal.operation];
 const coreKeys: Record<string, string> = {
   statusId: "status",
   assigneeIds: "assignees",
@@ -74,6 +80,25 @@ function displayValue(value: unknown, key: string, proposal: Proposal): string {
   return item(value);
 }
 function changeRows(proposal: Proposal) {
+  if (proposal.stage)
+    return [
+      {
+        key: "stage",
+        label: "Stage",
+        before: proposal.stage.from,
+        after: proposal.stage.to,
+      },
+      ...(typeof proposal.changes.stageReason === "string"
+        ? [
+            {
+              key: "stageReason",
+              label: "Note",
+              before: "—",
+              after: proposal.changes.stageReason,
+            },
+          ]
+        : []),
+    ];
   if (proposal.operation === "ARCHIVE")
     return [
       {
@@ -129,7 +154,8 @@ export function ApprovalQueueView({
   const [selectedId, setSelectedId] = useState<string | null>(
     initialRequestId ?? null,
   );
-  const [rejecting, setRejecting] = useState(false);
+  /** Rejecting and cancelling both ask for a reason first. */
+  const [closing, setClosing] = useState<"reject" | "cancel" | null>(null);
   const [reason, setReason] = useState("");
   const [notice, setNotice] = useState<YuzuToastNotice | null>(null);
   const queryClient = useQueryClient();
@@ -164,12 +190,12 @@ export function ApprovalQueueView({
     mutationKey: prefix,
     mutationFn: async (input: {
       proposalId: string;
-      action: "approve" | "reject" | "withdraw";
+      action: "approve" | "reject" | "withdraw" | "cancel";
       reason?: string;
     }) =>
       z
         .object({
-          status: z.enum(["APPROVED", "REJECTED", "WITHDRAWN", "STALE"]),
+          status: proposalStatusSchema.exclude(["PENDING"]),
           reason: z.string().nullable(),
         })
         .parse(
@@ -183,12 +209,14 @@ export function ApprovalQueueView({
     onSuccess: async (result) => {
       setSelectedId(null);
       setRequestId(undefined);
-      setRejecting(false);
+      setClosing(null);
       setReason("");
       setNotice({
         id: crypto.randomUUID(),
         kind:
-          result.status === "STALE"
+          result.status === "STALE" ||
+          result.status === "EXPIRED" ||
+          result.status === "INVALIDATED"
             ? "warning"
             : result.status === "APPROVED"
               ? "success"
@@ -311,7 +339,7 @@ export function ApprovalQueueView({
                 aria-label={`Review ${proposal.name}`}
                 onClick={() => {
                   setSelectedId(proposal.id);
-                  setRejecting(false);
+                  setClosing(null);
                   setReason("");
                   mutation.reset();
                 }}
@@ -324,7 +352,7 @@ export function ApprovalQueueView({
                     {proposal.name}
                   </strong>
                   <span className="mt-1 block text-xs text-muted-foreground">
-                    {operations[proposal.operation]} · {proposal.boardName}
+                    {operationOf(proposal)} · {proposal.boardName}
                   </span>
                   <span className="mt-1 block text-xs text-muted-foreground">
                     Requested by {proposal.authorName} ·{" "}
@@ -385,7 +413,7 @@ export function ApprovalQueueView({
                   {selected.name}
                 </SheetTitle>
                 <SheetDescription className="mt-2 text-sm">
-                  {operations[selected.operation]} on{" "}
+                  {operationOf(selected)} on{" "}
                   <Link
                     className="text-primary underline"
                     href={`/boards/${selected.boardId}`}
@@ -444,7 +472,12 @@ export function ApprovalQueueView({
                       title={
                         selected.status === "STALE"
                           ? "Why resubmission is needed"
-                          : "Decision reason"
+                          : selected.status === "CANCELLED"
+                            ? "Why it was cancelled"
+                            : selected.status === "EXPIRED" ||
+                                selected.status === "INVALIDATED"
+                              ? "Why it closed"
+                              : "Decision reason"
                       }
                     >
                       <p className="whitespace-pre-wrap break-words">
@@ -452,34 +485,43 @@ export function ApprovalQueueView({
                       </p>
                     </PauseAlert>
                   )}
-                  {selected.canDecide && rejecting && (
-                    <form
-                      id="reject-request"
-                      className="space-y-3"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        mutation.mutate({
-                          proposalId: selected.id,
-                          action: "reject",
-                          reason,
-                        });
-                      }}
-                    >
-                      <label className="task-field-label">
-                        Rejection reason
-                        <textarea
-                          aria-label="Rejection reason"
-                          className="task-textarea"
-                          rows={3}
-                          required
-                          maxLength={500}
-                          value={reason}
-                          onChange={(event) => setReason(event.target.value)}
-                          disabled={mutation.isPending}
-                        />
-                      </label>
-                    </form>
-                  )}
+                  {closing &&
+                    (closing === "reject"
+                      ? selected.canDecide
+                      : selected.canCancel) && (
+                      <form
+                        id="reject-request"
+                        className="space-y-3"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          mutation.mutate({
+                            proposalId: selected.id,
+                            action: closing,
+                            reason,
+                          });
+                        }}
+                      >
+                        <label className="task-field-label">
+                          {closing === "reject"
+                            ? "Rejection reason"
+                            : "Why are you cancelling it?"}
+                          <textarea
+                            aria-label={
+                              closing === "reject"
+                                ? "Rejection reason"
+                                : "Cancellation reason"
+                            }
+                            className="task-textarea"
+                            rows={3}
+                            required
+                            maxLength={500}
+                            value={reason}
+                            onChange={(event) => setReason(event.target.value)}
+                            disabled={mutation.isPending}
+                          />
+                        </label>
+                      </form>
+                    )}
                   {selected.status === "PENDING" &&
                     !selected.canDecide &&
                     !selected.canWithdraw && (
@@ -502,25 +544,35 @@ export function ApprovalQueueView({
                 </div>
               </div>
               <footer className="task-sheet-footer">
-                {selected.canDecide && (
+                {(selected.canDecide || selected.canCancel) && (
                   <>
-                    {rejecting ? (
+                    {closing ? (
                       <>
                         <Button
                           type="submit"
                           form="reject-request"
                           disabled={mutation.isPending || !reason.trim()}
                         >
-                          Reject request
+                          {closing === "reject"
+                            ? "Reject request"
+                            : "Cancel request"}
                         </Button>
                         <Button
                           variant="outline"
                           disabled={mutation.isPending}
-                          onClick={() => setRejecting(false)}
+                          onClick={() => setClosing(null)}
                         >
-                          Cancel
+                          Back
                         </Button>
                       </>
+                    ) : selected.canCancel && !selected.canDecide ? (
+                      <Button
+                        variant="outline"
+                        disabled={mutation.isPending}
+                        onClick={() => setClosing("cancel")}
+                      >
+                        Cancel request
+                      </Button>
                     ) : (
                       <>
                         <Button
@@ -537,7 +589,7 @@ export function ApprovalQueueView({
                         <Button
                           variant="outline"
                           disabled={mutation.isPending}
-                          onClick={() => setRejecting(true)}
+                          onClick={() => setClosing("reject")}
                         >
                           Reject
                         </Button>
@@ -559,11 +611,16 @@ export function ApprovalQueueView({
                     Withdraw request
                   </Button>
                 )}
-                {!selected.canDecide && !selected.canWithdraw && (
-                  <Button variant="outline" onClick={() => setSelectedId(null)}>
-                    Close review
-                  </Button>
-                )}
+                {!selected.canDecide &&
+                  !selected.canWithdraw &&
+                  !selected.canCancel && (
+                    <Button
+                      variant="outline"
+                      onClick={() => setSelectedId(null)}
+                    >
+                      Close review
+                    </Button>
+                  )}
               </footer>
             </>
           )}

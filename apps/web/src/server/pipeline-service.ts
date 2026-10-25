@@ -11,14 +11,19 @@ import {
   dealFields,
   pipelineCreateSchema,
   stageCommandSchema,
+  stageNeedsApproval,
   type PipelineList,
   type PipelineSummary,
+  type StageApprovalRule,
   type StageCategory,
 } from "@/lib/deal-contract";
 import { recordId } from "@/lib/id-contract";
+import { eligibleReviewer } from "@/lib/approval-rules";
 import { builtinName, resolveRecordConfig } from "@/lib/record-types";
-import { access, serial } from "./board-service";
+import { access, eligiblePeople, serial } from "./board-service";
 import { readApprovalPolicy } from "./approval-policy";
+import { finalizeProposal } from "./proposal-finalization";
+import { expireStageRequests, type StageDependencies } from "./stage-requests";
 import { SetupError } from "./setup/security";
 import {
   isAdministrator,
@@ -180,9 +185,32 @@ async function lockedPipeline(
   });
   return { context, pipeline };
 }
-/** Deals in a stage, of any state, with the first few the viewer can see. */
-async function stageBlockers(tx: DatabaseTransaction, stageId: string) {
+/** Deals in a stage, of any state, with the first few the viewer can see,
+ *  and waiting stage requests from or to it. */
+async function stageBlockers(
+  tx: DatabaseTransaction,
+  boardId: string,
+  stageId: string,
+) {
   const where: Prisma.DealProfileWhereInput = { stageId };
+  await expireStageRequests(tx, { boardId });
+  const requests = await tx.boardProposal.findMany({
+    where: {
+      boardId,
+      kind: "DEAL_STAGE",
+      status: "PENDING",
+      OR: [
+        { dependencies: { path: ["from", "id"], equals: stageId } },
+        { dependencies: { path: ["to", "id"], equals: stageId } },
+      ],
+    },
+    take: 20,
+    orderBy: { id: "asc" },
+    include: {
+      author: { select: { name: true } },
+      task: { select: { name: true } },
+    },
+  });
   const [total, deals] = await Promise.all([
     tx.dealProfile.count({ where }),
     tx.dealProfile.findMany({
@@ -207,8 +235,16 @@ async function stageBlockers(tx: DatabaseTransaction, stageId: string) {
           ? ("ARCHIVED" as const)
           : ("LIVE" as const),
     })),
+    requests: requests.map((request) => ({
+      dealId: request.taskId!,
+      dealName: request.task?.name ?? "Deal",
+      to: (request.dependencies as StageDependencies).to.name,
+      authorName: request.author.name,
+    })),
   };
 }
+const blocked = (blockers: Awaited<ReturnType<typeof stageBlockers>>) =>
+  blockers.total > 0 || blockers.requests.length > 0;
 const inUse = (
   blockers: Awaited<ReturnType<typeof stageBlockers>>,
   what: string,
@@ -217,7 +253,9 @@ const inUse = (
     new SetupError(
       409,
       "STAGE_IN_USE",
-      `${blockers.total.toLocaleString("en-US")} ${blockers.total === 1 ? "deal is" : "deals are"} in this stage, including archived deals and deals in Trash. Move them to another stage before you ${what}. Archived deals must be restored first; deals in Trash must be restored or permanently deleted by an administrator.`,
+      blockers.total
+        ? `${blockers.total.toLocaleString("en-US")} ${blockers.total === 1 ? "deal is" : "deals are"} in this stage, including archived deals and deals in Trash. Move them to another stage before you ${what}. Archived deals must be restored first; deals in Trash must be restored or permanently deleted by an administrator.`
+        : `${blockers.requests.length} waiting stage ${blockers.requests.length === 1 ? "request uses" : "requests use"} this stage. Wait for ${blockers.requests.length === 1 ? "it" : "them"} to be decided, or cancel ${blockers.requests.length === 1 ? "it" : "them"}, before you ${what}.`,
     ),
     { details: blockers },
   );
@@ -320,8 +358,8 @@ export async function changeStagesFor(viewer: Viewer, input: unknown) {
             "DEFAULT_STAGE",
             "The default stage stays Open. Choose another default first.",
           );
-        const blockers = await stageBlockers(tx, stage.id);
-        if (blockers.total) throw inUse(blockers, "change its category");
+        const blockers = await stageBlockers(tx, body.boardId, stage.id);
+        if (blocked(blockers)) throw inUse(blockers, "change its category");
       }
       await tx.pipelineStage.update({
         where: { id: stage.id },
@@ -349,13 +387,41 @@ export async function changeStagesFor(viewer: Viewer, input: unknown) {
           "Choose another default stage before removing this one.",
         );
       if (leaves(stage.category, stage.id)) throw lastOf(stage.category);
-      const blockers = await stageBlockers(tx, stage.id);
-      if (blockers.total) throw inUse(blockers, "remove it");
+      const blockers = await stageBlockers(tx, body.boardId, stage.id);
+      if (blocked(blockers)) throw inUse(blockers, "remove it");
       await tx.pipelineStage.delete({ where: { id: stage.id } });
       await tx.pipelineStage.updateMany({
         where: { boardId: body.boardId, position: { gt: stage.position } },
         data: { position: { decrement: 1 } },
       });
+    } else if (body.action === "approvals") {
+      await tx.pipeline.update({
+        where: { boardId: body.boardId },
+        data: { stageApproval: body.rule },
+      });
+      // Requests for moves that no longer need approval go back to their
+      // requesters, who can now make the move themselves.
+      const waiting = await tx.boardProposal.findMany({
+        where: { boardId: body.boardId, kind: "DEAL_STAGE", status: "PENDING" },
+      });
+      for (const request of waiting) {
+        const { from, to } = request.dependencies as StageDependencies;
+        if (
+          !stageNeedsApproval(
+            body.rule,
+            from.category as StageCategory,
+            to.category as StageCategory,
+          )
+        )
+          await finalizeProposal(
+            tx,
+            request,
+            viewer.id,
+            null,
+            "STALE",
+            "This move no longer needs approval. Make it yourself, or send it again if the rules change back.",
+          );
+      }
     } else {
       const stage = find(body.stageId);
       if (stage.category !== "OPEN")
@@ -514,6 +580,13 @@ export async function pipelineSummaryFor(
     });
     if (!pipeline) throw unavailable();
     const totals = await stageTotals(tx, [id]);
+    const policy = await readApprovalPolicy(tx, context.board);
+    const people = await eligiblePeople(tx, context.board);
+    const approver = eligibleReviewer(
+      policy,
+      viewer.id,
+      new Set(people.map((person) => person.id)),
+    );
     return {
       boardId: id,
       name: context.board.name,
@@ -521,7 +594,30 @@ export async function pipelineSummaryFor(
       defaultStageId: pipeline.defaultStageId!,
       archived: context.readOnly,
       canManage: context.canManage,
-      approvals: (await readApprovalPolicy(tx, context.board)).enabled,
+      approvals: policy.enabled,
+      stageApproval: pipeline.stageApproval as StageApprovalRule,
+      approverName:
+        people.find((person) => person.id === approver)?.name ?? null,
+      approvalSettings: context.canManage
+        ? {
+            ...policy,
+            // Deal fields that can need approval; stages follow the rule.
+            fields: context.board.columns
+              .filter((column) =>
+                [
+                  "assignees",
+                  "due_date",
+                  dealFields.amount.column,
+                  dealFields.currency.column,
+                  dealFields.customerCompanyId.column,
+                ].includes(column.key),
+              )
+              .map(({ id, key, name }) => ({ id, key, name })),
+            people: people
+              .filter((person) => !person.deactivated)
+              .map(({ id, name }) => ({ id, name })),
+          }
+        : null,
       stages: pipeline.stages.map((stage) => {
         const stageTotals: Record<string, string> = {};
         let count = 0;

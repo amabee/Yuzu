@@ -85,6 +85,8 @@ export async function submitProposal(
     policy: ApprovalPolicy;
     eligible: Set<string>;
     sourceRevision?: number;
+    /** Stage requests carry what their decision depends on and expire. */
+    stage?: { dependencies: object; expiresAt: Date };
   },
 ): Promise<TaskMutationResult> {
   const reviewer = eligibleReviewer(args.policy, args.authorId, args.eligible);
@@ -109,6 +111,13 @@ export async function submitProposal(
       policySnapshot: args.policy,
       policyVersion: args.policy.version,
       sourceRevision: args.sourceRevision,
+      ...(args.stage
+        ? {
+            kind: "DEAL_STAGE" as const,
+            dependencies: JSON.parse(JSON.stringify(args.stage.dependencies)),
+            expiresAt: args.stage.expiresAt,
+          }
+        : {}),
     },
   });
   await createNotifications(tx, {
@@ -118,14 +127,16 @@ export async function submitProposal(
     taskId: args.taskId,
     proposalId: proposal.id,
     kind: "APPROVAL_REQUEST",
-    message: "requested your approval",
+    message: args.stage
+      ? "asked you to approve a stage change"
+      : "requested your approval",
     eventKey: `proposal:${proposal.id}:review:${args.policy.version}`,
   });
   await tx.boardEvent.create({
     data: {
       boardId: args.boardId,
       actorId: args.authorId,
-      action: "Requested task approval",
+      action: args.stage ? "Requested stage change" : "Requested task approval",
       subjectId: proposal.id,
       after: { operation: args.operation, reviewerId: reviewer },
     },

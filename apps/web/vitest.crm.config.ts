@@ -20,6 +20,7 @@ export default defineConfig({
     include: [
       "tests/crm-data.integration.ts",
       "tests/deals-data.integration.ts",
+      "tests/stage-requests.integration.ts",
     ],
     fileParallelism: false,
     testTimeout: 30_000,

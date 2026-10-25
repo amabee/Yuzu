@@ -31,6 +31,7 @@ import {
   useDealList,
   usePipeline,
   type Deal,
+  type DealLanes,
   type DealSort,
 } from "./use-deals";
 import type { CrmRecord } from "@/lib/crm-contract";
@@ -90,7 +91,7 @@ export function DealsScreen({
   const create = useCreateDeal(scope);
   const save = useCrmSave(scope);
   const lifecycle = useCrmLifecycle(scope);
-  const mover = useStageMove(scope, stages, toast);
+  const mover = useStageMove(scope, pipeline.data, toast);
   const openRecord = useUiStore((state) => state.openCrmRecord);
   const stack = useUiStore((state) => state.crmStack);
   const trim = useUiStore((state) => state.trimCrmStack);
@@ -133,7 +134,8 @@ export function DealsScreen({
     window.history.replaceState(null, "", url);
   }, [topDeal]);
 
-  const paused = Boolean(pipeline.data?.approvals);
+  const approvals = Boolean(pipeline.data?.approvals);
+  const everyMove = approvals && pipeline.data?.stageApproval === "ALL";
   const people = lanes.data?.people ?? list.data?.people ?? [];
   const open = stages.filter((stage) => stage.category === "OPEN");
   const won = stages.filter((stage) => stage.category === "WON");
@@ -291,12 +293,22 @@ export function DealsScreen({
           Archived
         </button>
       </div>
-      {paused && (
+      {approvals && (
         <p className="crm-notice" role="status">
           <span>
-            <b>Stage moves are paused on this pipeline.</b> It has approvals
-            turned on, and approval for stage changes isn&apos;t available yet.
-            Amounts, owners and other fields still follow the approval rules.
+            {everyMove ? (
+              <>
+                <b>Every stage move needs approval on this pipeline.</b> Drag a
+                deal to request the move; it stays put until it&apos;s approved.
+              </>
+            ) : (
+              <>
+                <b>Closing and reopening deals needs approval here.</b> Moves
+                between open stages happen straight away. Moving into or out of
+                Won and Lost sends a request, and the deal stays put until
+                it&apos;s approved.
+              </>
+            )}
           </span>
         </p>
       )}
@@ -315,22 +327,22 @@ export function DealsScreen({
             <Lane
               key={stage.id}
               stage={stage}
+              stages={stages}
               isDefault={stage.id === pipeline.data?.defaultStageId}
               lane={lanes.data?.lanes.find((lane) => lane.stageId === stage.id)}
               people={people}
-              paused={paused}
               archived={archived}
               adding={adding === stage.id}
               canAdd={
                 stage.category === "OPEN" &&
                 !archived &&
                 !pipeline.data?.archived &&
-                (!paused || stage.id === pipeline.data?.defaultStageId)
+                (!everyMove || stage.id === pipeline.data?.defaultStageId)
               }
               onAdd={() => setAdding(stage.id)}
               onCancelAdd={() => setAdding(null)}
               onCreate={(name) => addDeal(name, stage.id)}
-              onOpen={(deal) => openRecord(dealEntry(deal.id), "fresh")}
+              onOpen={(id) => openRecord(dealEntry(id), "fresh")}
               onDrop={(id) => {
                 const deal = lanes.data?.lanes
                   .flatMap((lane) => lane.deals)
@@ -350,7 +362,6 @@ export function DealsScreen({
           stages={stages}
           people={people}
           sort={sort}
-          paused={paused}
           onSort={(next) => {
             setSort(next);
             setPage(1);
@@ -392,14 +403,14 @@ export function DealsScreen({
 function DealCardView({
   deal,
   stage,
+  stages,
   people,
-  paused,
   onOpen,
 }: {
   deal: Deal;
   stage: PipelineStageView;
+  stages: PipelineStageView[];
   people: { id: string; name: string }[];
-  paused: boolean;
   onOpen: () => void;
 }) {
   const late =
@@ -408,17 +419,21 @@ function DealCardView({
     deal.expectedCloseDate < today();
   const owner = people.find((person) => person.id === deal.ownerId);
   const value = money(deal.amount, deal.currency);
+  const request = deal.request?.visible ? deal.request : null;
+  const asked = request
+    ? stages.find((item) => item.id === request.toStageId)
+    : undefined;
   return (
     <button
       type="button"
       className="deal-tile"
-      draggable={deal.canEdit && !paused}
+      draggable={deal.canEdit && !deal.request}
       onDragStart={(event) => {
         event.dataTransfer.setData("application/x-yuzu-deal", deal.id);
         event.dataTransfer.effectAllowed = "move";
       }}
       onClick={onOpen}
-      aria-label={`${deal.name}${value ? `, ${value}` : ""}`}
+      aria-label={`${deal.name}${value ? `, ${value}` : ""}${asked ? `, waiting for approval to move to ${asked.name}` : ""}`}
     >
       <span className="deal-tile-name">{deal.name}</span>
       {value && <span className="deal-tile-amount">{value}</span>}
@@ -458,16 +473,47 @@ function DealCardView({
           </span>
         )}
       </span>
+      {asked && (
+        <span className="deal-tile-waiting">
+          Awaiting approval
+          <span>→ {asked.name}</span>
+        </span>
+      )}
+    </button>
+  );
+}
+
+/** A deal waiting for approval to move into this lane. */
+function WaitingCard({
+  waiting,
+  onOpen,
+}: {
+  waiting: DealLanes["lanes"][number]["waiting"][number];
+  onOpen: () => void;
+}) {
+  const value = money(waiting.amount, waiting.currency);
+  return (
+    <button
+      type="button"
+      className="deal-ghost"
+      onClick={onOpen}
+      aria-label={`Requested move: ${waiting.name}, from ${waiting.from}`}
+    >
+      <b>{waiting.name}</b>
+      <span>
+        Requested by {waiting.authorName} · from {waiting.from}
+        {value ? ` · ${value}` : ""}
+      </span>
     </button>
   );
 }
 
 function Lane({
   stage,
+  stages,
   isDefault,
   lane,
   people,
-  paused,
   archived,
   adding,
   canAdd,
@@ -478,17 +524,17 @@ function Lane({
   onDrop,
 }: {
   stage: PipelineStageView;
+  stages: PipelineStageView[];
   isDefault: boolean;
-  lane?: { total: number; deals: Deal[] };
+  lane?: DealLanes["lanes"][number];
   people: { id: string; name: string }[];
-  paused: boolean;
   archived: boolean;
   adding: boolean;
   canAdd: boolean;
   onAdd: () => void;
   onCancelAdd: () => void;
   onCreate: (name: string) => Promise<boolean>;
-  onOpen: (deal: Deal) => void;
+  onOpen: (dealId: string) => void;
   onDrop: (dealId: string) => void;
 }) {
   const [over, setOver] = useState(false);
@@ -498,6 +544,7 @@ function Lane({
     if (adding) input.current?.focus();
   }, [adding]);
   const deals = lane?.deals ?? [];
+  const waiting = archived ? [] : (lane?.waiting ?? []);
   const totals = moneyTotals(stage.totals);
   return (
     <div
@@ -507,7 +554,7 @@ function Lane({
       role="group"
       aria-label={`${stage.name}, ${categoryLabels[stage.category]}`}
       onDragOver={(event) => {
-        if (paused || archived) return;
+        if (archived) return;
         if (!event.dataTransfer.types.includes("application/x-yuzu-deal"))
           return;
         event.preventDefault();
@@ -528,20 +575,30 @@ function Lane({
           {isDefault && <span className="deal-default-tag">Default</span>}
           <small>{lane?.total ?? stage.count}</small>
         </h2>
-        <p>{archived ? "Archived deals" : totals || "No value yet"}</p>
+        <p>
+          {archived ? "Archived deals" : totals || "No value yet"}
+          {waiting.length > 0 && <em> · {waiting.length} waiting</em>}
+        </p>
       </header>
       <div className="deal-lane-cards">
+        {waiting.map((item) => (
+          <WaitingCard
+            key={item.dealId}
+            waiting={item}
+            onOpen={() => onOpen(item.dealId)}
+          />
+        ))}
         {deals.map((deal) => (
           <DealCardView
             key={deal.id}
             deal={deal}
             stage={stage}
+            stages={stages}
             people={people}
-            paused={paused}
-            onOpen={() => onOpen(deal)}
+            onOpen={() => onOpen(deal.id)}
           />
         ))}
-        {!deals.length && (
+        {!deals.length && !waiting.length && (
           <p className="deal-lane-empty">
             {stage.category === "WON"
               ? "Won deals land here."
@@ -613,7 +670,6 @@ function DealTable({
   stages,
   people,
   sort,
-  paused,
   onSort,
   onPage,
   onOpen,
@@ -627,7 +683,6 @@ function DealTable({
   stages: PipelineStageView[];
   people: { id: string; name: string }[];
   sort: DealSort;
-  paused: boolean;
   onSort: (sort: DealSort) => void;
   onPage: (page: number) => void;
   onOpen: (deal: Deal) => void;
@@ -687,7 +742,7 @@ function DealTable({
                     className="deal-stage-select"
                     aria-label={`Stage of ${deal.name}`}
                     value={deal.stageId}
-                    disabled={!deal.canEdit || paused}
+                    disabled={!deal.canEdit || Boolean(deal.request)}
                     data-category={
                       stages.find((stage) => stage.id === deal.stageId)
                         ?.category
@@ -700,6 +755,17 @@ function DealTable({
                       </option>
                     ))}
                   </select>
+                  {deal.request?.visible && (
+                    <span className="deal-ask-chip">
+                      →{" "}
+                      {stages.find(
+                        (stage) =>
+                          deal.request?.visible &&
+                          stage.id === deal.request.toStageId,
+                      )?.name ?? "another stage"}{" "}
+                      waiting
+                    </span>
+                  )}
                 </td>
                 <td className="crm-num">
                   {money(deal.amount, deal.currency) ?? (

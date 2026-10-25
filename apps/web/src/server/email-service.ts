@@ -22,6 +22,7 @@ import {
 } from "./email-queue";
 import { visibility } from "./notification-service";
 import { eraseExpiredTrash } from "./trash-service";
+import { expireDueStageRequests } from "./stage-requests";
 import { requireIdentity } from "./team-access";
 import { configuredOrigin, SetupError } from "./setup/security";
 
@@ -551,6 +552,10 @@ export function startEmailWorker() {
         // Trash auto-erase is cheap to check; it erases in bounded batches.
         await eraseExpiredTrash().catch(() =>
           console.error(JSON.stringify({ event: "trash_erase_failed" })),
+        );
+        // So do overdue stage requests, 200 at a time.
+        await expireDueStageRequests().catch(() =>
+          console.error(JSON.stringify({ event: "stage_expiry_failed" })),
         );
       }
       while (!stopped && (await processEmailQueue()) === 20);

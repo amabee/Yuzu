@@ -7,11 +7,17 @@ import {
 } from "@tanstack/react-query";
 import { z } from "zod";
 import { apiRequest } from "@/lib/api-client";
-import { taskMutationResultSchema } from "@/lib/approval-contract";
 import {
+  proposalStatusSchema,
+  taskMutationResultSchema,
+  type ApprovalPolicy,
+} from "@/lib/approval-contract";
+import {
+  closedStageRequestSchema,
   pipelineListSchema,
   pipelineSummarySchema,
   stageCategories,
+  stageRequestSchema,
   type StageCommand,
 } from "@/lib/deal-contract";
 import { recordId } from "@/lib/id-contract";
@@ -61,6 +67,7 @@ export const dealSchema = z.object({
   canEdit: z.boolean(),
   commentCount: z.number().int().nonnegative(),
   attachmentCount: z.number().int().nonnegative(),
+  request: stageRequestSchema,
 });
 export type Deal = z.infer<typeof dealSchema>;
 const lanesSchema = z.object({
@@ -71,6 +78,17 @@ const lanesSchema = z.object({
       stageId: recordId,
       total: z.number().int().nonnegative(),
       deals: z.array(dealSchema),
+      /** Deals waiting for approval to move into this stage. */
+      waiting: z.array(
+        z.object({
+          dealId: recordId,
+          name: z.string(),
+          amount: z.string().nullable(),
+          currency: z.string().nullable(),
+          from: z.string(),
+          authorName: z.string(),
+        }),
+      ),
     }),
   ),
 });
@@ -87,6 +105,7 @@ const category = z.enum(stageCategories);
 const dealDetailSchema = z.object({
   boardId: recordId,
   deal: dealSchema,
+  closedRequest: closedStageRequestSchema,
   history: z.array(
     z.object({
       id: recordId,
@@ -99,6 +118,8 @@ const dealDetailSchema = z.object({
       currency: z.string().nullable(),
       reason: z.string().nullable(),
       actor: z.string(),
+      /** Approved moves: who asked for it. */
+      requestedBy: z.string().nullable(),
       createdAt: z.string(),
     }),
   ),
@@ -287,6 +308,49 @@ export function useStageCommand(scope: CrmScope) {
           { method: "POST", json: command },
         )
       ).data,
+    onSettled: () =>
+      client.invalidateQueries({ queryKey: crmKeys.board(scope) }),
+  });
+}
+/** Saves a pipeline's approval settings against the version it showed. */
+export function useConfigureApprovals(scope: CrmScope) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationKey: crmKeys.board(scope),
+    mutationFn: async (input: ApprovalPolicy & { boardId: string }) =>
+      (
+        await apiRequest("/api/v1/approvals/configure", {
+          method: "POST",
+          json: input,
+        })
+      ).data,
+    onSettled: () =>
+      client.invalidateQueries({ queryKey: crmKeys.board(scope) }),
+  });
+}
+/** Approves, rejects, withdraws or cancels a deal's stage request. */
+export function useDecideStageRequest(scope: CrmScope) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationKey: crmKeys.board(scope),
+    mutationFn: async (input: {
+      proposalId: string;
+      action: "approve" | "reject" | "withdraw" | "cancel";
+      reason?: string;
+    }) =>
+      z
+        .object({
+          status: proposalStatusSchema,
+          reason: z.string().nullable(),
+        })
+        .parse(
+          (
+            await apiRequest("/api/v1/approvals/decide", {
+              method: "POST",
+              json: input,
+            })
+          ).data,
+        ),
     onSettled: () =>
       client.invalidateQueries({ queryKey: crmKeys.board(scope) }),
   });

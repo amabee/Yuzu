@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { recordId } from "./id-contract";
+import { approvalPolicySchema } from "./approval-contract";
 
 /**
  * CRM Deals and pipelines (docs/specs/deals-pipelines.md). A pipeline is a
@@ -98,6 +99,21 @@ export const pipelineCreateSchema = z
     name: z.string().trim().min(1).max(100),
   })
   .strict();
+/**
+ * Which stage moves wait for approval while a pipeline's approvals are on:
+ * CLOSING covers moves into, out of and between Won and Lost; ALL covers
+ * every move.
+ */
+export const stageApprovalRules = ["CLOSING", "ALL"] as const;
+export type StageApprovalRule = (typeof stageApprovalRules)[number];
+export const stageNeedsApproval = (
+  rule: StageApprovalRule,
+  from: StageCategory,
+  to: StageCategory,
+) => rule === "ALL" || from !== "OPEN" || to !== "OPEN";
+/** Stage requests nobody decides expire after this many days. */
+export const STAGE_REQUEST_DAYS = 30;
+
 export const stageCommandSchema = z.discriminatedUnion("action", [
   z
     .object({
@@ -131,6 +147,13 @@ export const stageCommandSchema = z.discriminatedUnion("action", [
   z
     .object({ action: z.literal("default"), ...versioned, stageId: recordId })
     .strict(),
+  z
+    .object({
+      action: z.literal("approvals"),
+      ...versioned,
+      rule: z.enum(stageApprovalRules),
+    })
+    .strict(),
 ]);
 export type StageCommand = z.infer<typeof stageCommandSchema>;
 
@@ -153,8 +176,21 @@ export const pipelineSummarySchema = z.object({
   defaultStageId: recordId,
   archived: z.boolean(),
   canManage: z.boolean(),
-  /** Stage moves pause while the pipeline needs approvals (slice 2a). */
+  /** The board's approvals are on. */
   approvals: z.boolean(),
+  /** Which stage moves need approval while they are. */
+  stageApproval: z.enum(stageApprovalRules),
+  /** Who would review the viewer's stage request, if anyone can. */
+  approverName: z.string().nullable(),
+  /** The approval settings, for the pipeline's managers. */
+  approvalSettings: approvalPolicySchema
+    .extend({
+      fields: z.array(
+        z.object({ id: recordId, key: z.string(), name: z.string() }),
+      ),
+      people: z.array(z.object({ id: z.string(), name: z.string() })),
+    })
+    .nullable(),
   stages: z.array(pipelineStageSchema),
 });
 export type PipelineSummary = z.infer<typeof pipelineSummarySchema>;
@@ -186,7 +222,62 @@ export const stageBlockersSchema = z.object({
       state: z.enum(["LIVE", "ARCHIVED", "TRASH"]),
     }),
   ),
+  /** Waiting stage requests from or to the stage. */
+  requests: z
+    .array(
+      z.object({
+        dealId: recordId,
+        dealName: z.string(),
+        to: z.string(),
+        authorName: z.string(),
+      }),
+    )
+    .default([]),
 });
+
+/**
+ * A deal's waiting stage request. People who can see requests (the
+ * requester, the pipeline's managers and approvers, administrators) get the
+ * details; everyone else only learns that one is waiting.
+ */
+export const stageRequestSchema = z
+  .discriminatedUnion("visible", [
+    z.object({
+      visible: z.literal(true),
+      id: recordId,
+      fromStageId: recordId,
+      toStageId: recordId,
+      authorId: z.string(),
+      authorName: z.string(),
+      reviewerName: z.string().nullable(),
+      note: z.string().nullable(),
+      createdAt: z.string(),
+      expiresAt: z.string(),
+      canDecide: z.boolean(),
+      canWithdraw: z.boolean(),
+      canCancel: z.boolean(),
+    }),
+    z.object({ visible: z.literal(false) }),
+  ])
+  .nullable();
+export type StageRequestView = z.infer<typeof stageRequestSchema>;
+/** The viewer's latest stage request on a deal that closed unapplied. */
+export const closedStageRequestSchema = z
+  .object({
+    id: recordId,
+    toStageId: recordId,
+    toStageName: z.string(),
+    status: z.enum([
+      "REJECTED",
+      "STALE",
+      "CANCELLED",
+      "INVALIDATED",
+      "EXPIRED",
+    ]),
+    reason: z.string().nullable(),
+    decidedAt: z.string().nullable(),
+  })
+  .nullable();
 
 /** The history kind a stage move records. */
 export function stageTransition(

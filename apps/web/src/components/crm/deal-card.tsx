@@ -18,7 +18,12 @@ import type { TransferNoticeHandler } from "@/components/ui/yuzu-toast";
 import { useUiStore } from "@/components/providers";
 import { NameField, useDraft } from "./crm-fields";
 import { TrailItems } from "./crm-trail";
-import { CustomerField, StagePath, useStageMove } from "./deal-parts";
+import {
+  CustomerField,
+  StagePath,
+  StageRequestBanner,
+  useStageMove,
+} from "./deal-parts";
 import {
   saveError,
   useCrmSave,
@@ -28,8 +33,6 @@ import {
 } from "./use-crm";
 import { money, useDeal, usePipeline, type DealDetail } from "./use-deals";
 
-const PAUSED =
-  "Stage moves are paused: this pipeline has approvals turned on, and approval for stage changes isn't available yet.";
 const time = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
   timeStyle: "short",
@@ -71,7 +74,8 @@ export function DealCard({
   const stage = stages.find((item) => item.id === deal?.stageId);
   const trim = useUiStore((state) => state.trimCrmStack);
   const save = useCrmSave(scope);
-  const mover = useStageMove(scope, stages, onNotice);
+  const mover = useStageMove(scope, pipeline.data, onNotice);
+  const request = deal?.request ?? null;
   const top = depth === 0;
   const readOnly = !deal || !deal.canEdit;
   const saveDeal = (changes: CrmChanges) =>
@@ -206,8 +210,22 @@ export function DealCard({
             stages={stages}
             current={deal.stageId}
             disabled={readOnly}
-            pausedReason={pipeline.data?.approvals ? PAUSED : null}
+            lockedReason={
+              request
+                ? "A stage change is waiting for approval. Resolve it before moving the deal again."
+                : null
+            }
+            asked={request?.visible ? request.toStageId : null}
             onMove={(stageId) => mover.move(deal, stageId)}
+          />
+        )}
+        {detail && stages.length > 0 && (
+          <StageRequestBanner
+            scope={scope}
+            detail={detail}
+            stages={stages}
+            onNotice={onNotice}
+            onResubmit={(stageId) => deal && mover.move(deal, stageId)}
           />
         )}
         <div className="crm-card-tabs" role="tablist" aria-label="Deal views">
@@ -327,7 +345,10 @@ function History({ detail }: { detail: DealDetail }) {
                 ) : null}
               </b>
               <small>
-                {event.actor} · {time.format(new Date(event.createdAt))}
+                {event.requestedBy
+                  ? `${event.requestedBy}, approved by ${event.actor}`
+                  : event.actor}{" "}
+                · {time.format(new Date(event.createdAt))}
                 {money(event.amount, event.currency)
                   ? ` · ${money(event.amount, event.currency)}`
                   : ""}
@@ -374,6 +395,12 @@ function DealDetails({
       <div className="crm-pane-head">
         <h3>Details</h3>
       </div>
+      {deal.request?.visible && (
+        <p className="deal-request-hint">
+          A stage request is waiting. Changing the amount, currency, customer,
+          owner or expected close sends it back for resubmitting.
+        </p>
+      )}
       <div className="crm-fields">
         <div className="crm-field" data-wide="">
           <label htmlFor={`amount-${deal.id}`}>Amount</label>

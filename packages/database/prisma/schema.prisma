@@ -573,6 +573,9 @@ model Pipeline {
   /// The stage new Deals start in; always an Open stage.
   defaultStageId String?
   stages         PipelineStage[]
+  /// Which stage moves need approval while the board's approvals are on:
+  /// CLOSING (into, out of and between Won and Lost) or ALL.
+  stageApproval  String          @default("CLOSING")
   /// Changes with every stage configuration change.
   version        Int             @default(1)
   createdAt      DateTime        @default(now()) @db.Timestamptz(3)
@@ -645,6 +648,8 @@ model DealStageEvent {
   /// Required when moving directly between Won and Lost.
   reason        String?
   actorId       String
+  /// Approved moves: who asked for it (the actor approved it).
+  requestedById String?
   createdAt     DateTime @default(now()) @db.Timestamptz(3)
 
   @@index([dealId, createdAt])
@@ -821,6 +826,18 @@ enum ProposalStatus {
   REJECTED
   WITHDRAWN
   STALE
+  /// A board manager closed someone else's stage request, with a reason.
+  CANCELLED
+  /// The deal or its pipeline went away, or the requester was deactivated.
+  INVALIDATED
+  /// Waited past its expiry without a decision.
+  EXPIRED
+}
+
+/// What a request asks for: an ordinary record change or a deal stage move.
+enum ProposalKind {
+  TASK
+  DEAL_STAGE
 }
 
 model BoardApprovalPolicy {
@@ -850,6 +867,7 @@ model BoardProposal {
   authorId        String
   author          User              @relation("ProposalAuthor", fields: [authorId], references: [id], onDelete: Restrict)
   operation       ApprovalOperation
+  kind            ProposalKind      @default(TASK)
   status          ProposalStatus    @default(PENDING)
   requestKey      String
   requestDigest   String
@@ -859,6 +877,10 @@ model BoardProposal {
   policyVersion   Int
   sourceRevision  Int?
   appliedRevision Int?
+  /// Stage requests: the values the decision depends on (versioned).
+  dependencies    Json?
+  /// Stage requests expire if nobody decides them in time.
+  expiresAt       DateTime?         @db.Timestamptz(3)
   decidedById     String?
   decidedBy       User?             @relation("ProposalDecider", fields: [decidedById], references: [id], onDelete: Restrict)
   reason          String?
@@ -870,6 +892,7 @@ model BoardProposal {
   @@index([parentTaskId, status])
   @@index([boardId, status, createdAt])
   @@index([authorId, status, createdAt])
+  @@index([kind, status, expiresAt])
 }
 
 enum NotificationKind {

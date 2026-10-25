@@ -2,6 +2,24 @@ import type { DatabaseTransaction } from "@yuzu/database";
 import { createNotifications } from "./notification-events";
 import { markChildrenChanged, lockTaskRoot } from "./task-hierarchy";
 import { SetupError } from "./setup/security";
+export type ProposalOutcome =
+  | "APPROVED"
+  | "REJECTED"
+  | "WITHDRAWN"
+  | "STALE"
+  | "CANCELLED"
+  | "INVALIDATED"
+  | "EXPIRED";
+const closedMessage: Record<ProposalOutcome, string> = {
+  APPROVED: "approved your request",
+  REJECTED: "rejected your request",
+  WITHDRAWN: "withdrew an approval request",
+  STALE: "closed your approval request because it needs to be resubmitted",
+  CANCELLED: "cancelled your request",
+  INVALIDATED: "closed your request because it no longer applies",
+  EXPIRED:
+    "was asked to decide your request, but it expired without a decision",
+};
 export async function finalizeProposal(
   tx: DatabaseTransaction,
   proposal: {
@@ -13,10 +31,13 @@ export async function finalizeProposal(
   },
   actorId: string,
   reviewerId: string | null,
-  status: "APPROVED" | "REJECTED" | "WITHDRAWN" | "STALE",
+  status: ProposalOutcome,
   reason?: string,
   applied?: { taskId: string; revision: number },
+  /** Expiry and clean-up close requests without anyone deciding them. */
+  options: { decided?: boolean } = {},
 ) {
+  const decided = options.decided ?? true;
   if (proposal.parentTaskId)
     await lockTaskRoot(tx, proposal.parentTaskId, proposal.boardId);
   const changed = await tx.boardProposal.updateMany({
@@ -24,7 +45,7 @@ export async function finalizeProposal(
     data: {
       status,
       reason: reason ?? null,
-      decidedById: actorId,
+      decidedById: decided ? actorId : null,
       decidedAt: new Date(),
       ...(applied
         ? { taskId: applied.taskId, appliedRevision: applied.revision }
@@ -47,18 +68,13 @@ export async function finalizeProposal(
           : []
         : [proposal.authorId],
     actorId,
+    // Nobody acted on an expired request: it comes from its reviewer.
+    includeActor: !decided,
     boardId: proposal.boardId,
     taskId: applied?.taskId ?? proposal.taskId,
     proposalId: proposal.id,
     kind: "APPROVAL_DECISION",
-    message:
-      status === "APPROVED"
-        ? "approved your request"
-        : status === "REJECTED"
-          ? "rejected your request"
-          : status === "WITHDRAWN"
-            ? "withdrew an approval request"
-            : "closed your approval request because it needs to be resubmitted",
+    message: closedMessage[status],
     eventKey: `proposal:${proposal.id}:decision`,
   });
   await tx.boardEvent.create({
