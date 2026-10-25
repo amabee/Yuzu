@@ -111,6 +111,15 @@ import {
   type BuiltinKey,
 } from "@/lib/record-types";
 import { projectAccess } from "./project-access";
+import { emailAddress } from "@/lib/id-contract";
+import {
+  checkProfileRules,
+  createProfile,
+  refuseCrmCollection,
+  profileSnapshot,
+  splitProfile,
+  updateProfile,
+} from "./crm-profile";
 import {
   recordAutomationEvent,
   type AutomationContext,
@@ -293,6 +302,7 @@ function checkRecordRules(
   changes: Record<string, unknown>,
   board: { recordType: string; recordConfig: unknown },
 ) {
+  checkProfileRules(changes, board);
   const { type, config } = boardRecord(board);
   for (const key of builtinKeys) {
     if (config.builtins[key].on) continue;
@@ -381,7 +391,7 @@ function typedValue(
     }
     case "EMAIL":
       empty.textValue = z
-        .union([z.literal(""), z.string().email().max(320)])
+        .union([z.literal(""), emailAddress.max(320)])
         .parse(input);
       break;
     case "RELATION":
@@ -532,6 +542,8 @@ function linkedTaskAvailable(task: {
 }
 export const taskInclude = {
   parent: { select: parentTaskSelect },
+  companyProfile: true,
+  contactProfile: true,
   _count: {
     select: {
       comments: { where: { deletedAt: null } },
@@ -618,6 +630,7 @@ export function snapshot(task: LoadedTask) {
       assigneeIds: task.assignees.map((person) => person.userId),
       editorIds: task.editors.map((person) => person.userId),
       fieldValues: valueMap(task),
+      ...profileSnapshot(task),
       archivedAt:
         (task.archivedAt ?? task.parent?.archivedAt)?.toISOString() ?? null,
     }),
@@ -1216,6 +1229,7 @@ export async function createTaskRecord(
       },
     },
   });
+  await createProfile(tx, task.id, context.board, splitProfile(body).profile);
   await saveValues(
     tx,
     task.id,
@@ -1299,8 +1313,10 @@ export async function applyTaskRecord(
       changes.dueDate !== undefined ? changes.dueDate : before.dueDate,
     );
   }
-  const { assigneeIds, fieldValues, dueDate, startDate, ...scalar } =
-    changes ?? {};
+  const {
+    profile,
+    rest: { assigneeIds, fieldValues, dueDate, startDate, ...scalar },
+  } = splitProfile(changes ?? {});
   const updated = await tx.task.updateMany({
     where: { id: task.id, revision: task.revision },
     data: {
@@ -1316,6 +1332,7 @@ export async function applyTaskRecord(
     },
   });
   if (!updated.count) throw conflict();
+  await updateProfile(tx, task.id, context.board, profile);
   if (assigneeIds) {
     await tx.taskAssignee.deleteMany({ where: { taskId: task.id } });
     if (assigneeIds.length)
@@ -1749,6 +1766,9 @@ export async function manageBoard(
   headers: Headers,
 ) {
   const { user } = await requireIdentity(headers);
+  // People appoint collection managers, but its fields stay built in for now.
+  if (action !== "create-board" && action !== "manager")
+    await refuseCrmCollection(input, "Changing fields and groups");
   if (action === "create-board") {
     const body = boardCreateSchema.parse(input);
     return serial(async (tx) => {

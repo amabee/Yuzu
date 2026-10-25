@@ -1,3 +1,4 @@
+import { refuseCrmCollection } from "./crm-profile";
 import { boardArchiveSchema } from "@/lib/board-contract";
 import { access, serial } from "./board-service";
 import { requireIdentity } from "./team-access";
@@ -5,6 +6,7 @@ import { SetupError } from "./setup/security";
 
 /** Archive changes only the board flag, preserving individual task archives. */
 export async function setBoardArchived(input: unknown, headers: Headers) {
+  await refuseCrmCollection(input, "Archiving");
   const body = boardArchiveSchema.parse(input);
   const { user } = await requireIdentity(headers);
   return serial(async (tx) => {

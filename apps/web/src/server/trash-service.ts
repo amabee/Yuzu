@@ -1,3 +1,4 @@
+import { refuseCrmCollection } from "./crm-profile";
 import { guardRootLifecycle } from "./task-hierarchy";
 import { invalidateChildProposals } from "./proposal-finalization";
 import {
@@ -294,6 +295,7 @@ export async function restoreRecordInTransaction(
 // ---------- Boards ----------
 
 export async function deleteBoard(input: unknown, headers: Headers) {
+  await refuseCrmCollection(input, "Deleting the collection");
   const { user } = await requireIdentity(headers);
   const { id } = idInput.parse(input);
   return serial(async (tx) => {

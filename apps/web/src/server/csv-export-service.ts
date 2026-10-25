@@ -1,3 +1,4 @@
+import { refuseCrmCollection } from "./crm-profile";
 import { getDatabase, createRecordId } from "@yuzu/database";
 import { access, boardRecord, eligiblePeople } from "./board-service";
 import { audit } from "./audit";
@@ -44,6 +45,7 @@ export async function exportBoardCsvForActor(
   actorId: string,
   signal?: AbortSignal,
 ) {
+  await refuseCrmCollection(input, "CSV export");
   const request = exportCsvSchema.parse(input);
   const db = getDatabase();
   const user = await db.user.findUnique({ where: { id: actorId } });

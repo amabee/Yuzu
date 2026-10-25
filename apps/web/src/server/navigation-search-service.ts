@@ -1,3 +1,4 @@
+import { workBoardWhere } from "@/lib/record-types";
 import { getDatabase, type Prisma } from "@yuzu/database";
 import {
   navigationSearchQuerySchema,
@@ -59,6 +60,7 @@ export async function searchNavigation(
       const where: Prisma.BoardWhereInput = {
         AND: [
           boardScope(user),
+          workBoardWhere,
           archived
             ? {
                 OR: [

@@ -1,3 +1,4 @@
+import { refuseCrmCollection } from "./crm-profile";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { createRecordId, getDatabase } from "@yuzu/database";
@@ -99,6 +100,7 @@ export async function previewCsvImport(
       maxRows: MAX_PREVIEW_ROWS,
     });
   } catch (error) {
+    await refuseCrmCollection(input, "CSV import");
     throw new SetupError(422, "INVALID_CSV", (error as Error).message);
   }
   return getDatabase().$transaction(

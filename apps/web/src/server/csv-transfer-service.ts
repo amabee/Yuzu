@@ -1,3 +1,4 @@
+import { refuseCrmCollection } from "./crm-profile";
 import { z } from "zod";
 import { createRecordId, getDatabase } from "@yuzu/database";
 import { putCsvObject, getCsvObject } from "@yuzu/database/csv-objects";
@@ -65,6 +66,7 @@ export async function listTransfers(headers: Headers) {
   );
 }
 export async function createTransfer(input: unknown, headers: Headers) {
+  await refuseCrmCollection(input, "CSV import and export");
   const body = transferCreateSchema.parse(input);
   const { user } = await requireIdentity(headers);
   const boardId = body.kind === "IMPORT" ? body.boardId : body.input.boardId;

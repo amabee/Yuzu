@@ -11,7 +11,8 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "test:subitems-data": "vitest run --config vitest.subitems.config.ts"
+    "test:subitems-data": "vitest run --config vitest.subitems.config.ts",
+    "test:crm-data": "vitest run --config vitest.crm.config.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "6.3.1",

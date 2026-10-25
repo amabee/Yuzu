@@ -17,6 +17,7 @@ import { projectListSchema } from "./project-contract";
 import { notificationActionSchema } from "./notification-contract";
 import { dashboardQuerySchema } from "./dashboard-contract";
 import { exportCsvSchema } from "./csv-export";
+import { crmDirectoryQuerySchema, crmMatchQuerySchema } from "./crm-contract";
 
 /**
  * The public API: every endpoint an API token may call. This one list drives
@@ -306,6 +307,52 @@ export const apiEndpoints: ApiEndpoint[] = [
     summary: "Download a task's file",
     access: "read",
     returns: "The file",
+  },
+  {
+    method: "GET",
+    path: "/crm/directory",
+    group: "CRM",
+    summary: "A page of Companies or Contacts",
+    description:
+      "One page (50) of the workspace's Companies or Contacts, with whole-collection totals. Create and change them with /boards/create-task and /boards/update, using the returned boardId; profile fields (email, phone, domain, website, legalName, address) go alongside name.",
+    access: "read",
+    query: z.object({
+      workspaceId: recordId,
+      query: z
+        .string()
+        .optional()
+        .describe(
+          `Optional JSON object with: ${Object.keys(crmDirectoryQuerySchema.shape).join(", ")}`,
+        ),
+    }),
+    returns: "The collection's board id, people and a page of records",
+  },
+  {
+    method: "GET",
+    path: "/crm/record",
+    group: "CRM",
+    summary: "One Company or Contact",
+    access: "read",
+    query: id("recordId"),
+    returns: "The record, its profile and recent changes",
+  },
+  {
+    method: "GET",
+    path: "/crm/matches",
+    group: "CRM",
+    summary: "Records that look like a new one",
+    description:
+      "Duplicate suggestions by email, domain and similar name, among records you can see. Suggestions never block creating a record.",
+    access: "read",
+    query: z.object({
+      workspaceId: recordId,
+      query: z
+        .string()
+        .describe(
+          `JSON object with: ${Object.keys(crmMatchQuerySchema.shape).join(", ")}`,
+        ),
+    }),
+    returns: "Up to five matching records",
   },
 ];
 
