@@ -632,6 +632,12 @@ test("subitems create, edit, search and inherit parent lifecycle without changin
     await expect(
       sheet.locator(".subitem-open").filter({ hasText: "Design the header" }),
     ).toBeVisible();
+    const childLink = sheet
+      .locator(".subitem-open")
+      .filter({ hasText: "Design the header" });
+    await childLink.hover();
+    await expect(childLink).toHaveCSS("cursor", "pointer");
+    await expect(childLink).toHaveCSS("text-decoration-line", "underline");
     await page.screenshot({ path: "../../artifacts/subitems-desktop.png" });
     childId = (
       await db.task.findFirstOrThrow({ where: { parentId: root.taskId } })
@@ -654,12 +660,34 @@ test("subitems create, edit, search and inherit parent lifecycle without changin
     await expect(
       sheet.getByRole("combobox", { name: "Task group", exact: true }),
     ).toBeDisabled();
+    // Saving a child keeps its sheet open and makes the latest revision editable.
+    await sheet
+      .getByRole("textbox", { name: "Task name", exact: true })
+      .fill("Design the navigation");
+    await sheet
+      .getByRole("button", { name: "Save changes", exact: true })
+      .click();
+    await expect(sheet).toBeVisible();
+    await expect(
+      sheet.getByRole("textbox", { name: "Task name", exact: true }),
+    ).toHaveValue("Design the navigation");
+    await expect(
+      sheet.getByRole("button", { name: "Save changes", exact: true }),
+    ).toBeHidden();
+    await sheet
+      .getByRole("textbox", { name: "Task name", exact: true })
+      .fill("Navigation draft");
+    await expect(
+      sheet.getByRole("button", { name: "Save changes", exact: true }),
+    ).toBeEnabled();
+    await sheet
+      .getByRole("textbox", { name: "Task name", exact: true })
+      .fill("Design the navigation");
     await ok(
       await post(page, "/api/v1/boards/update", {
         taskId: childId,
-        revision: 1,
+        revision: 2,
         changes: {
-          name: "Design the navigation",
           assigneeIds: [owner.id],
           startDate: "2026-10-25",
           dueDate: "2026-10-31",
@@ -751,7 +779,7 @@ test("subitems create, edit, search and inherit parent lifecycle without changin
       (
         await post(page, "/api/v1/boards/update", {
           taskId: childId,
-          revision: 2,
+          revision: 3,
           changes: { groupId: null },
         })
       ).status(),
