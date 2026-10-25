@@ -1,6 +1,7 @@
 "use client";
 import {
   useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState,
@@ -119,6 +120,8 @@ export function CrmGrid({
   addRow,
   onBlocked,
   onOpenLinked,
+  continueIn,
+  onContinued,
 }: {
   onOpenLinked: (id: string) => void;
   type: CrmType;
@@ -130,6 +133,9 @@ export function CrmGrid({
   onOpen: (record: CrmRecord) => void;
   addRow: React.ReactNode;
   onBlocked: (message: string) => void;
+  /** A record just added with Tab: start editing its next cell. */
+  continueIn: string | null;
+  onContinued: () => void;
 }) {
   const records = directory.records;
   const people = directory.people;
@@ -212,7 +218,7 @@ export function CrmGrid({
       error: null,
     });
   };
-  const commit = (move?: "down" | "right", picked?: string) => {
+  const commit = (move?: "down" | "right" | "left", picked?: string) => {
     const editing = editingRef.current;
     if (!editing) return;
     const value = picked ?? editing.value;
@@ -229,9 +235,23 @@ export function CrmGrid({
         ? { row: Math.min(row + 1, records.length - 1), column: col }
         : move === "right"
           ? { row, column: Math.min(col + 1, visible.length - 1) }
-          : editing.cell,
+          : move === "left"
+            ? { row, column: Math.max(col - 1, 0) }
+            : editing.cell,
     );
   };
+  // Once the new record shows up, carry on in its second column.
+  const carryOn = useEffectEvent((id: string) => {
+    const row = records.findIndex((record) => record.id === id);
+    if (row < 0) return;
+    onContinued();
+    const cell = { row, column: Math.min(1, visible.length - 1) };
+    if (editable(records[row]!, visible[cell.column]!)) setActive(cell);
+    else startEdit(cell);
+  });
+  useEffect(() => {
+    if (continueIn) carryOn(continueIn);
+  }, [continueIn, records]);
   const cancel = () => {
     if (editingRef.current) setActive(editingRef.current.cell);
     setEditing(null);
@@ -254,6 +274,13 @@ export function CrmGrid({
         return move(cell.row, cell.column + 1);
       case "ArrowLeft":
         return move(cell.row, cell.column - 1);
+      case "Tab": {
+        // Across the row, as in a spreadsheet; past either end, Tab leaves
+        // the grid as usual.
+        const next = cell.column + (event.shiftKey ? -1 : 1);
+        if (next < 0 || next >= visible.length) return;
+        return move(cell.row, next);
+      }
       case "Home":
         return move(cell.row, 0);
       case "End":
@@ -506,7 +533,7 @@ function CellEditor({
   error: string | null;
   people: CrmDirectory["people"];
   onChange: (value: string) => void;
-  onCommit: (move?: "down" | "right", value?: string) => void;
+  onCommit: (move?: "down" | "right" | "left", value?: string) => void;
   onCancel: () => void;
 }) {
   const id = `crm-cell-error-${column.key}`;
@@ -516,7 +543,7 @@ function CellEditor({
       onCommit("down");
     } else if (event.key === "Tab") {
       event.preventDefault();
-      onCommit("right");
+      onCommit(event.shiftKey ? "left" : "right");
     } else if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();

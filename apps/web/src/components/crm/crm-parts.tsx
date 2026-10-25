@@ -74,9 +74,10 @@ function useSettled(value: string, delay = 300) {
 }
 
 /**
- * The grid's last row: type a name and press Enter to add a record. Records
- * that look the same are suggested first; a second Enter (or "Add anyway")
- * adds it regardless. Nothing is ever merged.
+ * The grid's last row: type a name and press Enter to add a record, or Tab
+ * to add it and carry on in its next cell. Records that look the same are
+ * suggested first; a second Enter (or "Add anyway") adds it regardless.
+ * Nothing is ever merged.
  */
 export function AddRow({
   scope,
@@ -93,7 +94,8 @@ export function AddRow({
   label: string;
   disabled: string | null;
   pending: boolean;
-  onCreate: (name: string) => Promise<boolean>;
+  /** `next`: keep going in the new record's next cell. */
+  onCreate: (name: string, next?: boolean) => Promise<boolean>;
   onOpen: (id: string) => void;
 }) {
   const [name, setName] = useState("");
@@ -106,23 +108,24 @@ export function AddRow({
   const suggestions =
     settled.trim().length >= 3 && settled === name ? (matches.data ?? []) : [];
   const listId = `crm-matches-${scope.type}`;
-  const submit = async () => {
+  const submit = async (next: boolean) => {
     const submitted = name.trim();
     if (!submitted || submitted === saving) return;
     setSaving(submitted);
-    const created = await onCreate(submitted);
+    const created = await onCreate(submitted, next);
     setSaving(null);
     if (!created) return;
     setName((current) => (current.trim() === submitted ? "" : current));
     setConfirmed(false);
-    input.current?.focus();
+    // With Tab, the grid moves on into the new record instead.
+    if (!next) input.current?.focus();
   };
-  const add = () => {
+  const add = (next = false) => {
     if (suggestions.length && !confirmed) {
       setConfirmed(true);
       return;
     }
-    void submit();
+    void submit(next);
   };
   return (
     <div className="crm-add">
@@ -144,6 +147,9 @@ export function AddRow({
           if (event.key === "Enter") {
             event.preventDefault();
             add();
+          } else if (event.key === "Tab" && !event.shiftKey && name.trim()) {
+            event.preventDefault();
+            add(true);
           } else if (event.key === "Escape") {
             setName("");
             setConfirmed(false);
@@ -199,7 +205,7 @@ export function AddRow({
                 className="crm-button"
                 data-size="sm"
                 disabled={pending && saving === name.trim()}
-                onClick={() => void submit()}
+                onClick={() => void submit(false)}
               >
                 Add anyway
               </button>
