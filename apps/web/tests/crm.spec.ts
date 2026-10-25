@@ -208,6 +208,39 @@ test("companies are added, edited in the grid and opened as record cards", async
   await expect(page).toHaveURL(/\/crm\/companies\?record=/);
 });
 
+test("the grid moves with Tab like a spreadsheet", async ({ page }) => {
+  await owner(page);
+  await page.goto("/crm/companies");
+  // Tab after a new name adds it and carries on in its next cell.
+  const add = page.getByRole("textbox", { name: "Add company" });
+  await add.fill("Northwind Trading");
+  await add.press("Tab");
+  const domain = page.getByRole("textbox", { name: "Domain" });
+  await expect(domain).toBeFocused();
+  await expect(row(page, "Northwind Trading")).toBeVisible();
+  await domain.fill("northwind.example");
+  await domain.press("Tab");
+  // Saved, and the next cell is selected; Tab and Shift+Tab move along.
+  const cells = row(page, "Northwind Trading").getByRole("gridcell");
+  await expect(cells.nth(1)).toHaveText("northwind.example");
+  await expect(cells.nth(2)).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(cells.nth(3)).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(cells.nth(2)).toBeFocused();
+  await cells.nth(0).click();
+  await page.keyboard.press("Tab");
+  await expect(cells.nth(1)).toBeFocused();
+  // Shift+Tab while editing saves and goes back.
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Shift+Tab");
+  await expect(cells.nth(0)).toBeFocused();
+  // Tab on an empty add row still leaves the grid.
+  await add.focus();
+  await page.keyboard.press("Tab");
+  await expect(add).not.toBeFocused();
+});
+
 test("contacts edit owners inline and keep companies' fields to themselves", async ({
   page,
 }) => {

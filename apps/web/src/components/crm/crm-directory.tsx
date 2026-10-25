@@ -68,6 +68,8 @@ export function CrmDirectoryScreen({
   });
   const [notice, setNotice] = useState<YuzuToastNotice | null>(null);
   const [exporting, setExporting] = useState(false);
+  // A record added with Tab: the grid carries on in its next cell.
+  const [continueIn, setContinueIn] = useState<string | null>(null);
   const { startExport } = useCsvTransfers();
   const queryClient = useQueryClient();
   const [familiarSlot, setFamiliarSlot] = useState<HTMLDivElement | null>(null);
@@ -151,12 +153,13 @@ export function CrmDirectoryScreen({
         onError: (error) => toast(saveError(error), "error"),
       },
     );
-  const onCreate = async (name: string) => {
+  const onCreate = async (name: string, next = false) => {
     try {
       const result = await create.mutateAsync({
         name,
         createKey: crypto.randomUUID(),
       });
+      if (next && result.outcome === "APPLIED") setContinueIn(result.taskId);
       toast(
         result.outcome === "PENDING_APPROVAL"
           ? `Sent for approval. The ${text.noun} appears once a reviewer approves it.`
@@ -361,6 +364,8 @@ export function CrmDirectoryScreen({
               onOpen={(record) => openRecord(record.id, "fresh")}
               onOpenLinked={(id) => openRecord(id, "fresh")}
               onBlocked={(message) => toast(message, "info")}
+              continueIn={continueIn}
+              onContinued={() => setContinueIn(null)}
               addRow={
                 query.archived ? null : (
                   <AddRow
