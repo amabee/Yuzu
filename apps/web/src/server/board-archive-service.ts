@@ -6,7 +6,7 @@ import { SetupError } from "./setup/security";
 
 /** Archive changes only the board flag, preserving individual task archives. */
 export async function setBoardArchived(input: unknown, headers: Headers) {
-  await refuseCrmCollection(input, "Archiving");
+  await refuseCrmCollection(input, "Archiving", { pipelines: false });
   const body = boardArchiveSchema.parse(input);
   const { user } = await requireIdentity(headers);
   return serial(async (tx) => {

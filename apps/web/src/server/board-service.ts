@@ -114,6 +114,16 @@ import {
 import { projectAccess } from "./project-access";
 import { emailAddress } from "@/lib/id-contract";
 import {
+  createDeal,
+  dealSnapshot,
+  movesStage,
+  pipelineOf,
+  prepareDeal,
+  splitDeal,
+  stageApprovalBlocked,
+  updateDeal,
+} from "./deal-profile";
+import {
   checkProfileRules,
   createProfile,
   refuseCrmCollection,
@@ -545,6 +555,7 @@ export const taskInclude = {
   parent: { select: parentTaskSelect },
   companyProfile: true,
   contactProfile: true,
+  dealProfile: true,
   _count: {
     select: {
       comments: { where: { deletedAt: null } },
@@ -632,6 +643,7 @@ export function snapshot(task: LoadedTask) {
       editorIds: task.editors.map((person) => person.userId),
       fieldValues: valueMap(task),
       ...profileSnapshot(task),
+      ...dealSnapshot(task),
       archivedAt:
         (task.archivedAt ?? task.parent?.archivedAt)?.toISOString() ?? null,
     }),
@@ -1204,6 +1216,7 @@ export async function createTaskRecord(
   validateCore(body, context.board, people);
   validateValues(body.fieldValues, context.board, people);
   checkDateOrder(body.startDate ?? null, body.dueDate ?? null);
+  const deal = await prepareDeal(tx, context.board, context.user, body, null);
   // New tasks join the end of the board's manual order.
   const last = await tx.task.aggregate({
     where: { boardId: context.board.id, parentId: parentId ?? null },
@@ -1231,6 +1244,7 @@ export async function createTaskRecord(
     },
   });
   await createProfile(tx, task.id, context.board, splitProfile(body).profile);
+  await createDeal(tx, task.id, context.board, actorId, deal);
   await saveValues(
     tx,
     task.id,
@@ -1314,10 +1328,13 @@ export async function applyTaskRecord(
       changes.dueDate !== undefined ? changes.dueDate : before.dueDate,
     );
   }
+  const deal = changes
+    ? await prepareDeal(tx, context.board, context.user, changes, task)
+    : null;
+  const { profile, rest } = splitProfile(changes ?? {});
   const {
-    profile,
     rest: { assigneeIds, fieldValues, dueDate, startDate, ...scalar },
-  } = splitProfile(changes ?? {});
+  } = splitDeal(rest);
   const updated = await tx.task.updateMany({
     where: { id: task.id, revision: task.revision },
     data: {
@@ -1334,6 +1351,7 @@ export async function applyTaskRecord(
   });
   if (!updated.count) throw conflict();
   await updateProfile(tx, task.id, context.board, profile);
+  await updateDeal(tx, task, actorId, deal);
   if (assigneeIds) {
     await tx.taskAssignee.deleteMany({ where: { taskId: task.id } });
     if (assigneeIds.length)
@@ -1521,6 +1539,7 @@ export async function createTaskInTransaction(
   const people = new Set(
     (await eligiblePeople(tx, context.board)).map((person) => person.id),
   );
+  const pipeline = await pipelineOf(tx, context.board);
   const initial = {
     ...body,
     description: body.description ?? "",
@@ -1528,10 +1547,11 @@ export async function createTaskInTransaction(
     priority: body.priority ?? "NORMAL",
     startDate: body.startDate ?? null,
     dueDate: body.dueDate ?? null,
-    // Customer records belong to whoever adds them until someone changes it.
+    // Customer records and Deals belong to whoever adds them until someone
+    // changes it.
     assigneeIds:
       body.assigneeIds ??
-      (isCrmRecordType(context.board.recordType) ? [actorId] : []),
+      (isCrmRecordType(context.board.recordType) || pipeline ? [actorId] : []),
     fieldValues: body.fieldValues ?? {},
     statusId:
       body.statusId === undefined
@@ -1546,7 +1566,16 @@ export async function createTaskInTransaction(
   };
   validateCore(initial, context.board, people);
   validateValues(initial.fieldValues, context.board, people);
+  await prepareDeal(tx, context.board, context.user, initial, null);
   const policy = await readApprovalPolicy(tx, context.board);
+  // New Deals start in the default stage while stage approvals are paused.
+  if (
+    policy.enabled &&
+    pipeline &&
+    initial.stageId &&
+    initial.stageId !== pipeline.defaultStageId
+  )
+    throw stageApprovalBlocked();
   if (needsApproval(policy, "CREATE", initial, context.board.columns))
     return submitProposal(tx, {
       boardId: body.boardId,
@@ -1738,8 +1767,11 @@ export async function mutateTaskInTransaction(
   if (changes) {
     validateCore(changes, context.board, people);
     validateValues(changes.fieldValues, context.board, people);
+    await prepareDeal(tx, context.board, context.user, changes, task);
   }
   const policy = await readApprovalPolicy(tx, context.board);
+  if (policy.enabled && changes && movesStage(changes, task))
+    throw stageApprovalBlocked();
   const operation = action === "archive" ? "ARCHIVE" : "UPDATE";
   const proposedChanges = actualApprovalChanges(snapshot(task), changes ?? {});
   if (

@@ -295,7 +295,9 @@ export async function restoreRecordInTransaction(
 // ---------- Boards ----------
 
 export async function deleteBoard(input: unknown, headers: Headers) {
-  await refuseCrmCollection(input, "Deleting the collection");
+  await refuseCrmCollection(input, "Deleting the collection", {
+    pipelines: false,
+  });
   const { user } = await requireIdentity(headers);
   const { id } = idInput.parse(input);
   return serial(async (tx) => {

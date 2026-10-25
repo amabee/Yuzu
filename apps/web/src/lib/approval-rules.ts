@@ -1,5 +1,6 @@
 import type { ApprovalPolicy, ApprovalOperation } from "./approval-contract";
 import { profileFields } from "./crm-contract";
+import { dealFields } from "./deal-contract";
 export function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (value && typeof value === "object")
@@ -31,6 +32,9 @@ const fieldKeys: Record<string, string> = {
   assigneeIds: "assignees",
   ...Object.fromEntries(
     Object.entries(profileFields).map(([key, field]) => [key, field.column]),
+  ),
+  ...Object.fromEntries(
+    Object.entries(dealFields).map(([key, field]) => [key, field.column]),
   ),
 };
 export function affectedFieldIds(

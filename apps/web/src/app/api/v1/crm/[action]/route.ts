@@ -10,6 +10,18 @@ import {
 import { notifyBoardMutation } from "@/server/realtime";
 import { readSetupBody, SetupError } from "@/server/setup/security";
 import type { LinkResult } from "@/lib/crm-contract";
+import {
+  changeStages,
+  createPipeline,
+  listPipelines,
+  pipelineSummary,
+} from "@/server/pipeline-service";
+import {
+  customerDeals,
+  dealLanes,
+  dealList,
+  dealRecord,
+} from "@/server/deals-service";
 
 const linkCommand = (action: string) =>
   action === "link"
@@ -30,7 +42,20 @@ async function handle(request: Request, action: string) {
     const params = new URL(request.url).searchParams;
     const query = () => JSON.parse(params.get("query") ?? "{}");
     let data;
-    if (request.method === "POST") {
+    if (request.method === "POST" && action === "pipeline") {
+      data = await createPipeline(
+        await readSetupBody(request, 16_384),
+        request.headers,
+      );
+      // A new pipeline appears for everyone in the workspace.
+      await notifyBoardMutation({ boardId: data.boardId }, data);
+    } else if (request.method === "POST" && action === "stages") {
+      data = await changeStages(
+        await readSetupBody(request, 16_384),
+        request.headers,
+      );
+      await notifyBoardMutation({ boardId: data.boardId }, data);
+    } else if (request.method === "POST") {
       const command = linkCommand(action);
       if (!command)
         throw new SetupError(404, "NOT_FOUND", "CRM action not found.");
@@ -50,6 +75,30 @@ async function handle(request: Request, action: string) {
           recordId: params.get("recordId"),
           ...(params.get("page") ? { page: Number(params.get("page")) } : {}),
         },
+        request.headers,
+      );
+    else if (action === "pipelines")
+      data = await listPipelines(
+        params.get("workspaceId") ?? "",
+        request.headers,
+      );
+    else if (action === "pipeline")
+      data = await pipelineSummary(
+        params.get("boardId") ?? "",
+        request.headers,
+      );
+    else if (action === "deal-lanes")
+      data = await dealLanes(query(), request.headers);
+    else if (action === "deals")
+      data = await dealList(query(), request.headers);
+    else if (action === "deal")
+      data = await dealRecord(
+        { recordId: params.get("recordId") },
+        request.headers,
+      );
+    else if (action === "customer-deals")
+      data = await customerDeals(
+        { recordId: params.get("recordId") },
         request.headers,
       );
     else if (action === "directory")
@@ -85,6 +134,7 @@ async function handle(request: Request, action: string) {
             : invalid
               ? "INVALID_INPUT"
               : "CRM_REQUEST_FAILED",
+          ...(known && "details" in error ? { details: error.details } : {}),
           message: known
             ? error.message
             : invalid

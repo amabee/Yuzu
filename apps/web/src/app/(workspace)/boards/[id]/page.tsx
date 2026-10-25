@@ -1,5 +1,5 @@
 import { recordId } from "@/lib/id-contract";
-import { crmRecordHref } from "@/lib/crm-contract";
+import { crmRecordHref, dealHref } from "@/lib/crm-contract";
 import { isCrmRecordType } from "@/lib/record-types";
 import { notFound, redirect } from "next/navigation";
 import { PersonAvatar } from "@/components/boards/board-presentation";
@@ -56,6 +56,7 @@ export default async function BoardPage({
       },
       createdBy: { select: { name: true, image: true } },
       managers: { where: { userId: user.id }, select: { userId: true } },
+      pipeline: { select: { boardId: true } },
     },
   });
   if (!board) notFound();
@@ -64,6 +65,11 @@ export default async function BoardPage({
     const task = recordId.safeParse((await searchParams).task).data;
     redirect(crmRecordHref(board.recordType, task));
   }
+  // CRM pipelines open in the CRM module too.
+  if (board.pipeline)
+    redirect(
+      dealHref(board.id, recordId.safeParse((await searchParams).task).data),
+    );
   // Offer "Move to…" only where the server would allow at least one move.
   const projects = await visibleProjects(user, {
     workspaceId: board.workspaceId,

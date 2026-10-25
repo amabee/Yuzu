@@ -1,3 +1,4 @@
+import { refusePipelineCsv } from "./crm-profile";
 import { z } from "zod";
 import { createRecordId, getDatabase } from "@yuzu/database";
 import { putCsvObject, getCsvObject } from "@yuzu/database/csv-objects";
@@ -68,6 +69,7 @@ export async function createTransfer(input: unknown, headers: Headers) {
   const body = transferCreateSchema.parse(input);
   const { user } = await requireIdentity(headers);
   const boardId = body.kind === "IMPORT" ? body.boardId : body.input.boardId;
+  await refusePipelineCsv({ boardId });
   return serial(async (tx) => {
     await access(tx, user.id, boardId, true);
     const existing = await tx.csvTransfer.findUnique({

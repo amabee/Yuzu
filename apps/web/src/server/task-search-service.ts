@@ -1,4 +1,4 @@
-import { crmRecordHref } from "@/lib/crm-contract";
+import { crmRecordHref, dealHref } from "@/lib/crm-contract";
 import { isCrmRecordType } from "@/lib/record-types";
 import { hierarchyScope } from "./task-hierarchy";
 import { asRecordType, resolveRecordConfig } from "@/lib/record-types";
@@ -51,6 +51,7 @@ export async function searchTasks(
               name: true,
               recordType: true,
               recordConfig: true,
+              pipeline: { select: { boardId: true } },
               workspace: { select: { name: true } },
               project: { select: { name: true } },
             },
@@ -74,7 +75,9 @@ export async function searchTasks(
           boardName: task.board.name,
           ...(isCrmRecordType(task.board.recordType)
             ? { href: crmRecordHref(task.board.recordType, task.id) }
-            : {}),
+            : task.board.pipeline
+              ? { href: dealHref(task.board.id, task.id) }
+              : {}),
           recordName: task.parentId
             ? "Subitem"
             : resolveRecordConfig(

@@ -20,9 +20,11 @@ export const crmRecordTypes = ["COMPANY", "CONTACT"] as const;
 export type CrmRecordType = (typeof crmRecordTypes)[number];
 export const isCrmRecordType = (type: unknown): type is CrmRecordType =>
   crmRecordTypes.includes(type as CrmRecordType);
-/** Prisma filter for boards that belong to the Work module. */
+/** Prisma filter for boards that belong to the Work module: not CRM
+ *  collections, and not CRM pipelines (Deal boards with a pipeline). */
 export const workBoardWhere = {
   recordType: { notIn: [...crmRecordTypes] },
+  pipeline: { is: null },
 };
 
 export const builtinKeys = [

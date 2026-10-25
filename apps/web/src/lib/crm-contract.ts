@@ -32,6 +32,9 @@ export const profileLabel = (type: CrmRecordType, key: ProfileKey) =>
 /** Where a Company or Contact (or its collection) opens. */
 export const crmRecordHref = (type: CrmRecordType, recordId?: string) =>
   `/crm/${type === "COMPANY" ? "companies" : "contacts"}${recordId ? `?record=${recordId}` : ""}`;
+/** Where a pipeline Deal (or the pipeline) opens. */
+export const dealHref = (boardId: string, recordId?: string) =>
+  `/crm/deals/${boardId}${recordId ? `?record=${recordId}` : ""}`;
 export const profileColumnKeys = profileKeys.map(
   (key) => profileFields[key].column,
 );

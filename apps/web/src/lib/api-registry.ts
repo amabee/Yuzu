@@ -25,6 +25,7 @@ import {
   linkRemoveSchema,
   linkUpdateSchema,
 } from "./crm-contract";
+import { pipelineCreateSchema, stageCommandSchema } from "./deal-contract";
 
 /**
  * The public API: every endpoint an API token may call. This one list drives
@@ -412,6 +413,93 @@ export const apiEndpoints: ApiEndpoint[] = [
     access: "write",
     body: linkPrimarySchema,
     returns: "The new primary revision",
+  },
+  {
+    method: "GET",
+    path: "/crm/pipelines",
+    group: "CRM deals",
+    summary: "A workspace's pipelines",
+    access: "read",
+    query: id("workspaceId"),
+    returns: "Pipelines with their open deals' count and value per currency",
+  },
+  {
+    method: "GET",
+    path: "/crm/pipeline",
+    group: "CRM deals",
+    summary: "A pipeline's stages",
+    access: "read",
+    query: id("boardId"),
+    returns:
+      "Stages with categories, live-deal counts and totals, and the pipeline version",
+  },
+  {
+    method: "POST",
+    path: "/crm/pipeline",
+    group: "CRM deals",
+    summary: "Create a pipeline",
+    description:
+      "Administrators and board managers in the workspace create pipelines. They start with New, Qualified, Proposal, Negotiation, Won and Lost.",
+    access: "write",
+    body: pipelineCreateSchema,
+    returns: "The pipeline's board id",
+  },
+  {
+    method: "POST",
+    path: "/crm/stages",
+    group: "CRM deals",
+    summary: "Change a pipeline's stages",
+    description:
+      "Add, rename, recategorize, move or remove a stage, or choose the default, against the pipeline version. A pipeline keeps an Open, a Won and a Lost stage; stages in use can't be removed or recategorized.",
+    access: "write",
+    body: stageCommandSchema,
+    returns: "The new pipeline version",
+  },
+  {
+    method: "GET",
+    path: "/crm/deal-lanes",
+    group: "CRM deals",
+    summary: "A pipeline's deals by stage",
+    description:
+      "The first 50 deals of each stage, with whole-stage counts. Create and change deals with the task create and update endpoints, using stageId, amount, currency, customerCompanyId or customerContactId alongside name.",
+    access: "read",
+    query: z.object({
+      query: z.string().describe("JSON object with: boardId, q, archived"),
+    }),
+    returns: "Lanes of deals",
+  },
+  {
+    method: "GET",
+    path: "/crm/deals",
+    group: "CRM deals",
+    summary: "A page of a pipeline's deals",
+    access: "read",
+    query: z.object({
+      query: z
+        .string()
+        .describe(
+          "JSON object with: boardId, q, archived, stageId, sort, page",
+        ),
+    }),
+    returns: "One page (50) of deals with whole-filter totals",
+  },
+  {
+    method: "GET",
+    path: "/crm/deal",
+    group: "CRM deals",
+    summary: "One deal with its stage history",
+    access: "read",
+    query: id("recordId"),
+    returns: "The deal and its stage history, newest first",
+  },
+  {
+    method: "GET",
+    path: "/crm/customer-deals",
+    group: "CRM deals",
+    summary: "Deals for a company or contact",
+    access: "read",
+    query: id("recordId"),
+    returns: "Up to 50 deals the record is the customer of",
   },
 ];
 
