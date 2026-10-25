@@ -6,9 +6,20 @@ import {
 import { z } from "zod";
 import { recordId } from "@/lib/id-contract";
 import { escapeLike } from "@/lib/board-query";
-import type { StageCategory } from "@/lib/deal-contract";
+import {
+  stageRequestSchema,
+  type StageCategory,
+  type StageRequestView,
+} from "@/lib/deal-contract";
 import { access, canEdit, eligiblePeople, taskInclude } from "./board-service";
+import { readApprovalPolicy } from "./approval-policy";
 import { dealSnapshot } from "./deal-profile";
+import {
+  expireStageRequests,
+  seesStageRequests,
+  stageRequestViews,
+  type StageDependencies,
+} from "./stage-requests";
 import { SetupError } from "./setup/security";
 import { boardScope, requireIdentity } from "./team-access";
 
@@ -53,6 +64,7 @@ export const dealSchema = z.object({
   canEdit: z.boolean(),
   commentCount: z.number().int().nonnegative(),
   attachmentCount: z.number().int().nonnegative(),
+  request: stageRequestSchema,
 });
 export type Deal = z.infer<typeof dealSchema>;
 
@@ -96,6 +108,7 @@ function dealView(
   task: Loaded,
   context: Awaited<ReturnType<typeof access>>,
   known: Awaited<ReturnType<typeof customers>>,
+  requests: Map<string, NonNullable<StageRequestView>>,
 ): Deal {
   const values = dealSnapshot(task);
   const customerId = values.customerCompanyId ?? values.customerContactId;
@@ -129,6 +142,7 @@ function dealView(
     canEdit: canEdit(task, context) && !task.archivedAt,
     commentCount: task._count.comments,
     attachmentCount: task._count.attachments,
+    request: requests.get(task.id) ?? null,
   };
 }
 
@@ -143,7 +157,20 @@ async function pipelineContext(
     include: { stages: { orderBy: { position: "asc" } } },
   });
   if (!pipeline) throw unavailable();
-  return { context, pipeline };
+  await expireStageRequests(tx, { boardId });
+  const policy = await readApprovalPolicy(tx, context.board);
+  const people = await eligiblePeople(tx, context.board);
+  /** Waiting stage requests for these deals, as this viewer may see them. */
+  const requestsFor = (tasks: { id: string }[]) =>
+    stageRequestViews(
+      tx,
+      viewer,
+      context.canManage,
+      policy,
+      people,
+      tasks.map((task) => task.id),
+    );
+  return { context, pipeline, policy, people, requestsFor };
 }
 const searchWhere = (q: string): Prisma.TaskWhereInput =>
   q ? { name: { contains: escapeLike(q), mode: "insensitive" } } : {};
@@ -156,11 +183,8 @@ export async function dealLanes(input: unknown, headers: Headers) {
 export async function dealLanesFor(viewer: Viewer, input: unknown) {
   const query = dealQuerySchema.parse(input);
   return getDatabase().$transaction(async (tx) => {
-    const { context, pipeline } = await pipelineContext(
-      tx,
-      viewer,
-      query.boardId,
-    );
+    const { context, pipeline, policy, people, requestsFor } =
+      await pipelineContext(tx, viewer, query.boardId);
     const base: Prisma.TaskWhereInput = {
       boardId: query.boardId,
       parentId: null,
@@ -189,13 +213,49 @@ export async function dealLanesFor(viewer: Viewer, input: unknown) {
       context.board.workspaceId,
       lanes.flatMap((lane) => lane.tasks),
     );
+    const requests = await requestsFor(lanes.flatMap((lane) => lane.tasks));
+    // Deals waiting to move into each stage, as the viewer may see them.
+    const sees = seesStageRequests(viewer, context.canManage, policy);
+    const waiting = (
+      await tx.boardProposal.findMany({
+        where: {
+          boardId: query.boardId,
+          kind: "DEAL_STAGE",
+          status: "PENDING",
+          task: { is: base },
+        },
+        orderBy: { id: "asc" },
+        take: 200,
+        include: {
+          author: { select: { name: true } },
+          task: { include: { dealProfile: true } },
+        },
+      })
+    ).filter((request) => sees(request.authorId));
     return {
       boardId: query.boardId,
-      people: await eligiblePeople(tx, context.board),
+      people,
       lanes: lanes.map((lane) => ({
         stageId: lane.stageId,
         total: lane.total,
-        deals: lane.tasks.map((task) => dealView(task, context, known)),
+        deals: lane.tasks.map((task) =>
+          dealView(task, context, known, requests),
+        ),
+        waiting: waiting
+          .filter(
+            (request) =>
+              (request.dependencies as StageDependencies).to.id ===
+              lane.stageId,
+          )
+          .slice(0, DEAL_LANE_SIZE)
+          .map((request) => ({
+            dealId: request.taskId!,
+            name: request.task!.name,
+            amount: request.task!.dealProfile?.amount?.toString() ?? null,
+            currency: request.task!.dealProfile?.currency ?? null,
+            from: (request.dependencies as StageDependencies).from.name,
+            authorName: request.author.name,
+          })),
       })),
     };
   });
@@ -209,7 +269,11 @@ export async function dealList(input: unknown, headers: Headers) {
 export async function dealListFor(viewer: Viewer, input: unknown) {
   const query = dealQuerySchema.parse(input);
   return getDatabase().$transaction(async (tx) => {
-    const { context } = await pipelineContext(tx, viewer, query.boardId);
+    const { context, people, requestsFor } = await pipelineContext(
+      tx,
+      viewer,
+      query.boardId,
+    );
     const where: Prisma.TaskWhereInput = {
       boardId: query.boardId,
       parentId: null,
@@ -242,16 +306,26 @@ export async function dealListFor(viewer: Viewer, input: unknown) {
       take: DEAL_PAGE_SIZE,
     });
     const known = await customers(tx, viewer, context.board.workspaceId, tasks);
+    const requests = await requestsFor(tasks);
     return {
       boardId: query.boardId,
-      people: await eligiblePeople(tx, context.board),
-      deals: tasks.map((task) => dealView(task, context, known)),
+      people,
+      deals: tasks.map((task) => dealView(task, context, known, requests)),
       page,
       pageCount,
       total,
     };
   });
 }
+
+const closedStatuses = [
+  "REJECTED",
+  "STALE",
+  "CANCELLED",
+  "INVALIDATED",
+  "EXPIRED",
+] as const;
+type ClosedStatus = (typeof closedStatuses)[number];
 
 /** One deal with its stage history, newest first. */
 export async function dealRecord(input: unknown, headers: Headers) {
@@ -276,10 +350,40 @@ export async function dealRecordFor(viewer: Viewer, input: unknown) {
         "NOT_FOUND",
         "This deal is not available to you.",
       );
-    const context = await access(tx, viewer.id, task.boardId);
+    const { context, pipeline, requestsFor } = await pipelineContext(
+      tx,
+      viewer,
+      task.boardId,
+    );
     const known = await customers(tx, viewer, context.board.workspaceId, [
       task,
     ]);
+    const requests = await requestsFor([task]);
+    // The viewer's own latest request, if it closed without moving the deal
+    // and still applies to where the deal stands.
+    const latest = await tx.boardProposal.findFirst({
+      where: { taskId: id, kind: "DEAL_STAGE" },
+      orderBy: { id: "desc" },
+    });
+    const asked = latest?.dependencies as StageDependencies | undefined;
+    const closedRequest =
+      latest &&
+      asked &&
+      latest.authorId === viewer.id &&
+      closedStatuses.includes(latest.status as ClosedStatus) &&
+      task.dealProfile?.stageId === asked.from.id &&
+      !requests.has(id)
+        ? {
+            id: latest.id,
+            toStageId: asked.to.id,
+            toStageName:
+              pipeline.stages.find((stage) => stage.id === asked.to.id)?.name ??
+              asked.to.name,
+            status: latest.status as ClosedStatus,
+            reason: latest.reason,
+            decidedAt: latest.decidedAt?.toISOString() ?? null,
+          }
+        : null;
     const history = await tx.dealStageEvent.findMany({
       where: { dealId: id },
       orderBy: { createdAt: "desc" },
@@ -293,7 +397,8 @@ export async function dealRecordFor(viewer: Viewer, input: unknown) {
     );
     return {
       boardId: task.boardId,
-      deal: dealView(task, context, known),
+      deal: dealView(task, context, known, requests),
+      closedRequest,
       history: history.map((event) => ({
         id: event.id,
         kind: event.kind,
@@ -305,6 +410,9 @@ export async function dealRecordFor(viewer: Viewer, input: unknown) {
         currency: event.currency,
         reason: event.reason,
         actor: people.get(event.actorId) ?? "Former teammate",
+        requestedBy: event.requestedById
+          ? (people.get(event.requestedById) ?? "Former teammate")
+          : null,
         createdAt: event.createdAt.toISOString(),
       })),
     };

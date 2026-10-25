@@ -4,9 +4,56 @@ import {
   dealCurrency,
   needsStageReason,
   stageCommandSchema,
+  stageNeedsApproval,
   stageTransition,
 } from "./deal-contract";
 import { updateTaskSchema } from "./board-contract";
+import { changedDependency, dependenciesOf } from "@/server/stage-requests";
+
+describe("stage requests", () => {
+  it("cover closing and reopening, or every move", () => {
+    expect(stageNeedsApproval("CLOSING", "OPEN", "OPEN")).toBe(false);
+    for (const [from, to] of [
+      ["OPEN", "WON"],
+      ["OPEN", "LOST"],
+      ["WON", "OPEN"],
+      ["LOST", "WON"],
+      ["WON", "WON"],
+    ] as const)
+      expect(stageNeedsApproval("CLOSING", from, to), `${from}→${to}`).toBe(
+        true,
+      );
+    expect(stageNeedsApproval("ALL", "OPEN", "OPEN")).toBe(true);
+  });
+
+  it("depend on the deal's stage and values, not its notes", () => {
+    const from = { id: "a", name: "Proposal", category: "OPEN" };
+    const to = { id: "b", name: "Won", category: "WON" };
+    const deal = {
+      stageId: "a",
+      amount: "100",
+      currency: "PHP",
+      assigneeIds: ["x"],
+      dueDate: null,
+      customerCompanyId: null,
+      customerContactId: null,
+      description: "Notes",
+    };
+    const asked = dependenciesOf("CLOSING", from, to, deal);
+    expect(changedDependency(asked, { ...deal, description: "New" })).toBe(
+      null,
+    );
+    expect(changedDependency(asked, { ...deal, amount: "200" })).toBe(
+      "The amount changed after the request was sent.",
+    );
+    expect(changedDependency(asked, { ...deal, assigneeIds: [] })).toBe(
+      "The owner changed after the request was sent.",
+    );
+    expect(changedDependency(asked, { ...deal, stageId: "c" })).toBe(
+      "The deal moved to another stage after the request was sent.",
+    );
+  });
+});
 
 describe("deal fields", () => {
   it("keeps amounts as exact decimal text", () => {

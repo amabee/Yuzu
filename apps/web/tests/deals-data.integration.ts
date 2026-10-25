@@ -377,7 +377,7 @@ describe("Deals", () => {
     ).rejects.toThrow(/immutable/);
   });
 
-  it("pause stage moves under approvals but approve other fields", async () => {
+  it("send protected deal fields for approval like any field", async () => {
     const id = applied(await create(f.boardId, f.seller.id, { amount: 10 }));
     const amount = await db.boardColumn.findFirstOrThrow({
       where: { boardId: f.boardId, key: "deal_amount" },
@@ -392,12 +392,6 @@ describe("Deals", () => {
       },
     });
     try {
-      await expect(
-        update(id, { stageId: f.stage("qualified") }, f.seller.id),
-      ).rejects.toMatchObject({ code: "DEAL_STAGE_APPROVAL_UNSUPPORTED" });
-      await expect(
-        create(f.boardId, f.seller.id, { stageId: f.stage("won") }),
-      ).rejects.toMatchObject({ code: "DEAL_STAGE_APPROVAL_UNSUPPORTED" });
       const pending = await update(id, { amount: 99 }, f.seller.id);
       expect(pending.outcome).toBe("PENDING_APPROVAL");
       const proposal = await db.boardProposal.findFirstOrThrow({

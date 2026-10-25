@@ -1,5 +1,8 @@
-import type { DatabaseTransaction } from "@yuzu/database";
-import { finalizeProposal } from "./proposal-finalization";
+import type { DatabaseTransaction, Prisma } from "@yuzu/database";
+import {
+  finalizeProposal,
+  type ProposalOutcome,
+} from "./proposal-finalization";
 import { lockTaskRoot, checkSubitemCapacity } from "./task-hierarchy";
 import { subitemCreateSchema, prepareSubitemParent } from "./subitem-service";
 import { getDatabase } from "@yuzu/database";
@@ -37,6 +40,17 @@ import {
   validateValues,
 } from "./board-service";
 import { readApprovalPolicy } from "./approval-policy";
+import {
+  changedDependency,
+  expireStageRequests,
+  lockPipelineRow,
+  type StageDependencies,
+} from "./stage-requests";
+import {
+  stageNeedsApproval,
+  type StageApprovalRule,
+  type StageCategory,
+} from "@/lib/deal-contract";
 import { builtinForColumn } from "@/lib/record-types";
 import { requireIdentity, isAdministrator, boardScope } from "./team-access";
 import { SetupError } from "./setup/security";
@@ -120,22 +134,26 @@ export async function configureApprovals(input: unknown, headers: Headers) {
         id: true,
         parentTaskId: true,
         operation: true,
+        kind: true,
         authorId: true,
         taskId: true,
         changes: true,
         policySnapshot: true,
       },
     });
+    // Stage requests follow the pipeline's stage rule, which this doesn't
+    // change: they only lapse when approvals are turned off.
     const invalid = pending
-      .filter(
-        (proposal) =>
-          !compatiblePolicy(
-            approvalPolicySchema.parse(proposal.policySnapshot),
-            policy,
-            proposal.operation,
-            proposal.changes as Record<string, unknown>,
-            context.board.columns,
-          ),
+      .filter((proposal) =>
+        proposal.kind === "DEAL_STAGE"
+          ? !policy.enabled
+          : !compatiblePolicy(
+              approvalPolicySchema.parse(proposal.policySnapshot),
+              policy,
+              proposal.operation,
+              proposal.changes as Record<string, unknown>,
+              context.board.columns,
+            ),
       )
       .map((proposal) => proposal.id);
     if (invalid.length)
@@ -230,6 +248,14 @@ export async function decideApprovalInTransaction(
     (!includeSubitems && (proposal.parentTaskId || proposal.task?.parentId))
   )
     throw missing();
+  if (proposal.kind === "DEAL_STAGE")
+    return decideStageRequest(tx, proposal, body, userId);
+  if (body.action === "cancel")
+    throw new SetupError(
+      422,
+      "CANCEL_UNAVAILABLE",
+      "Only stage requests can be cancelled. Ask the author to withdraw this one.",
+    );
   if (proposal.parentTaskId)
     await lockTaskRoot(tx, proposal.parentTaskId, proposal.boardId);
   const context = await access(tx, user.id, proposal.boardId, true);
@@ -395,6 +421,149 @@ export async function decideApprovalInTransaction(
       );
   return finish("APPROVED", undefined, applied);
 }
+/**
+ * Decides a stage request under the pipeline lock: the requester withdraws,
+ * a manager cancels with a reason, the current approver approves or
+ * rejects. Approval rechecks expiry, access, the stage rule and every value
+ * the request depends on, then makes the move atomically.
+ */
+async function decideStageRequest(
+  tx: DatabaseTransaction,
+  proposal: Prisma.BoardProposalGetPayload<object>,
+  body: z.infer<typeof proposalDecisionSchema>,
+  userId: string,
+) {
+  await lockPipelineRow(tx, proposal.boardId);
+  const context = await access(tx, userId, proposal.boardId, true);
+  const policy = await readApprovalPolicy(tx, context.board);
+  const people = new Set(
+    (await eligiblePeople(tx, context.board)).map((person) => person.id),
+  );
+  const reviewerId = eligibleReviewer(policy, proposal.authorId, people);
+  const allowed =
+    body.action === "withdraw"
+      ? proposal.authorId === userId
+      : body.action === "cancel"
+        ? context.canManage && proposal.authorId !== userId
+        : reviewerId === userId && proposal.authorId !== userId;
+  if (!allowed)
+    throw new SetupError(
+      403,
+      "FORBIDDEN",
+      body.action === "withdraw"
+        ? "Only the person who asked can withdraw this request."
+        : body.action === "cancel"
+          ? "Only this pipeline's managers can cancel someone else's request."
+          : "Only the designated approver can decide this request. Self-approval is not allowed.",
+    );
+  if (proposal.status !== "PENDING")
+    throw new SetupError(
+      409,
+      "PROPOSAL_CLOSED",
+      "This request has already been decided.",
+    );
+  const finish = (
+    status: ProposalOutcome,
+    reason?: string,
+    applied?: { taskId: string; revision: number },
+    decided = true,
+  ) =>
+    finalizeProposal(
+      tx,
+      proposal,
+      userId,
+      reviewerId,
+      status,
+      reason,
+      applied,
+      { decided },
+    );
+  if (body.action === "withdraw") return finish("WITHDRAWN");
+  if (body.action === "cancel") return finish("CANCELLED", body.reason);
+  if (proposal.expiresAt && proposal.expiresAt <= new Date())
+    return finish(
+      "EXPIRED",
+      "Nobody decided it in time. Send a new request if it's still needed.",
+      undefined,
+      false,
+    );
+  const author = await tx.user.findUnique({
+    where: { id: proposal.authorId },
+    select: { deactivatedAt: true },
+  });
+  if (!author || author.deactivatedAt)
+    return finish("INVALIDATED", "The person who asked was deactivated.");
+  let authorContext: Awaited<ReturnType<typeof access>>;
+  try {
+    authorContext = await access(tx, proposal.authorId, proposal.boardId);
+  } catch (error) {
+    if (error instanceof SetupError && [401, 403, 404].includes(error.status))
+      return finish(
+        "STALE",
+        "The person who asked no longer has access to this pipeline.",
+      );
+    throw error;
+  }
+  const task = proposal.taskId ? await loadTask(tx, proposal.taskId) : null;
+  if (!task || task.deletedAt)
+    return finish("INVALIDATED", "The deal was deleted.");
+  if (task.archivedAt) return finish("INVALIDATED", "The deal was archived.");
+  if (!canEdit(task, authorContext))
+    return finish(
+      "STALE",
+      "The person who asked can no longer edit this deal.",
+    );
+  if (body.action === "reject") return finish("REJECTED", body.reason);
+  const dependencies = proposal.dependencies as StageDependencies;
+  const pipeline = await tx.pipeline.findUnique({
+    where: { boardId: proposal.boardId },
+    include: { stages: true },
+  });
+  const from = pipeline?.stages.find(
+    (stage) => stage.id === dependencies.from.id,
+  );
+  const to = pipeline?.stages.find((stage) => stage.id === dependencies.to.id);
+  if (
+    !pipeline ||
+    !from ||
+    !to ||
+    !policy.enabled ||
+    from.category !== dependencies.from.category ||
+    to.category !== dependencies.to.category ||
+    !stageNeedsApproval(
+      pipeline.stageApproval as StageApprovalRule,
+      from.category as StageCategory,
+      to.category as StageCategory,
+    )
+  )
+    return finish(
+      "STALE",
+      "The pipeline's stages or approval rules changed. Move the deal again under the current rules.",
+    );
+  const changed = changedDependency(dependencies, snapshot(task));
+  if (changed) return finish("STALE", changed);
+  const { changes } = updateTaskSchema.parse({
+    taskId: task.id,
+    revision: task.revision,
+    changes: proposal.changes,
+  });
+  const applied = await applyTaskRecord(
+    tx,
+    task,
+    authorContext,
+    people,
+    userId,
+    "update",
+    changes,
+    undefined,
+    "Approved stage change",
+    undefined,
+    undefined,
+    { proposalId: proposal.id, requestedById: proposal.authorId },
+  );
+  return finish("APPROVED", undefined, applied);
+}
+
 export async function approvalQueue(
   headers: Headers,
   filter = "PENDING",
@@ -405,6 +574,8 @@ export async function approvalQueue(
   const status =
     filter === "ALL" ? undefined : proposalStatusSchema.parse(filter);
   return getDatabase().$transaction(async (tx) => {
+    // What the queue shows is current: overdue stage requests expire first.
+    await expireStageRequests(tx, { board: boardScope(user) });
     const rows = await tx.boardProposal.findMany({
       where: {
         ...(requestId ? { id: recordId.parse(requestId) } : {}),
@@ -440,7 +611,11 @@ export async function approvalQueue(
         task: { select: { name: true, parent: { select: { name: true } } } },
         parentTask: { select: { name: true } },
         board: {
-          include: { columns: true, groups: { orderBy: { position: "asc" } } },
+          include: {
+            columns: true,
+            groups: { orderBy: { position: "asc" } },
+            managers: { select: { userId: true } },
+          },
         },
       },
     });
@@ -472,6 +647,14 @@ export async function approvalQueue(
         id: proposal.id,
         boardId: proposal.boardId,
         boardName: proposal.board.name,
+        kind: proposal.kind,
+        stage:
+          proposal.kind === "DEAL_STAGE"
+            ? {
+                from: (proposal.dependencies as StageDependencies).from.name,
+                to: (proposal.dependencies as StageDependencies).to.name,
+              }
+            : null,
         taskId: proposal.taskId,
         operation: proposal.operation,
         status: proposal.status,
@@ -499,6 +682,14 @@ export async function approvalQueue(
           proposal.authorId !== user.id,
         canWithdraw:
           proposal.status === "PENDING" && proposal.authorId === user.id,
+        canCancel:
+          proposal.kind === "DEAL_STAGE" &&
+          proposal.status === "PENDING" &&
+          proposal.authorId !== user.id &&
+          (isAdministrator(user.role) ||
+            proposal.board.managers.some(
+              (manager) => manager.userId === user.id,
+            )),
         reason: proposal.reason,
         decidedByName: proposal.decidedBy?.name ?? null,
         decidedAt: proposal.decidedAt?.toISOString() ?? null,

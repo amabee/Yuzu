@@ -1,6 +1,7 @@
 import { refuseCrmCollection } from "./crm-profile";
 import { guardRootLifecycle } from "./task-hierarchy";
 import { invalidateChildProposals } from "./proposal-finalization";
+import { invalidateStageRequests } from "./stage-requests";
 import {
   createRecordId,
   getDatabase,
@@ -150,6 +151,12 @@ export async function deleteRecordInTransaction(
       "This record changed. Reload it and try again.",
     );
   // Requests waiting on it can't be approved any more.
+  await invalidateStageRequests(
+    tx,
+    { taskId: id },
+    user.id,
+    "The deal was deleted.",
+  );
   await tx.boardProposal.updateMany({
     where: { taskId: id, status: "PENDING" },
     data: { status: "STALE", reason: "The record was deleted." },
@@ -310,6 +317,12 @@ export async function deleteBoard(input: unknown, headers: Headers) {
       where: { id },
       data: { deletedAt: new Date(), deletedById: user.id },
     });
+    await invalidateStageRequests(
+      tx,
+      { boardId: id },
+      user.id,
+      "The pipeline was deleted.",
+    );
     await audit(tx, {
       actorId: user.id,
       action: "BOARD_DELETED",

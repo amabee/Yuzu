@@ -215,6 +215,8 @@ export async function prepareDeal(
     source,
     target,
     reason: deal.stageReason ?? null,
+    /** Set when an approved request makes the move. */
+    requestedById: null as string | null,
   };
 }
 type Prepared = NonNullable<Awaited<ReturnType<typeof prepareDeal>>>;
@@ -248,6 +250,7 @@ async function recordStage(
       currency: values.currency,
       reason: prepared.reason,
       actorId,
+      requestedById: prepared.requestedById,
     },
   });
 }
@@ -306,13 +309,4 @@ export async function updateDeal(
     },
   });
   if (prepared.moved) await recordStage(tx, task.id, actorId, prepared);
-}
-
-/** Option A for stages: no stage moves while the pipeline needs approvals. */
-export function stageApprovalBlocked() {
-  return new SetupError(
-    409,
-    "DEAL_STAGE_APPROVAL_UNSUPPORTED",
-    "Moving deals between stages is paused here: this pipeline has approvals turned on, and approval for stage changes isn't available yet. Other deal fields still follow the approval rules.",
-  );
 }
