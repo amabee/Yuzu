@@ -374,7 +374,8 @@ export function BoardSurface({
           "restore",
           "editor",
           "trash/delete-record",
-        ].includes(variables.action)
+        ].includes(variables.action) &&
+        !(selected?.parentId && ["update", "editor"].includes(variables.action))
       ) {
         setCreating(false);
         setSelectedId(null);

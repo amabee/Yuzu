@@ -108,7 +108,7 @@ export function SubitemTableRows({
                 {field.key === "name" ? (
                   <button
                     type="button"
-                    className="pl-5 text-left font-medium text-primary"
+                    className="subitem-open pl-5 text-left font-medium text-primary"
                     onClick={() => onOpen(child.id)}
                   >
                     ↳ {child.name}

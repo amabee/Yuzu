@@ -50,11 +50,17 @@ export function editTaskDraft(
 ) {
   const baseline = { ...base, fieldValues: { ...base.fieldValues } };
   for (const key of scalarKeys) {
-    if (key in patch && same(local[key], base[key]))
+    if (
+      key in patch &&
+      (same(local[key], base[key]) || same(local[key], latest[key]))
+    )
       Object.assign(baseline, { [key]: latest[key] });
   }
   for (const key of Object.keys(patch.fieldValues ?? {})) {
-    if (same(local.fieldValues[key], base.fieldValues[key]))
+    if (
+      same(local.fieldValues[key], base.fieldValues[key]) ||
+      same(local.fieldValues[key], latest.fieldValues[key])
+    )
       baseline.fieldValues[key] = latest.fieldValues[key] ?? null;
   }
   return {
@@ -89,7 +95,11 @@ export function reconcileTaskDraft(
     ...Object.keys(base.fieldValues),
     ...Object.keys(local.fieldValues),
   ])) {
-    if (same(local.fieldValues[key], base.fieldValues[key])) continue;
+    if (
+      same(local.fieldValues[key], base.fieldValues[key]) ||
+      same(local.fieldValues[key], latest.fieldValues[key])
+    )
+      continue;
     const value = local.fieldValues[key] ?? null;
     draft.fieldValues[key] = value;
     if (same(value, latest.fieldValues[key])) continue;

@@ -33,6 +33,24 @@ const task: BoardTask = {
 const original = taskDraft(task);
 afterEach(() => vi.unstubAllGlobals());
 describe("collaborative task drafts", () => {
+  it("starts subsequent scalar and custom-field edits from their accepted saved values", () => {
+    const saved = {
+      ...original,
+      name: "Saved name",
+      fieldValues: { [fieldId]: "saved" },
+    };
+    const edited = editTaskDraft(original, saved, saved, {
+      name: "Next name",
+      fieldValues: { [fieldId]: "next" },
+    });
+    const result = reconcileTaskDraft(edited.baseline, edited.local, saved);
+    expect(result.conflicts).toEqual([]);
+    expect(result.changes).toEqual({
+      name: "Next name",
+      fieldValues: { [fieldId]: "next" },
+    });
+  });
+
   it("merges independent edits but rejects overlapping checklist changes", () => {
     const checklist = [{ id: fieldId, text: "Review", done: false }];
     const base = { ...original, checklist };
