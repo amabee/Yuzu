@@ -1,10 +1,18 @@
 import {
   builtinLabels,
   builtinName,
+  isCrmRecordType,
   lower,
   type BuiltinKey,
   type RecordConfig,
+  type RecordType,
 } from "./record-types";
+import {
+  profileFields,
+  profileKeysFor,
+  profileLabel,
+  type ProfileKey,
+} from "./crm-contract";
 import { z } from "zod";
 import {
   createTaskSchema,
@@ -52,7 +60,7 @@ export const importRowSchema = z
 export type ImportMapping = z.infer<typeof importMappingSchema>;
 export type ImportContext = {
   /** The board's record names and built-ins; Task defaults when absent. */
-  record?: RecordConfig;
+  record?: RecordConfig & { type?: RecordType };
   fields: BoardField[];
   groups: { id: string; name: string }[];
   people: { id: string; name: string }[];
@@ -218,8 +226,30 @@ export function* importPreviewChunks(csv: ReturnType<typeof parseImportCsv>) {
     yield { csv: header + lines.join(""), start, count: lines.length };
 }
 
+/** Header spellings people use for each Company/Contact field. */
+const profileAliases: Record<ProfileKey, string[]> = {
+  legalName: ["legal name", "legal_name", "registered name"],
+  website: ["website", "web site", "url", "homepage"],
+  domain: ["domain", "website domain"],
+  email: ["email", "e-mail", "email address", "main email"],
+  phone: ["phone", "phone number", "telephone", "main phone"],
+  address: ["address", "postal address", "headquarters"],
+};
+/** Link columns from a CRM export. They can't be imported yet; mapping one
+ *  flags every row, so people unmap it instead of losing it silently. */
+export const LINK_IMPORT_TARGET = "crm_links";
+const linkHeaders = [
+  "companies (read-only)",
+  "primary company (read-only)",
+  "people (read-only)",
+  "companies",
+  "primary company",
+  "people",
+];
+
 export function importTargets(context: ImportContext) {
   const record = context.record;
+  const crmType = isCrmRecordType(record?.type) ? record!.type! : null;
   const singular = record?.singular ?? "Task";
   const noun = lower(singular);
   const builtin = (key: BuiltinKey, id: string, aliases: string[]) => {
@@ -232,7 +262,7 @@ export function importTargets(context: ImportContext) {
   return [
     {
       id: "name",
-      name: `${singular} title`,
+      name: crmType ? `${singular} name` : `${singular} title`,
       aliases: [...new Set([noun, "task", "title", "name"])],
     },
     ...builtin("description", "description", ["description"]),
@@ -244,7 +274,32 @@ export function importTargets(context: ImportContext) {
       "start",
     ]),
     ...builtin("dueDate", "due_date", ["due date", "due_date", "target date"]),
-    { id: "group", name: "Group", aliases: ["group"] },
+    // Customer records have one shared list, without groups.
+    ...(crmType ? [] : [{ id: "group", name: "Group", aliases: ["group"] }]),
+    ...(crmType
+      ? profileKeysFor[crmType].map((key) => ({
+          id: profileFields[key].column,
+          name: profileLabel(crmType, key),
+          aliases: [
+            ...new Set([
+              profileLabel(crmType, key).toLowerCase(),
+              ...profileAliases[key],
+            ]),
+          ],
+        }))
+      : []),
+    ...(crmType
+      ? [
+          {
+            id: LINK_IMPORT_TARGET,
+            name:
+              crmType === "CONTACT"
+                ? "Companies (can't be imported yet)"
+                : "People (can't be imported yet)",
+            aliases: linkHeaders,
+          },
+        ]
+      : []),
     ...builtin("assignees", "assignees", ["assignees", "assignee"]),
     ...builtin("checklist", "checklist", ["checklist"]),
     {
@@ -317,7 +372,19 @@ export function mapImportRow(
       if (target === "name" || target === "description")
         input[target] = target === "description" ? cells[column] : value;
       else if (target === "source_id") sourceId = recordId.parse(value);
-      else if (target === "status")
+      else if (target === LINK_IMPORT_TARGET)
+        throw new Error(
+          "Links between contacts and companies can't be imported yet. Unmap this column to import the other fields.",
+        );
+      else if (
+        Object.values(profileFields).some((field) => field.column === target)
+      ) {
+        const key = (Object.keys(profileFields) as ProfileKey[]).find(
+          (item) => profileFields[item].column === target,
+        )!;
+        // Addresses keep their line breaks; createTaskSchema validates.
+        input[key] = key === "address" ? cells[column] : value;
+      } else if (target === "status")
         input.statusId = resolve(
           value,
           context.fields.find((field) => field.key === "status")?.options ?? [],
@@ -406,12 +473,22 @@ export function mapImportRow(
   )
     issues.push("Start date: Must be on or before the due date.");
   const parsed = createTaskSchema.safeParse(input);
-  if (!parsed.success)
+  if (!parsed.success) {
+    const crmType = isCrmRecordType(context.record?.type)
+      ? context.record!.type!
+      : null;
     issues.push(
-      ...parsed.error.issues.map(
-        (issue) => `${issue.path.join(".")}: ${issue.message}`,
-      ),
+      ...parsed.error.issues.map((issue) => {
+        const key = String(issue.path[0] ?? "");
+        // Profile fields read as their column names, like "Main email".
+        const label =
+          crmType && key in profileFields
+            ? profileLabel(crmType, key as ProfileKey)
+            : issue.path.join(".");
+        return `${label}: ${issue.message}`;
+      }),
     );
+  }
   return {
     input: parsed.success ? parsed.data : null,
     issues,

@@ -845,3 +845,92 @@ export async function linkSummaries(
     counts.map((row) => [row.companyId, { currentPeople: row._count._all }]),
   );
 }
+
+/** Most links named per exported record; the rest are counted. */
+const EXPORT_LINKS = 200;
+/**
+ * Links as text for CSV exports: "Northwind (Head of operations, Current,
+ * Primary); Acme (Former)". Contacts name hidden companies only as
+ * "Private company"; companies leave hidden people out.
+ */
+export async function crmLinkSummaries(
+  tx: DatabaseTransaction,
+  viewer: Viewer,
+  type: "COMPANY" | "CONTACT",
+  workspaceId: string,
+  ids: string[],
+) {
+  const visibleEnd = {
+    deletedAt: null,
+    board: { workspaceId, ...boardScope(viewer) },
+  };
+  const order: Prisma.ContactCompanyOrderByWithRelationInput[] = [
+    { isPrimary: "desc" },
+    { status: "asc" },
+    { createdAt: "asc" },
+    { id: "asc" },
+  ];
+  const rows = await tx.contactCompany.findMany({
+    where:
+      type === "CONTACT"
+        ? { contactId: { in: ids } }
+        : { companyId: { in: ids }, contact: { record: visibleEnd } },
+    orderBy: order,
+    select: {
+      contactId: true,
+      companyId: true,
+      role: true,
+      status: true,
+      isPrimary: true,
+    },
+  });
+  const otherIds = [
+    ...new Set(
+      rows.map((row) => (type === "CONTACT" ? row.companyId : row.contactId)),
+    ),
+  ];
+  const names = new Map(
+    (
+      await tx.task.findMany({
+        where: { id: { in: otherIds }, ...visibleEnd },
+        select: { id: true, name: true },
+      })
+    ).map((task) => [task.id, task.name]),
+  );
+  const grouped = new Map<string, string[]>();
+  const primary = new Map<string, string>();
+  for (const row of rows) {
+    const owner = type === "CONTACT" ? row.contactId : row.companyId;
+    const otherId = type === "CONTACT" ? row.companyId : row.contactId;
+    const name = names.get(otherId);
+    const details = name
+      ? [
+          row.role,
+          row.status === "FORMER" ? "Former" : "Current",
+          row.isPrimary
+            ? type === "CONTACT"
+              ? "Primary"
+              : "Primary company"
+            : null,
+        ].filter(Boolean)
+      : [];
+    const text = name ? `${name} (${details.join(", ")})` : "Private company";
+    if (type === "CONTACT" && row.isPrimary)
+      primary.set(owner, name ?? "Private company");
+    (grouped.get(owner) ?? grouped.set(owner, []).get(owner)!).push(text);
+  }
+  return new Map(
+    ids.map((id) => {
+      const items = grouped.get(id) ?? [];
+      const shown = items.slice(0, EXPORT_LINKS);
+      const more = items.length - shown.length;
+      return [
+        id,
+        {
+          text: shown.join("; ") + (more > 0 ? `; and ${more} more` : ""),
+          primary: primary.get(id) ?? "",
+        },
+      ];
+    }),
+  );
+}

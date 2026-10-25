@@ -1,10 +1,15 @@
 import { test, expect, type Page } from "@playwright/test";
 import { getDatabase } from "@yuzu/database";
+import { readFile } from "node:fs/promises";
+import { parseImportCsv } from "../src/lib/csv-import";
+import { startTestCsvWorker, stopTestCsvWorker } from "./csv-worker-process";
 
 process.env.DATABASE_URL = process.env.YUZU_E2E_DATABASE_URL;
 const ORIGIN = "http://127.0.0.1:3100";
 const shots = process.env.YUZU_CRM_SHOTS;
 
+test.beforeAll(() => startTestCsvWorker());
+test.afterAll(() => stopTestCsvWorker());
 test.beforeEach(async () => {
   if (new URL(process.env.DATABASE_URL!).pathname !== "/yuzu_e2e")
     throw new Error("Refusing to reset a non-test database.");
@@ -70,6 +75,20 @@ async function owner(page: Page) {
 const shot = async (page: Page, name: string) => {
   if (shots) await page.screenshot({ path: `${shots}/${name}.png` });
 };
+/** The workspace's collection of a type, created by opening its screen. */
+async function crmBoard(
+  page: Page,
+  workspaceId: string,
+  type: "COMPANY" | "CONTACT",
+) {
+  await page.goto(type === "COMPANY" ? "/crm/companies" : "/crm/contacts");
+  await page.goBack();
+  return (
+    await getDatabase().board.findFirstOrThrow({
+      where: { workspaceId, recordType: type },
+    })
+  ).id;
+}
 const grid = (page: Page) => page.getByRole("grid", { name: "Companies" });
 const row = (page: Page, name: string) =>
   grid(page).getByRole("row").filter({ hasText: name });
@@ -359,4 +378,102 @@ test("contacts link companies with roles, a primary, and stacked cards", async (
   await expect(
     companies.getByRole("button", { name: "Open Acme Labs" }),
   ).toBeVisible();
+});
+
+test("companies import from CSV with duplicate checks and export with readable links", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const { workspace } = await owner(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/crm/companies");
+  const db = getDatabase();
+  const board = await db.board.findFirstOrThrow({
+    where: { workspaceId: workspace.id, recordType: "COMPANY" },
+  });
+  await post(page, "/api/v1/boards/create-task", {
+    boardId: board.id,
+    createKey: crypto.randomUUID(),
+    name: "Northwind Trading",
+    domain: "north.example",
+  });
+
+  await page.getByRole("button", { name: "Import CSV", exact: true }).click();
+  const panel = page.getByRole("dialog");
+  await expect(panel).toContainText("Bring your companies into Yuzu");
+  const choose = page.waitForEvent("filechooser");
+  await panel.getByLabel("CSV file").click();
+  await (
+    await choose
+  ).setFiles({
+    name: "companies.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(
+      [
+        "Company,Domain,Main email,Owner",
+        "Northwind (new office),NORTH.example,,Team Owner",
+        "Acme Labs,acme.example,sales@acme.example,Team Owner",
+        "Broken Co,https://broken.example/x,not-an-email,",
+      ].join("\r\n"),
+    ),
+  });
+  await panel
+    .getByRole("button", { name: "Preview companies", exact: true })
+    .click();
+  await expect(
+    panel.getByText("3 rows · 1 invalid · 1 possible duplicates"),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(panel).toContainText("Enter just the domain");
+  await shot(page, "import-preview");
+  await panel
+    .getByRole("button", { name: "Import 1 company", exact: true })
+    .click();
+  await expect(row(page, "Acme Labs")).toBeVisible({ timeout: 30_000 });
+  await expect(row(page, "Acme Labs")).toContainText("sales@acme.example");
+  await expect(row(page, "Northwind (new office)")).toHaveCount(0);
+
+  // Link a contact, then export: links come out as read-only text.
+  const contacts = await crmBoard(page, workspace.id, "CONTACT");
+  const ana = (
+    await (
+      await post(page, "/api/v1/boards/create-task", {
+        boardId: contacts,
+        createKey: crypto.randomUUID(),
+        name: "Ana Reyes",
+      })
+    ).json()
+  ).data.taskId;
+  const acme = await db.task.findFirstOrThrow({ where: { name: "Acme Labs" } });
+  expect(
+    (
+      await post(page, "/api/v1/crm/link", {
+        contactId: ana,
+        companyId: acme.id,
+        role: "=Buyer",
+        requestKey: crypto.randomUUID(),
+      })
+    ).status(),
+  ).toBe(200);
+  await page.getByRole("button", { name: "Export CSV", exact: true }).click();
+  const activity = page.getByRole("region", { name: "Transfer progress" });
+  await expect(
+    activity.getByText("Ready to download", { exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
+  const downloaded = page.waitForEvent("download");
+  await activity
+    .getByRole("link", { name: "Download CSV", exact: true })
+    .click();
+  const download = await downloaded;
+  expect(download.suggestedFilename()).toMatch(/^yuzu-Companies-.*\.csv$/u);
+  const text = await readFile((await download.path())!, "utf8");
+  const { headers, rows } = parseImportCsv(text);
+  expect(headers.slice(0, 3)).toEqual(["Company ID", "Company", "Domain"]);
+  const records = rows.map((cells) =>
+    Object.fromEntries(headers.map((name, index) => [name, cells[index]])),
+  );
+  expect(records.find((item) => item.Company === "Acme Labs")).toMatchObject({
+    Domain: "acme.example",
+    "Main email": "sales@acme.example",
+    "People (read-only)": "Ana Reyes (=Buyer, Current)",
+  });
 });

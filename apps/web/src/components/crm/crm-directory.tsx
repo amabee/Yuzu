@@ -2,7 +2,11 @@
 import { useEffect, useState } from "react";
 import "./crm.css";
 import { DropdownMenu } from "radix-ui";
-import { Archive, Check, Columns3, Search } from "lucide-react";
+import { Archive, Check, Columns3, FileDown, Search } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { ImportCsv } from "@/components/boards/import-csv";
+import { useCsvTransfers } from "@/components/transfers/csv-transfer-runtime";
+import { resolveRecordConfig } from "@/lib/record-types";
 import { useBoardLiveSync } from "@/components/boards/use-board-live-sync";
 import { useTaskUploads } from "@/components/boards/use-task-uploads";
 import { useUiStore } from "@/components/providers";
@@ -13,6 +17,7 @@ import { CrmGrid, crmColumns } from "./crm-grid";
 import { AddRow } from "./crm-parts";
 import { CrmRecordDeck } from "./crm-record-deck";
 import {
+  crmKeys,
   saveError,
   useCrmCreate,
   useCrmDirectory,
@@ -62,6 +67,9 @@ export function CrmDirectoryScreen({
     page: 1,
   });
   const [notice, setNotice] = useState<YuzuToastNotice | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const { startExport } = useCsvTransfers();
+  const queryClient = useQueryClient();
   const [familiarSlot, setFamiliarSlot] = useState<HTMLDivElement | null>(null);
   const toast = (message: string, kind: YuzuToastNotice["kind"] = "success") =>
     setNotice({ id: crypto.randomUUID(), kind, message });
@@ -192,6 +200,56 @@ export function CrmDirectoryScreen({
           <h1>{text.title}</h1>
           <p className="crm-page-lede">{text.lede}</p>
         </div>
+        {data && (
+          <div className="crm-page-actions">
+            <ImportCsv
+              state={{
+                boardId: scope.boardId,
+                readOnly: !data.canCreate,
+                record: {
+                  ...resolveRecordConfig(scope.type, {}),
+                  type: scope.type,
+                },
+                fields: [],
+                groups: [],
+                people: data.people,
+              }}
+              onNotice={transferNotice}
+              onChanged={() =>
+                void queryClient.invalidateQueries({
+                  queryKey: crmKeys.board(scope),
+                })
+              }
+            />
+            <button
+              type="button"
+              className="crm-button"
+              data-size="sm"
+              disabled={exporting}
+              onClick={async () => {
+                setExporting(true);
+                try {
+                  await startExport({
+                    boardId: scope.boardId,
+                    scope: "BOARD",
+                    includeArchived: query.archived,
+                  });
+                  toast(
+                    `Preparing your ${text.title.toLowerCase()} CSV${query.archived ? ", archived ones included" : ""}. Download it from the lemon when it's ready.`,
+                    "info",
+                  );
+                } catch (error) {
+                  toast(saveError(error), "error");
+                } finally {
+                  setExporting(false);
+                }
+              }}
+            >
+              <FileDown size={14} aria-hidden="true" />
+              {exporting ? "Exporting…" : "Export CSV"}
+            </button>
+          </div>
+        )}
       </header>
       <div
         className="crm-tools"
