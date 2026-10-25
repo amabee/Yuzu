@@ -18,15 +18,23 @@ const eventSchema = z.object({
   eventId: z.string().uuid(),
   taskId: z.string().uuid().optional(),
 });
-function useLiveSync(boardId: string | undefined, principalId: string) {
+function useLiveSync(
+  boardId: string | undefined,
+  principalId: string,
+  /** The cache to refresh instead of this board's own, e.g. a CRM screen
+   *  listening to its related collection. */
+  refreshKey?: readonly unknown[],
+) {
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<
     "connecting" | "live" | "reconnecting" | "fallback"
   >("connecting");
   useEffect(() => {
-    const queryKey = boardId
-      ? ["principal", principalId, "boards", boardId]
-      : ["principal", principalId, "approvals"];
+    const queryKey = refreshKey
+      ? [...refreshKey]
+      : boardId
+        ? ["principal", principalId, "boards", boardId]
+        : ["principal", principalId, "approvals"];
     const abort = new AbortController();
     let socket: Socket | undefined;
     let stopped = false;
@@ -206,12 +214,18 @@ function useLiveSync(boardId: string | undefined, principalId: string) {
       socket?.removeAllListeners();
       socket?.disconnect();
     };
-  }, [boardId, principalId, queryClient]);
+    // The refresh key is compared by value, so callers may pass a new array.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boardId, principalId, queryClient, JSON.stringify(refreshKey ?? null)]);
   return { status, syncInterval: status === "live" ? 60_000 : 15_000 };
 }
 
-export function useBoardLiveSync(boardId: string, principalId: string) {
-  return useLiveSync(boardId, principalId);
+export function useBoardLiveSync(
+  boardId: string,
+  principalId: string,
+  refreshKey?: readonly unknown[],
+) {
+  return useLiveSync(boardId, principalId, refreshKey);
 }
 export function useApprovalLiveSync(principalId: string) {
   return useLiveSync(undefined, principalId);

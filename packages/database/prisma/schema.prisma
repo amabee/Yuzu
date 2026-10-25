@@ -500,6 +500,8 @@ model CompanyProfile {
   emailKey    String?
   phone       String?
   address     String?
+  /// People linked to this company; the contact side owns each link.
+  people      ContactCompany[]
   createdAt   DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
 
@@ -517,11 +519,52 @@ model ContactProfile {
   email       String?
   emailKey    String?
   phone       String?
+  /// Changes whenever the primary company changes, independently of the
+  /// record's own revision, so concurrent primary choices can't overwrite.
+  primaryRevision Int       @default(0)
+  companies   ContactCompany[]
   createdAt   DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
 
   @@unique([recordId, workspaceId])
   @@index([workspaceId, emailKey])
+}
+
+/// A contact's link to a company: role, current or former, and at most one
+/// primary per contact. Both ends are in the same workspace (composite keys);
+/// SQL constraints enforce the status and primary rules.
+model ContactCompany {
+  id          String         @id @default(uuid(7))
+  workspaceId String
+  contactId   String
+  contact     ContactProfile @relation(fields: [contactId, workspaceId], references: [recordId, workspaceId], onDelete: Cascade)
+  companyId   String
+  company     CompanyProfile @relation(fields: [companyId, workspaceId], references: [recordId, workspaceId], onDelete: Cascade)
+  role        String?
+  /// CURRENT or FORMER.
+  status      String         @default("CURRENT")
+  isPrimary   Boolean        @default(false)
+  revision    Int            @default(1)
+  createdById String
+  updatedById String
+  createdAt   DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime       @updatedAt @db.Timestamptz(3)
+
+  @@unique([contactId, companyId])
+  @@index([companyId, status, id])
+  @@index([contactId, status, id])
+}
+
+/// Replays of link commands: the same key and payload return the recorded
+/// result; a different payload under the same key is refused.
+model AffiliationRequest {
+  actorId    String
+  requestKey String
+  digest     String
+  result     Json
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  @@id([actorId, requestKey])
 }
 
 model TaskAttachment {

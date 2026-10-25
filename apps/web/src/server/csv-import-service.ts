@@ -1,4 +1,3 @@
-import { refuseCrmCollection } from "./crm-profile";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { createRecordId, getDatabase } from "@yuzu/database";
@@ -14,6 +13,7 @@ import { requireIdentity } from "./team-access";
 import { SetupError } from "./setup/security";
 import { readApprovalPolicy } from "./approval-policy";
 import { createTaskSchema, fieldOptions } from "@/lib/board-contract";
+import { asRecordType, isCrmRecordType } from "@/lib/record-types";
 import {
   importPreviewSchema,
   importRowSchema,
@@ -100,7 +100,6 @@ export async function previewCsvImport(
       maxRows: MAX_PREVIEW_ROWS,
     });
   } catch (error) {
-    await refuseCrmCollection(input, "CSV import");
     throw new SetupError(422, "INVALID_CSV", (error as Error).message);
   }
   return getDatabase().$transaction(
@@ -108,8 +107,14 @@ export async function previewCsvImport(
       const context = await access(tx, user.id, body.boardId, true);
       const people = await eligiblePeople(tx, context.board);
       const eligible = new Set(people.map((person) => person.id));
+      const crmType = isCrmRecordType(context.board.recordType)
+        ? context.board.recordType
+        : null;
       const model = {
-        record: boardRecord(context.board).config,
+        record: {
+          ...boardRecord(context.board).config,
+          type: asRecordType(context.board.recordType),
+        },
         fields: context.board.columns.map((field) => ({
           ...field,
           version: "",
@@ -161,6 +166,43 @@ export async function previewCsvImport(
           "Too many matching tasks to preview. Import a smaller CSV with more specific titles.",
         );
       const names = new Set(existing.map((task) => task.name.toLowerCase()));
+      // Customer records also match by email or domain, among those the
+      // importer can see on this collection. Matches are skipped by default;
+      // nothing existing is updated.
+      const emails = new Set<string>();
+      const domains = new Set<string>();
+      if (crmType) {
+        const keys = mapped.flatMap((row) =>
+          row.input?.email ? [row.input.email.toLowerCase()] : [],
+        );
+        const wanted = mapped.flatMap((row) =>
+          row.input?.domain ? [row.input.domain] : [],
+        );
+        const profiles = await tx.task.findMany({
+          where: {
+            boardId: body.boardId,
+            deletedAt: null,
+            OR:
+              crmType === "COMPANY"
+                ? [
+                    { companyProfile: { emailKey: { in: keys } } },
+                    { companyProfile: { domain: { in: wanted } } },
+                  ]
+                : [{ contactProfile: { emailKey: { in: keys } } }],
+          },
+          select: {
+            companyProfile: { select: { emailKey: true, domain: true } },
+            contactProfile: { select: { emailKey: true } },
+          },
+          take: 10_000,
+        });
+        for (const profile of profiles) {
+          const found = profile.companyProfile ?? profile.contactProfile;
+          if (found?.emailKey) emails.add(found.emailKey);
+          if (profile.companyProfile?.domain)
+            domains.add(profile.companyProfile.domain);
+        }
+      }
       const proposed = await tx.$queryRaw<{ name: string }[]>`
         SELECT DISTINCT lower("changes"->>'name') AS "name" FROM "BoardProposal"
         WHERE "boardId" = ${body.boardId} AND "operation" = 'CREATE' AND "status" = 'PENDING'
@@ -186,9 +228,13 @@ export async function previewCsvImport(
             );
           }
         }
+        const email = row.input?.email?.toLowerCase();
+        const domain = row.input?.domain;
         const duplicate =
           names.has(row.name.toLowerCase()) ||
-          Boolean(row.sourceId && ids.has(row.sourceId));
+          Boolean(row.sourceId && ids.has(row.sourceId)) ||
+          Boolean(email && emails.has(email)) ||
+          Boolean(domain && domains.has(domain));
         let token: string | undefined;
         if (row.input && !row.issues.length) {
           token = signTicket({
@@ -205,7 +251,11 @@ export async function previewCsvImport(
             );
           }
         }
-        if (row.input && !row.issues.length) names.add(row.name.toLowerCase());
+        if (row.input && !row.issues.length) {
+          names.add(row.name.toLowerCase());
+          if (email) emails.add(email);
+          if (domain) domains.add(domain);
+        }
         return {
           row: index + 2,
           name: row.name,
@@ -224,8 +274,9 @@ export async function previewCsvImport(
           duplicate,
           ...(duplicate
             ? {
-                duplicateReason:
-                  "Matches an existing task (including archived tasks), pending creation request, or earlier CSV row.",
+                duplicateReason: crmType
+                  ? `Matches an existing ${crmType === "COMPANY" ? "company" : "contact"} by name${crmType === "COMPANY" ? ", email or domain" : " or email"} (including archived ones), a pending request, or an earlier CSV row.`
+                  : "Matches an existing task (including archived tasks), pending creation request, or earlier CSV row.",
               }
             : {}),
           ...(token ? { token } : {}),

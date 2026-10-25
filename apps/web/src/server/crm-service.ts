@@ -31,7 +31,8 @@ import { access, canEdit, eligiblePeople, taskInclude } from "./board-service";
 import { profileSnapshot } from "./crm-profile";
 import { SetupError } from "./setup/security";
 import { gatedAccess } from "./api-gate";
-import { requireIdentity, workspaceScope } from "./team-access";
+import { boardScope, requireIdentity, workspaceScope } from "./team-access";
+import { linkSummaries } from "./crm-links-service";
 
 /**
  * The CRM module's Companies and Contacts (docs/specs/companies-contacts.md).
@@ -282,7 +283,22 @@ export async function crmDirectoryFor(
       canManage: context.canManage,
       approvals: policy.enabled,
       people: await eligiblePeople(tx, context.board),
-      records: tasks.map((task) => recordView(task, query.type, context)),
+      records: await (async () => {
+        const summaries = await linkSummaries(
+          tx,
+          user,
+          query.type,
+          context.board.workspaceId,
+          tasks.map((task) => task.id),
+        );
+        return tasks.map((task) => ({
+          ...recordView(task, query.type, context),
+          ...(query.type === "CONTACT"
+            ? { primaryCompany: null }
+            : { currentPeople: 0 }),
+          ...summaries.get(task.id),
+        }));
+      })(),
       page,
       pageCount,
       total,
@@ -317,7 +333,7 @@ export async function crmRecord(
   return crmRecordFor(user, input);
 }
 export async function crmRecordFor(
-  user: { id: string },
+  user: { id: string; role: string },
   input: unknown,
 ): Promise<CrmRecordDetail> {
   const id = recordId.parse((input as { recordId?: unknown })?.recordId);
@@ -359,6 +375,53 @@ export async function crmRecordFor(
         person.name,
       ]),
     );
+    // Link changes are logged on the board, without a record revision.
+    const linkEvents = await tx.boardEvent.findMany({
+      where: {
+        boardId: task.boardId,
+        subjectId: task.id,
+        action: { in: linkActions },
+      },
+      select: {
+        id: true,
+        action: true,
+        createdAt: true,
+        after: true,
+        actor: { select: { name: true } },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    });
+    const otherKey = type.data === "CONTACT" ? "companyId" : "contactId";
+    const otherIds = [
+      ...new Set(
+        linkEvents.flatMap((event) => {
+          const after = (event.after ?? {}) as Record<string, unknown>;
+          return [after[otherKey], after.before].filter(
+            (value): value is string => typeof value === "string",
+          );
+        }),
+      ),
+    ];
+    const others = new Map(
+      (
+        await tx.task.findMany({
+          where: {
+            id: { in: otherIds },
+            deletedAt: null,
+            board: {
+              workspaceId: context.board.workspaceId,
+              ...boardScope(user),
+            },
+          },
+          select: { id: true, name: true },
+        })
+      ).map((other) => [other.id, other.name]),
+    );
+    const privateName =
+      type.data === "CONTACT" ? "a private company" : "a private contact";
+    const nameOf = (id: unknown) =>
+      (typeof id === "string" && others.get(id)) || privateName;
     const labels: Record<string, string> = {
       ...sharedLabels,
       ...Object.fromEntries(
@@ -368,40 +431,95 @@ export async function crmRecordFor(
         ]),
       ),
     };
+    const recordEntries = activity.map((entry) => {
+      const before = (entry.before ?? {}) as Record<string, unknown>;
+      const after = (entry.after ?? {}) as Record<string, unknown>;
+      return {
+        id: entry.id,
+        // Shared activity says "task"; CRM records use their own noun.
+        action: entry.action.replace(
+          /\btask\b/i,
+          type.data === "COMPANY" ? "company" : "contact",
+        ),
+        actor: entry.actor.name,
+        createdAt: entry.createdAt.toISOString(),
+        changes: entry.before
+          ? Object.keys(labels)
+              .filter(
+                (key) =>
+                  JSON.stringify(before[key] ?? null) !==
+                  JSON.stringify(after[key] ?? null),
+              )
+              .map((key) => ({
+                field: labels[key]!,
+                from: describe(before[key], people),
+                to: describe(after[key], people),
+              }))
+          : [],
+      };
+    });
+    const linkEntries = linkEvents.map((event) => {
+      const after = (event.after ?? {}) as Record<string, unknown>;
+      const before = (after.before ?? {}) as Record<string, unknown>;
+      const other = nameOf(after[otherKey]);
+      const status = (value: unknown) =>
+        value === "FORMER" ? "Former" : value === "CURRENT" ? "Current" : null;
+      const role = (value: unknown) =>
+        typeof value === "string" && value ? value : null;
+      const action = event.action.startsWith("Linked")
+        ? `linked ${other}`
+        : event.action.startsWith("Unlinked")
+          ? `unlinked ${other}`
+          : event.action.startsWith("Changed link")
+            ? `changed the link to ${other}`
+            : type.data === "COMPANY"
+              ? after.cleared
+                ? `cleared this as ${other}'s primary company`
+                : `made this ${other}'s primary company`
+              : after.cleared
+                ? `cleared ${other} as the primary company`
+                : `made ${other} the primary company`;
+      return {
+        id: event.id,
+        action,
+        actor: event.actor.name,
+        createdAt: event.createdAt.toISOString(),
+        changes: event.action.startsWith("Changed link")
+          ? [
+              { field: "Role", from: role(before.role), to: role(after.role) },
+              {
+                field: "Status",
+                from: status(before.status),
+                to: status(after.status),
+              },
+            ].filter((change) => change.from !== change.to)
+          : event.action.startsWith("Linked")
+            ? [
+                { field: "Role", from: null, to: role(after.role) },
+                { field: "Status", from: null, to: status(after.status) },
+              ].filter((change) => change.to)
+            : [],
+      };
+    });
     return {
       type: type.data,
       boardId: task.boardId,
       record: recordView(task, type.data, context),
-      activity: activity.map((entry) => {
-        const before = (entry.before ?? {}) as Record<string, unknown>;
-        const after = (entry.after ?? {}) as Record<string, unknown>;
-        return {
-          id: entry.id,
-          // Shared activity says "task"; CRM records use their own noun.
-          action: entry.action.replace(
-            /\btask\b/i,
-            type.data === "COMPANY" ? "company" : "contact",
-          ),
-          actor: entry.actor.name,
-          createdAt: entry.createdAt.toISOString(),
-          changes: entry.before
-            ? Object.keys(labels)
-                .filter(
-                  (key) =>
-                    JSON.stringify(before[key] ?? null) !==
-                    JSON.stringify(after[key] ?? null),
-                )
-                .map((key) => ({
-                  field: labels[key]!,
-                  from: describe(before[key], people),
-                  to: describe(after[key], people),
-                }))
-            : [],
-        };
-      }),
+      activity: [...recordEntries, ...linkEntries]
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 50),
     };
   });
 }
+const linkActions = [
+  "Linked company",
+  "Changed link company",
+  "Unlinked company",
+  "Linked contact",
+  "Changed link contact",
+  "Unlinked contact",
+  "Primary company",
+];
 
 /**
  * Records that look like the one being added: same email or domain first,

@@ -1486,6 +1486,7 @@ export async function createTaskInTransaction(
   );
   if (cached) return cached;
   if (importOptions?.skipDuplicate) {
+    const email = body.email?.toLowerCase();
     const duplicate = await tx.task.findFirst({
       where: {
         deletedAt: null,
@@ -1493,6 +1494,14 @@ export async function createTaskInTransaction(
         OR: [
           { name: { equals: body.name, mode: "insensitive" } },
           ...(importOptions.sourceId ? [{ id: importOptions.sourceId }] : []),
+          // Customer records also match by email and company domain.
+          ...(email
+            ? [
+                { companyProfile: { emailKey: email } },
+                { contactProfile: { emailKey: email } },
+              ]
+            : []),
+          ...(body.domain ? [{ companyProfile: { domain: body.domain } }] : []),
         ],
       },
       select: { id: true },

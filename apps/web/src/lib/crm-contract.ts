@@ -170,6 +170,13 @@ export const crmRecordSchema = z.object({
   canEdit: z.boolean(),
   commentCount: z.number().int().nonnegative(),
   attachmentCount: z.number().int().nonnegative(),
+  /** Contacts: their primary company, if the viewer can see it. */
+  primaryCompany: z
+    .object({ id: recordId, name: z.string() })
+    .nullable()
+    .optional(),
+  /** Companies: people currently linked that the viewer can see. */
+  currentPeople: z.number().int().nonnegative().optional(),
   profile: z.object(
     Object.fromEntries(
       profileKeys.map((key) => [key, z.string().nullable()]),
@@ -244,3 +251,124 @@ export const crmMatchesSchema = z.array(
 );
 export type CrmMatches = z.infer<typeof crmMatchesSchema>;
 export const CRM_MATCH_LIMIT = 5;
+
+// ---------- Contact–Company links (slice 1b) ----------
+
+/** A contact may have at most this many company links, former ones included. */
+export const MAX_COMPANY_LINKS = 100;
+export const LINK_PAGE_SIZE = 50;
+export const linkStatuses = ["CURRENT", "FORMER"] as const;
+export type LinkStatus = (typeof linkStatuses)[number];
+export const linkRole = optional(120, "Role");
+
+export const linkCreateSchema = z
+  .object({
+    contactId: recordId,
+    companyId: recordId,
+    role: linkRole.optional(),
+    status: z.enum(linkStatuses).default("CURRENT"),
+    requestKey: recordId,
+  })
+  .strict();
+export const linkUpdateSchema = z
+  .object({
+    linkId: recordId,
+    revision: z.number().int().positive(),
+    requestKey: recordId,
+    changes: z
+      .object({ role: linkRole, status: z.enum(linkStatuses) })
+      .partial()
+      .strict()
+      .refine(
+        (value) => Object.keys(value).length > 0,
+        "Change the role or status.",
+      ),
+    /** Marking the primary company Former also clears it, explicitly. */
+    clearPrimary: z.boolean().default(false),
+    primaryRevision: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+export const linkPrimarySchema = z
+  .object({
+    contactId: recordId,
+    /** The new primary link, or null to clear the primary company. */
+    linkId: recordId.nullable(),
+    linkRevision: z.number().int().positive().optional(),
+    primaryRevision: z.number().int().nonnegative(),
+    requestKey: recordId,
+  })
+  .strict();
+export const linkRemoveSchema = z
+  .object({
+    linkId: recordId,
+    revision: z.number().int().positive(),
+    requestKey: recordId,
+    clearPrimary: z.boolean().default(false),
+    primaryRevision: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+const linkedRecord = z.object({
+  id: recordId,
+  name: z.string(),
+  detail: z.string().nullable(),
+  archived: z.boolean(),
+});
+export const crmLinkSchema = z.discriminatedUnion("visible", [
+  z.object({
+    visible: z.literal(true),
+    id: recordId,
+    revision: z.number().int().positive(),
+    role: z.string().nullable(),
+    status: z.enum(linkStatuses),
+    isPrimary: z.boolean(),
+    /** The record at the other end of the link. */
+    record: linkedRecord,
+    /** Whether the viewer may change this link (the contact's editors). */
+    canEdit: z.boolean(),
+  }),
+  // A link to a record the viewer can't see: no name, role or ids.
+  z.object({
+    visible: z.literal(false),
+    key: z.string(),
+    status: z.enum(linkStatuses),
+  }),
+]);
+export type CrmLink = z.infer<typeof crmLinkSchema>;
+export const crmLinksQuerySchema = z
+  .object({
+    recordId,
+    page: z.number().int().min(1).max(1000).default(1),
+  })
+  .strict();
+export const crmLinksSchema = z.object({
+  side: z.enum(["CONTACT", "COMPANY"]),
+  links: z.array(crmLinkSchema),
+  page: z.number().int().positive(),
+  pageCount: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  /** Contacts only: the token for changing the primary company. */
+  primaryRevision: z.number().int().nonnegative().nullable(),
+  /** Whether the viewer may add links here. */
+  canLink: z.boolean(),
+  /** Why links can't be changed here right now, if they can't. */
+  blocked: z.string().nullable(),
+});
+export type CrmLinks = z.infer<typeof crmLinksSchema>;
+export const linkResultSchema = z.object({
+  outcome: z.enum([
+    "LINKED",
+    "ALREADY_LINKED",
+    "UPDATED",
+    "REMOVED",
+    "PRIMARY_SET",
+  ]),
+  linkId: recordId.nullable(),
+  contactId: recordId,
+  companyId: recordId.nullable(),
+  contactBoardId: recordId,
+  companyBoardId: recordId,
+  primaryRevision: z.number().int().nonnegative(),
+  revision: z.number().int().positive().nullable(),
+});
+export type LinkResult = z.infer<typeof linkResultSchema>;
