@@ -1943,7 +1943,219 @@ button.deal-customer-pill:hover {
   color: var(--foreground);
   font: inherit;
 }
+
+/* Stage requests. The cream hatch means "waiting for approval"; it marks
+   the card, the requested step and the request itself, nothing else. */
+:root {
+  --deal-hatch: repeating-linear-gradient(
+    -45deg,
+    var(--pending) 0 7px,
+    color-mix(in srgb, var(--pending) 70%, var(--pending-foreground)) 7px 9px
+  );
+}
+.deal-tile-waiting {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px -11px -10px;
+  padding: 5px 11px;
+  border-radius: 0 0 var(--radius) var(--radius);
+  background: var(--deal-hatch);
+  color: var(--pending-foreground);
+  font-size: 12px;
+  font-weight: 700;
+}
+.deal-tile-waiting span {
+  margin-left: auto;
+  font-weight: 600;
+}
+.deal-ghost {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 10px 11px;
+  border: 2px dashed
+    color-mix(in srgb, var(--pending-foreground) 45%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--pending) 45%, transparent);
+  color: var(--pending-foreground);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.deal-ghost b {
+  color: var(--foreground);
+  font-size: 13.5px;
+}
+.deal-ghost:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.deal-lane header em {
+  color: var(--pending-foreground);
+  font-style: normal;
+  font-weight: 600;
+}
+.deal-step[data-asked],
+.deal-step[data-asked]:disabled {
+  background: var(--deal-hatch);
+  color: var(--pending-foreground);
+  opacity: 1;
+}
+.deal-ask-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--deal-hatch);
+  color: var(--pending-foreground);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.deal-request {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin: 0 22px 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--deal-hatch);
+  color: var(--pending-foreground);
+}
+.deal-request[data-closed] {
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+.deal-request > div {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.deal-request b {
+  display: block;
+  color: var(--foreground);
+}
+.deal-request small {
+  display: block;
+  font-size: 12.5px;
+}
+.deal-request blockquote {
+  margin-top: 4px;
+  padding: 2px 10px;
+  border-left: 3px solid currentColor;
+  font-size: 12.5px;
+}
+.deal-request-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.deal-request-reason {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.deal-request-reason textarea {
+  min-height: 64px;
+  padding: 8px 10px;
+  border: 1px solid var(--input);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--card);
+  color: var(--foreground);
+  font: inherit;
+  font-weight: 400;
+}
+.deal-request-hint {
+  margin: 12px 14px 0;
+  padding: 8px 10px;
+  border-radius: calc(var(--radius) - 2px);
+  background: color-mix(in srgb, var(--pending) 55%, var(--card));
+  color: var(--pending-foreground);
+  font-size: 12.5px;
+}
+.crm-button[data-tone="danger"] {
+  color: var(--destructive);
+}
+.deal-approvals {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--muted);
+}
+.deal-approvals h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--theme-heading, inherit);
+  font-size: 14px;
+}
+.deal-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.deal-approvers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+.deal-approvers label {
+  display: grid;
+  gap: 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.deal-approvers select {
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--input);
+  border-radius: calc(var(--radius) - 4px);
+  background: var(--card);
+  color: var(--foreground);
+  font: inherit;
+  font-weight: 400;
+}
+.deal-rule {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.deal-rule legend {
+  margin-bottom: 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.deal-rule label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+}
+.deal-rule input {
+  margin-top: 3px;
+}
+.deal-rule small {
+  display: block;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
 @media (max-width: 640px) {
+  .deal-request {
+    margin: 0 12px 10px;
+  }
   .deal-lane {
     flex-basis: 84vw;
   }

@@ -6,7 +6,9 @@ import { Building2, ContactRound, X } from "lucide-react";
 import {
   categoryLabels,
   needsStageReason,
+  stageNeedsApproval,
   type PipelineStageView,
+  type PipelineSummary,
   type StageCategory,
 } from "@/lib/deal-contract";
 import { useUiStore } from "@/components/providers";
@@ -23,7 +25,9 @@ import {
   money,
   moveCachedDeal,
   useCustomerDeals,
+  useDecideStageRequest,
   type Deal,
+  type DealDetail,
 } from "./use-deals";
 
 type Stage = Pick<PipelineStageView, "id" | "name" | "category">;
@@ -33,13 +37,17 @@ export function StagePath({
   stages,
   current,
   disabled,
-  pausedReason,
+  lockedReason,
+  asked,
   onMove,
 }: {
   stages: Stage[];
   current: string;
   disabled: boolean;
-  pausedReason: string | null;
+  /** Why only the current step is available, e.g. a request is waiting. */
+  lockedReason: string | null;
+  /** The stage a waiting request asks for. */
+  asked: string | null;
   onMove: (stageId: string) => void;
 }) {
   const here = stages.findIndex((stage) => stage.id === current);
@@ -55,12 +63,16 @@ export function StagePath({
             className="deal-step"
             data-category={stage.category}
             data-here={isHere || undefined}
+            data-asked={stage.id === asked || undefined}
             data-done={
               (open && index < here && stage.category === "OPEN") || undefined
             }
             aria-current={isHere ? "step" : undefined}
-            disabled={disabled || (Boolean(pausedReason) && !isHere)}
-            title={pausedReason ?? `Move to ${stage.name}`}
+            aria-description={
+              stage.id === asked ? "Waiting for approval" : undefined
+            }
+            disabled={disabled || (Boolean(lockedReason) && !isHere)}
+            title={lockedReason ?? `Move to ${stage.name}`}
             onClick={() => !isHere && onMove(stage.id)}
           >
             {stage.name}
@@ -71,25 +83,49 @@ export function StagePath({
   );
 }
 
+/** Does this move wait for approval on this pipeline? */
+export const moveNeedsApproval = (
+  pipeline: PipelineSummary | undefined,
+  from: Stage,
+  to: Stage,
+) =>
+  Boolean(pipeline?.approvals) &&
+  stageNeedsApproval(
+    pipeline!.stageApproval,
+    from.category as StageCategory,
+    to.category as StageCategory,
+  );
+
 /**
- * Moves deals between stages: the card moves at once, a Won↔Lost move first
- * asks why, and a conflict reloads the latest instead of overwriting it.
+ * Moves deals between stages. A direct move shows at once; a move that needs
+ * approval asks first and becomes a request while the deal stays put. A
+ * Won↔Lost move always asks why, and a conflict reloads the latest instead
+ * of overwriting it.
  */
 export function useStageMove(
   scope: CrmScope,
-  stages: Stage[],
+  pipeline: PipelineSummary | undefined,
   onNotice: (message: string, kind: "success" | "error" | "info") => void,
 ) {
   const save = useCrmSave(scope);
   const client = useQueryClient();
+  const stages = pipeline?.stages ?? [];
   const [asking, setAsking] = useState<{
     deal: Deal;
     target: Stage;
     from: Stage;
+    request: boolean;
+    reason: boolean;
   } | null>(null);
-  const [reason, setReason] = useState("");
-  const commit = (deal: Deal, target: Stage, from: Stage, why?: string) => {
-    moveCachedDeal(client, scope, deal.id, target.id);
+  const [note, setNote] = useState("");
+  const commit = (
+    deal: Deal,
+    target: Stage,
+    from: Stage,
+    request: boolean,
+    why?: string,
+  ) => {
+    if (!request) moveCachedDeal(client, scope, deal.id, target.id);
     save.mutate(
       {
         record: deal,
@@ -99,7 +135,7 @@ export function useStageMove(
         onSuccess: (result) =>
           onNotice(
             result.outcome === "PENDING_APPROVAL"
-              ? "Sent for approval."
+              ? `Sent to ${pipeline?.approverName ?? "the approver"} for approval. ${deal.name} stays in ${from.name} until then.`
               : target.category === "WON"
                 ? `Won. ${deal.name} is closed as won.`
                 : target.category === "LOST"
@@ -117,18 +153,33 @@ export function useStageMove(
     const target = stages.find((stage) => stage.id === stageId);
     const from = stages.find((stage) => stage.id === deal.stageId);
     if (!target || !from || target.id === from.id) return;
-    if (
-      needsStageReason(
-        from.category as StageCategory,
-        target.category as StageCategory,
-      )
-    ) {
-      setReason("");
-      setAsking({ deal, target, from });
+    if (deal.request) {
+      onNotice(
+        deal.request.visible
+          ? "This deal already has a stage request waiting. Open it to see where it stands."
+          : "A stage change is already pending for this deal.",
+        "info",
+      );
       return;
     }
-    commit(deal, target, from);
+    const request = moveNeedsApproval(pipeline, from, target);
+    const reason = needsStageReason(
+      from.category as StageCategory,
+      target.category as StageCategory,
+    );
+    if (request || reason) {
+      setNote("");
+      setAsking({ deal, target, from, request, reason });
+      return;
+    }
+    commit(deal, target, from, false);
   };
+  const fromLabel = asking
+    ? categoryLabels[asking.from.category as StageCategory].toLowerCase()
+    : "";
+  const toLabel = asking
+    ? categoryLabels[asking.target.category as StageCategory].toLowerCase()
+    : "";
   const dialog = (
     <DialogPrimitive.Root
       open={Boolean(asking)}
@@ -139,41 +190,65 @@ export function useStageMove(
         <DialogPrimitive.Content
           className="deal-dialog"
           aria-describedby="deal-reason-text"
+          onCloseAutoFocus={(event) => {
+            // A sent request disables the step that opened this; keep focus
+            // on the open deal's current stage so Escape still closes it.
+            const steps = document.querySelectorAll<HTMLElement>(
+              '.deal-path [aria-current="step"]',
+            );
+            const here = steps[steps.length - 1];
+            if (here) {
+              event.preventDefault();
+              here.focus();
+            }
+          }}
         >
           {asking && (
             <form
               onSubmit={(event) => {
                 event.preventDefault();
-                if (!reason.trim()) return;
-                commit(asking.deal, asking.target, asking.from, reason.trim());
+                if (asking.reason && !note.trim()) return;
+                commit(
+                  asking.deal,
+                  asking.target,
+                  asking.from,
+                  asking.request,
+                  note.trim() || undefined,
+                );
                 setAsking(null);
               }}
             >
               <DialogPrimitive.Title className="deal-dialog-title">
-                Move to {asking.target.name}?
+                {asking.request ? "Request a move" : "Move"} to{" "}
+                {asking.target.name}?
               </DialogPrimitive.Title>
               <p id="deal-reason-text" className="deal-dialog-text">
-                This deal was{" "}
-                {categoryLabels[
-                  asking.from.category as StageCategory
-                ].toLowerCase()}
-                . Say why it&apos;s now{" "}
-                {categoryLabels[
-                  asking.target.category as StageCategory
-                ].toLowerCase()}
-                ; the reason stays in its history.
+                {asking.request
+                  ? `${pipeline?.approverName ?? "An approver"} approves stage changes on this pipeline. ${asking.deal.name} stays in ${asking.from.name} until then.`
+                  : `This deal was ${fromLabel}. Say why it's now ${toLabel}; the reason stays in its history.`}
               </p>
-              <label className="sr-only" htmlFor="deal-reason">
-                Reason
+              <label
+                className={asking.request ? "deal-label" : "sr-only"}
+                htmlFor="deal-reason"
+              >
+                {!asking.request
+                  ? "Reason"
+                  : asking.reason
+                    ? `Why is it now ${toLabel}?`
+                    : "Note for the approver (optional)"}
               </label>
               <textarea
                 id="deal-reason"
                 autoFocus
-                required
+                required={asking.reason}
                 maxLength={500}
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-                placeholder="e.g. The customer cancelled before signing"
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
+                placeholder={
+                  asking.reason
+                    ? "e.g. The customer cancelled before signing"
+                    : "e.g. PO signed, waiting on the countersigned copy"
+                }
               />
               <div className="deal-dialog-actions">
                 <DialogPrimitive.Close className="crm-button" type="button">
@@ -183,9 +258,9 @@ export function useStageMove(
                   type="submit"
                   className="crm-button"
                   data-tone="primary"
-                  disabled={!reason.trim()}
+                  disabled={asking.reason && !note.trim()}
                 >
-                  Move deal
+                  {asking.request ? "Send request" : "Move deal"}
                 </button>
               </div>
             </form>
@@ -195,6 +270,248 @@ export function useStageMove(
     </DialogPrimitive.Root>
   );
   return { move, dialog, pending: save.isPending };
+}
+
+const dismissedKey = (id: string) => `yuzu.stage-request.dismissed.${id}`;
+const wasDismissed = (id: string) => {
+  try {
+    return window.localStorage.getItem(dismissedKey(id)) === "1";
+  } catch {
+    return false;
+  }
+};
+const closedWords = {
+  REJECTED: "was rejected",
+  STALE: "needs resubmitting",
+  CANCELLED: "was cancelled",
+  INVALIDATED: "no longer applies",
+  EXPIRED: "expired",
+} as const;
+
+/**
+ * Under the stage path: a waiting request with the viewer's actions, or the
+ * viewer's own request that closed without moving the deal.
+ */
+export function StageRequestBanner({
+  scope,
+  detail,
+  stages,
+  onNotice,
+  onResubmit,
+}: {
+  scope: CrmScope;
+  detail: DealDetail;
+  stages: Stage[];
+  onNotice: (message: string, kind: "success" | "error" | "info") => void;
+  onResubmit: (stageId: string) => void;
+}) {
+  const decide = useDecideStageRequest(scope);
+  const [closing, setClosing] = useState<"reject" | "cancel" | null>(null);
+  const [reason, setReason] = useState("");
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const request = detail.deal.request;
+  const name = (id: string) =>
+    stages.find((stage) => stage.id === id)?.name ?? "another stage";
+  const act = (
+    action: "approve" | "reject" | "withdraw" | "cancel",
+    why?: string,
+  ) =>
+    request?.visible &&
+    decide.mutate(
+      { proposalId: request.id, action, reason: why },
+      {
+        onSuccess: (result) => {
+          setClosing(null);
+          setReason("");
+          onNotice(
+            result.status === "APPROVED"
+              ? `Approved. ${detail.deal.name} moved to ${name(request.toStageId)}.`
+              : result.status === "REJECTED"
+                ? `Request rejected. ${request.authorName} has been told.`
+                : result.status === "WITHDRAWN"
+                  ? "Request withdrawn."
+                  : result.status === "CANCELLED"
+                    ? "Request cancelled."
+                    : (result.reason ?? "This request can't be decided now."),
+            result.status === "APPROVED" ? "success" : "info",
+          );
+        },
+        onError: (error) => onNotice(saveError(error), "error"),
+      },
+    );
+  if (request && !request.visible)
+    return (
+      <div className="deal-request" data-closed="" role="status">
+        <div>
+          <b>A stage change is already pending.</b>
+          <small>The deal can&apos;t move until it&apos;s resolved.</small>
+        </div>
+      </div>
+    );
+  if (request) {
+    const mine = request.canWithdraw;
+    return (
+      <div className="deal-request" role="status">
+        <div>
+          <b>
+            {mine ? "You" : request.authorName} asked to move this deal to{" "}
+            {name(request.toStageId)}
+          </b>
+          <small>
+            {new Date(request.createdAt).toLocaleDateString(undefined, {
+              month: "short",
+              day: "numeric",
+            })}{" "}
+            · waiting for{" "}
+            {request.canDecide
+              ? "you"
+              : (request.reviewerName ?? "an approver to be appointed")}{" "}
+            · it stays in {name(request.fromStageId)} until then
+          </small>
+          {request.note && <blockquote>{request.note}</blockquote>}
+          {closing && (
+            <form
+              className="deal-request-reason"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (reason.trim()) act(closing, reason.trim());
+              }}
+            >
+              <label htmlFor={`request-reason-${request.id}`}>
+                {closing === "reject"
+                  ? "Why are you rejecting it?"
+                  : "Why are you cancelling it?"}
+              </label>
+              <textarea
+                id={`request-reason-${request.id}`}
+                autoFocus
+                required
+                maxLength={500}
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+              />
+              <span className="deal-request-actions">
+                <button
+                  type="button"
+                  className="crm-button"
+                  data-size="sm"
+                  onClick={() => setClosing(null)}
+                >
+                  Back
+                </button>
+                <button
+                  type="submit"
+                  className="crm-button"
+                  data-size="sm"
+                  data-tone="primary"
+                  disabled={!reason.trim() || decide.isPending}
+                >
+                  {closing === "reject" ? "Reject request" : "Cancel request"}
+                </button>
+              </span>
+            </form>
+          )}
+        </div>
+        {!closing && (
+          <span className="deal-request-actions">
+            {request.canDecide && (
+              <>
+                <button
+                  type="button"
+                  className="crm-button"
+                  data-size="sm"
+                  disabled={decide.isPending}
+                  onClick={() => setClosing("reject")}
+                >
+                  Reject
+                </button>
+                <button
+                  type="button"
+                  className="crm-button"
+                  data-size="sm"
+                  data-tone="primary"
+                  disabled={decide.isPending}
+                  onClick={() => act("approve")}
+                >
+                  Approve move
+                </button>
+              </>
+            )}
+            {request.canWithdraw && (
+              <button
+                type="button"
+                className="crm-button"
+                data-size="sm"
+                disabled={decide.isPending}
+                onClick={() => act("withdraw")}
+              >
+                Withdraw
+              </button>
+            )}
+            {request.canCancel && !request.canDecide && (
+              <button
+                type="button"
+                className="crm-button"
+                data-size="sm"
+                data-tone="danger"
+                disabled={decide.isPending}
+                onClick={() => setClosing("cancel")}
+              >
+                Cancel request
+              </button>
+            )}
+            {!request.canDecide &&
+              !request.canWithdraw &&
+              !request.canCancel && (
+                <small>
+                  Only {request.reviewerName ?? "an approver"} can decide.
+                </small>
+              )}
+          </span>
+        )}
+      </div>
+    );
+  }
+  const closed = detail.closedRequest;
+  if (!closed || dismissed === closed.id || wasDismissed(closed.id))
+    return null;
+  return (
+    <div className="deal-request" data-closed="" role="status">
+      <div>
+        <b>
+          Your request to move to {closed.toStageName}{" "}
+          {closedWords[closed.status]}
+        </b>
+        {closed.reason && <small>{closed.reason}</small>}
+      </div>
+      <span className="deal-request-actions">
+        <button
+          type="button"
+          className="crm-button"
+          data-size="sm"
+          onClick={() => {
+            try {
+              window.localStorage.setItem(dismissedKey(closed.id), "1");
+            } catch {}
+            setDismissed(closed.id);
+          }}
+        >
+          Dismiss
+        </button>
+        {detail.deal.canEdit && (
+          <button
+            type="button"
+            className="crm-button"
+            data-size="sm"
+            data-tone="primary"
+            onClick={() => onResubmit(closed.toStageId)}
+          >
+            Review and resubmit
+          </button>
+        )}
+      </span>
+    </div>
+  );
 }
 
 /** A deal's one customer: a company or a person, chosen with search. */
