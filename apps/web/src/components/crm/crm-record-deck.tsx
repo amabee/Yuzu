@@ -32,6 +32,7 @@ import {
   type LifecycleAction,
 } from "./use-crm";
 import { Initials } from "./crm-parts";
+import { CrmLinksPane } from "./crm-links";
 
 type Handlers = {
   onSave: (record: CrmRecord, changes: CrmChanges) => void;
@@ -161,8 +162,13 @@ function RecordCard({
   const detail = query.data;
   const top = depth === 0;
   const record = detail?.record;
-  const person = scope.type === "CONTACT";
-  const index = directory.records.findIndex((item) => item.id === id);
+  // A stacked card can hold the other type: a contact over Companies.
+  const type = detail?.type ?? scope.type;
+  const person = type === "CONTACT";
+  const sameType = type === scope.type;
+  const index = sameType
+    ? directory.records.findIndex((item) => item.id === id)
+    : -1;
   const neighbour = (step: number) => directory.records[index + step];
   const noun = person ? "contact" : "company";
   const readOnly = !record || !record.canEdit;
@@ -289,31 +295,41 @@ function RecordCard({
           </div>
         ) : tab === "overview" ? (
           <>
-            <section className="crm-pane crm-updates" aria-label="Updates">
-              <div className="crm-updates-feed">
-                <TaskComments
-                  state={{
-                    boardId: scope.boardId,
-                    currentUserId: scope.principalId,
-                    people: directory.people,
-                    readOnly: false,
-                  }}
-                  task={{
-                    id: record.id,
-                    archivedAt: record.archivedAt,
-                    commentCount: record.commentCount,
-                  }}
-                  active={top}
-                  syncInterval={syncInterval}
-                  onNotice={onNotice}
-                />
-              </div>
-            </section>
+            <div className="crm-card-main">
+              <CrmLinksPane
+                scope={scope}
+                recordId={record.id}
+                side={type}
+                archived={Boolean(record.archivedAt)}
+                syncInterval={syncInterval}
+                onNotice={onNotice}
+              />
+              <section className="crm-pane crm-updates" aria-label="Updates">
+                <div className="crm-updates-feed">
+                  <TaskComments
+                    state={{
+                      boardId: scope.boardId,
+                      currentUserId: scope.principalId,
+                      people: directory.people,
+                      readOnly: false,
+                    }}
+                    task={{
+                      id: record.id,
+                      archivedAt: record.archivedAt,
+                      commentCount: record.commentCount,
+                    }}
+                    active={top}
+                    syncInterval={syncInterval}
+                    onNotice={onNotice}
+                  />
+                </div>
+              </section>
+            </div>
             <Details
               detail={detail}
               people={directory.people}
               readOnly={readOnly}
-              approvals={directory.approvals}
+              approvals={sameType && directory.approvals}
               onSave={(changes) => onSave(record, changes)}
             />
           </>

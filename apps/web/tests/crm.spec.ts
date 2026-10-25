@@ -203,7 +203,7 @@ test("contacts edit owners inline and keep companies' fields to themselves", asy
   await expect(
     contacts.getByRole("columnheader", { name: "Domain" }),
   ).toHaveCount(0);
-  const ownerCell = ana.getByRole("gridcell").nth(3);
+  const ownerCell = ana.getByRole("gridcell").nth(4);
   await ownerCell.dblclick();
   await page
     .getByRole("combobox", { name: "Owner" })
@@ -230,4 +230,133 @@ test("contacts edit owners inline and keep companies' fields to themselves", asy
   await contacts.getByRole("button", { name: "Open Ana Reyes" }).click();
   await expect(page.getByRole("dialog").getByLabel("Email")).toBeVisible();
   await shot(page, "mobile-card");
+});
+
+test("contacts link companies with roles, a primary, and stacked cards", async ({
+  page,
+}) => {
+  const { workspace } = await owner(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/crm/companies");
+  const add = page.getByRole("textbox", { name: "Add company" });
+  for (const name of ["Northwind Trading", "Acme Labs"]) {
+    await add.fill(name);
+    await add.press("Enter");
+    await expect(row(page, name)).toBeVisible();
+  }
+  await page.goto("/crm/contacts");
+  const addContact = page.getByRole("textbox", { name: "Add contact" });
+  await addContact.fill("Ana Reyes");
+  await addContact.press("Enter");
+  const contacts = page.getByRole("grid", { name: "Contacts" });
+  await contacts.getByRole("button", { name: "Open Ana Reyes" }).click();
+  const card = page.getByRole("dialog");
+  const companies = card.getByRole("region", { name: "Companies" });
+  await expect(companies).toContainText("No companies");
+
+  // Link two companies, one with a role, then choose the primary.
+  for (const [name, role] of [
+    ["Northwind Trading", "Head of operations"],
+    ["Acme Labs", ""],
+  ]) {
+    await companies.getByRole("button", { name: "Link company" }).click();
+    await card
+      .getByRole("searchbox", { name: "Find a company" })
+      .fill(name.split(" ")[0]!);
+    if (role)
+      await card.getByRole("textbox", { name: "Role (optional)" }).fill(role);
+    await card
+      .getByRole("group", { name: "Link a company" })
+      .getByRole("button", { name: new RegExp(name) })
+      .click();
+    await expect(
+      companies.getByRole("button", { name: `Open ${name}` }),
+    ).toBeVisible();
+  }
+  await expect(
+    companies.getByRole("textbox", { name: "Role at Northwind Trading" }),
+  ).toHaveValue("Head of operations");
+  const northwindRow = companies
+    .getByRole("listitem")
+    .filter({ hasText: "Northwind Trading" });
+  await northwindRow.getByRole("button", { name: "Make primary" }).click();
+  await expect(
+    northwindRow.getByRole("button", { name: "Primary", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  const acmeRow = companies
+    .getByRole("listitem")
+    .filter({ hasText: "Acme Labs" });
+  await acmeRow
+    .getByRole("textbox", { name: "Role at Acme Labs" })
+    .fill("Advisor");
+  await acmeRow
+    .getByRole("textbox", { name: "Role at Acme Labs" })
+    .press("Enter");
+  await acmeRow
+    .getByRole("combobox", { name: "Status at Acme Labs" })
+    .selectOption("FORMER");
+  await expect(
+    companies
+      .locator('[data-status="Former"]')
+      .getByRole("button", { name: "Open Acme Labs" }),
+  ).toBeVisible();
+
+  // Following a link stacks the company's card; Escape steps back.
+  await companies
+    .getByRole("button", { name: "Open Northwind Trading" })
+    .click();
+  await expect(card.getByRole("textbox", { name: "Company name" })).toHaveValue(
+    "Northwind Trading",
+  );
+  await expect(
+    card.getByRole("navigation", { name: "Open records" }),
+  ).toContainText("Ana Reyes");
+  const people = card.getByRole("region", { name: "People" });
+  await expect(
+    people.getByRole("listitem").filter({ hasText: "Ana Reyes" }),
+  ).toContainText("Primary company");
+  await shot(page, "stacked");
+  await page.keyboard.press("Escape");
+  await expect(card.getByRole("textbox", { name: "Full name" })).toHaveValue(
+    "Ana Reyes",
+  );
+
+  // Removing the primary link asks once more, then clears the primary.
+  await northwindRow
+    .getByRole("button", { name: "Remove link to Northwind Trading" })
+    .click();
+  await expect(northwindRow.getByRole("alert")).toContainText(
+    "also clears it as primary",
+  );
+  await northwindRow
+    .getByRole("button", { name: "Remove link", exact: true })
+    .click();
+  await expect(
+    companies.getByRole("button", { name: "Open Northwind Trading" }),
+  ).toHaveCount(0);
+  await card.getByRole("tab", { name: "Activity log" }).click();
+  await expect(card.getByText("unlinked Northwind Trading")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(card).toBeHidden();
+
+  // With approvals on the Contacts board, links stay visible but can't change.
+  const db = getDatabase();
+  const board = await db.board.findFirstOrThrow({
+    where: { workspaceId: workspace.id, recordType: "CONTACT" },
+  });
+  await db.boardApprovalPolicy.create({
+    data: { boardId: board.id, enabled: true },
+  });
+  // Set directly here, so nothing announces it; the app would refresh live.
+  await page.reload();
+  await contacts.getByRole("button", { name: "Open Ana Reyes" }).click();
+  await expect(companies.getByRole("status")).toContainText(
+    "approvals turned on",
+  );
+  await expect(
+    companies.getByRole("button", { name: "Link company" }),
+  ).toHaveCount(0);
+  await expect(
+    companies.getByRole("button", { name: "Open Acme Labs" }),
+  ).toBeVisible();
 });

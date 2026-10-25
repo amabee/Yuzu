@@ -27,7 +27,7 @@ type Column = {
   key: string;
   label: string;
   size: number;
-  kind: "name" | "text" | "owner" | "created";
+  kind: "name" | "text" | "owner" | "created" | "primary" | "people";
   profile?: ProfileKey;
 };
 export function crmColumns(type: CrmType): Column[] {
@@ -45,6 +45,7 @@ export function crmColumns(type: CrmType): Column[] {
         profile("email", 220),
         profile("phone", 170),
         { key: "owner", label: "Owner", size: 170, kind: "owner" },
+        { key: "people", label: "People", size: 100, kind: "people" },
         profile("website", 220),
         profile("legalName", 220),
         profile("address", 260),
@@ -54,6 +55,12 @@ export function crmColumns(type: CrmType): Column[] {
         { key: "name", label: "Contact", size: 250, kind: "name" },
         profile("email", 240),
         profile("phone", 180),
+        {
+          key: "primary",
+          label: "Primary company",
+          size: 210,
+          kind: "primary",
+        },
         { key: "owner", label: "Owner", size: 170, kind: "owner" },
         { key: "created", label: "Added", size: 120, kind: "created" },
       ];
@@ -67,9 +74,13 @@ const valueOf = (record: CrmRecord, column: Column) =>
     ? record.name
     : column.kind === "owner"
       ? (record.ownerId ?? "")
-      : column.profile
-        ? (record.profile[column.profile] ?? "")
-        : "";
+      : column.kind === "primary"
+        ? (record.primaryCompany?.name ?? "")
+        : column.kind === "people"
+          ? String(record.currentPeople ?? 0)
+          : column.profile
+            ? (record.profile[column.profile] ?? "")
+            : "";
 const dateLabel = (value: string) =>
   new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(
     new Date(value),
@@ -107,7 +118,9 @@ export function CrmGrid({
   onOpen,
   addRow,
   onBlocked,
+  onOpenLinked,
 }: {
+  onOpenLinked: (id: string) => void;
   type: CrmType;
   directory: CrmDirectory;
   query: DirectoryQuery;
@@ -177,6 +190,10 @@ export function CrmGrid({
   const editable = (record: CrmRecord, column: Column) => {
     if (column.kind === "created")
       return "This shows when the record was added.";
+    if (column.kind === "primary")
+      return "Choose the primary company on the contact's card, under Companies.";
+    if (column.kind === "people")
+      return "People are linked from the company's card, under People.";
     if (record.archivedAt)
       return "Archived records are read-only. Restore it to edit.";
     if (!record.canEdit)
@@ -417,6 +434,28 @@ export function CrmGrid({
                           ) : (
                             <span className="crm-empty">No owner</span>
                           )}
+                        </div>
+                      ) : column.kind === "primary" ? (
+                        <div className="crm-cell">
+                          {record.primaryCompany ? (
+                            <button
+                              type="button"
+                              className="crm-cell-link"
+                              tabIndex={isActive ? 0 : -1}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onOpenLinked(record.primaryCompany!.id);
+                              }}
+                            >
+                              {record.primaryCompany.name}
+                            </button>
+                          ) : (
+                            <span className="crm-empty">—</span>
+                          )}
+                        </div>
+                      ) : column.kind === "people" ? (
+                        <div className="crm-cell crm-num">
+                          {record.currentPeople ?? 0}
                         </div>
                       ) : column.kind === "created" ? (
                         <div className="crm-cell crm-muted">

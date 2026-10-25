@@ -21,6 +21,13 @@ import {
   restoreRecordInTransaction,
 } from "@/server/trash-service";
 import { refuseCrmCollection } from "@/server/crm-profile";
+import {
+  crmLinksFor,
+  linkCompanyInTransaction,
+  removeLinkInTransaction,
+  setPrimaryInTransaction,
+  updateLinkInTransaction,
+} from "@/server/crm-links-service";
 
 const db = getDatabase();
 const workspaceIds: string[] = [],
@@ -540,5 +547,468 @@ describe("Database constraints", () => {
         f.workspace.id,
       ),
     ).rejects.toThrow(/foreign key/);
+  });
+});
+
+describe("Contact–Company links", () => {
+  let f: Fixture;
+  let ana: string, northwind: string, acme: string;
+  const key = () => createRecordId();
+  const link = (
+    contactId: string,
+    companyId: string,
+    user = f.member,
+    extra: Record<string, unknown> = {},
+  ) =>
+    serial((tx) =>
+      linkCompanyInTransaction(
+        tx,
+        { contactId, companyId, requestKey: key(), ...extra },
+        user,
+      ),
+    );
+  const primary = (
+    contactId: string,
+    linkId: string | null,
+    primaryRevision: number,
+    user = f.member,
+  ) =>
+    serial((tx) =>
+      setPrimaryInTransaction(
+        tx,
+        { contactId, linkId, primaryRevision, requestKey: key() },
+        user,
+      ),
+    );
+  const contactRevision = async (id: string) =>
+    (await db.task.findUniqueOrThrow({ where: { id } })).revision;
+  const insertLink = (contactId: string, companyId: string) =>
+    raw(
+      `INSERT INTO "ContactCompany" ("id","workspaceId","contactId","companyId","createdById","updatedById","updatedAt") VALUES ($1,$2,$3,$4,'x','x',now())`,
+      createRecordId(),
+      f.workspace.id,
+      contactId,
+      companyId,
+    );
+  beforeAll(async () => {
+    f = await fixture();
+    ana = applied(await create(f.contacts, f.member.id, { name: "Ana Reyes" }));
+    northwind = applied(
+      await create(f.companies, f.member.id, { name: "Northwind" }),
+    );
+    acme = applied(
+      await create(f.companies, f.teammate.id, { name: "Acme Labs" }),
+    );
+  });
+
+  it("links companies with roles, returns existing pairs untouched, and replays", async () => {
+    const first = await link(ana, northwind, f.member, {
+      role: " Head of operations ",
+    });
+    expect(first).toMatchObject({ outcome: "LINKED", revision: 1 });
+    const again = await link(ana, northwind, f.member, {
+      role: "Changed",
+      status: "FORMER",
+    });
+    expect(again).toMatchObject({
+      outcome: "ALREADY_LINKED",
+      linkId: first.linkId,
+    });
+    expect(
+      await db.contactCompany.findUniqueOrThrow({
+        where: { id: first.linkId! },
+      }),
+    ).toMatchObject({
+      role: "Head of operations",
+      status: "CURRENT",
+      revision: 1,
+    });
+    // The same request key and payload replays; a changed payload is refused.
+    const body = {
+      contactId: ana,
+      companyId: acme,
+      role: "Advisor",
+      requestKey: key(),
+    };
+    const made = await serial((tx) =>
+      linkCompanyInTransaction(tx, body, f.member),
+    );
+    await expect(
+      serial((tx) => linkCompanyInTransaction(tx, body, f.member)),
+    ).resolves.toEqual(made);
+    await expect(
+      serial((tx) =>
+        linkCompanyInTransaction(tx, { ...body, role: "Buyer" }, f.member),
+      ),
+    ).rejects.toMatchObject({ code: "RETRY_CHANGED" });
+    // Links never change the contact's own revision.
+    expect(await contactRevision(ana)).toBe(1);
+    expect(await crmLinksFor(f.member, { recordId: ana })).toMatchObject({
+      side: "CONTACT",
+      total: 2,
+      primaryRevision: 0,
+      canLink: true,
+    });
+    const people = await crmLinksFor(f.teammate, { recordId: northwind });
+    expect(people.links).toEqual([
+      expect.objectContaining({
+        visible: true,
+        role: "Head of operations",
+        canEdit: false,
+      }),
+    ]);
+  });
+
+  it("keeps one primary, with its own revision, under concurrent choices", async () => {
+    const rows = await db.contactCompany.findMany({
+      where: { contactId: ana },
+      orderBy: { id: "asc" },
+    });
+    const [a, b] = rows;
+    const results = await Promise.allSettled([
+      primary(ana, a!.id, 0),
+      primary(ana, b!.id, 0),
+    ]);
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      results.find((result) => result.status === "rejected"),
+    ).toMatchObject({
+      reason: expect.objectContaining({ code: "PRIMARY_CHANGED" }),
+    });
+    const chosen = await db.contactCompany.findFirstOrThrow({
+      where: { contactId: ana, isPrimary: true },
+    });
+    const other = chosen.id === a!.id ? b! : a!;
+    // Switching moves the primary and its revision; stale tokens conflict.
+    await primary(ana, other.id, 1);
+    await expect(primary(ana, null, 1)).rejects.toMatchObject({
+      code: "PRIMARY_CHANGED",
+    });
+    expect(
+      (await db.contactProfile.findUniqueOrThrow({ where: { recordId: ana } }))
+        .primaryRevision,
+    ).toBe(2);
+    // Marking the primary Former needs an explicit clear and the token.
+    const current = await db.contactCompany.findUniqueOrThrow({
+      where: { id: other.id },
+    });
+    const former = (extra: Record<string, unknown>) =>
+      serial((tx) =>
+        updateLinkInTransaction(
+          tx,
+          {
+            linkId: current.id,
+            revision: current.revision,
+            requestKey: key(),
+            changes: { status: "FORMER" },
+            ...extra,
+          },
+          f.member,
+        ),
+      );
+    await expect(former({})).rejects.toMatchObject({
+      code: "PRIMARY_INVOLVED",
+    });
+    await expect(
+      former({ clearPrimary: true, primaryRevision: 1 }),
+    ).rejects.toMatchObject({ code: "PRIMARY_CHANGED" });
+    expect(
+      await former({ clearPrimary: true, primaryRevision: 2 }),
+    ).toMatchObject({ primaryRevision: 3, revision: current.revision + 1 });
+    expect(
+      await db.contactCompany.count({
+        where: { contactId: ana, isPrimary: true },
+      }),
+    ).toBe(0);
+    await expect(primary(ana, current.id, 3)).rejects.toMatchObject({
+      code: "FORMER_LINK",
+    });
+    // Direct writes can't make a Former link primary or add a second one.
+    await expect(
+      raw(
+        `UPDATE "ContactCompany" SET "isPrimary" = true WHERE "id" = $1`,
+        current.id,
+      ),
+    ).rejects.toThrow(/primary_current/);
+    await db.contactCompany.update({
+      where: { id: chosen.id },
+      data: { isPrimary: true },
+    });
+    await db.contactCompany.update({
+      where: { id: current.id },
+      data: { status: "CURRENT" },
+    });
+    await expect(
+      raw(
+        `UPDATE "ContactCompany" SET "isPrimary" = true WHERE "id" = $1`,
+        current.id,
+      ),
+    ).rejects.toThrow(/one_primary/);
+  });
+
+  it("edits rows independently and refuses stale ones", async () => {
+    const rows = await db.contactCompany.findMany({
+      where: { contactId: ana },
+      orderBy: { id: "asc" },
+    });
+    const edit = (row: (typeof rows)[number], role: string) =>
+      serial((tx) =>
+        updateLinkInTransaction(
+          tx,
+          {
+            linkId: row.id,
+            revision: row.revision,
+            requestKey: key(),
+            changes: { role },
+          },
+          f.member,
+        ),
+      );
+    await Promise.all([
+      edit(rows[0]!, "Operations"),
+      edit(rows[1]!, "Board advisor"),
+    ]);
+    // A Notes edit on the contact is independent too.
+    await update(
+      ana,
+      await contactRevision(ana),
+      { description: "Prefers calls." },
+      f.member.id,
+    );
+    await expect(edit(rows[0]!, "Stale")).rejects.toMatchObject({
+      code: "LINK_CHANGED",
+    });
+    expect(await contactRevision(ana)).toBe(2);
+  });
+
+  it("requires contact edit access and a visible, live company in the workspace", async () => {
+    const other = await fixture();
+    const elsewhere = applied(
+      await create(other.companies, other.member.id, { name: "Far Away" }),
+    );
+    const ben = applied(await create(f.contacts, f.member.id, { name: "Ben" }));
+    await expect(link(ben, elsewhere)).rejects.toMatchObject({ status: 404 });
+    await expect(link(ben, ana)).rejects.toMatchObject({ status: 404 });
+    await expect(link(northwind, acme)).rejects.toMatchObject({ status: 404 });
+    await expect(link(ben, northwind, f.teammate)).rejects.toMatchObject({
+      status: 403,
+    });
+    await expect(link(ben, northwind, f.outsider)).rejects.toMatchObject({
+      status: 404,
+    });
+    await expect(link(ben, acme, f.admin)).resolves.toMatchObject({
+      outcome: "LINKED",
+    });
+    // Archived ends: no new links, and existing ones are read-only.
+    const old = applied(
+      await create(f.companies, f.member.id, { name: "Old" }),
+    );
+    const kept = await link(ben, old);
+    const late = applied(
+      await create(f.companies, f.member.id, { name: "Late" }),
+    );
+    for (const id of [old, late])
+      await serial((tx) =>
+        mutateTaskInTransaction(
+          tx,
+          "archive",
+          { taskId: id, revision: 1 },
+          f.member.id,
+        ),
+      );
+    await expect(link(ben, late)).rejects.toMatchObject({
+      code: "RECORD_ARCHIVED",
+    });
+    await expect(
+      serial((tx) =>
+        removeLinkInTransaction(
+          tx,
+          { linkId: kept.linkId!, revision: 1, requestKey: key() },
+          f.member,
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "RECORD_ARCHIVED" });
+    // The database refuses cross-workspace and wrong-type links outright.
+    await expect(insertLink(ben, elsewhere)).rejects.toThrow(/foreign key/);
+    await expect(insertLink(ben, ana)).rejects.toThrow(/foreign key/);
+  });
+
+  it("blocks every link change while the Contacts board needs approvals", async () => {
+    const row = await db.contactCompany.findFirstOrThrow({
+      where: { contactId: ana },
+    });
+    const profile = await db.contactProfile.findUniqueOrThrow({
+      where: { recordId: ana },
+    });
+    const extra = applied(
+      await create(f.companies, f.member.id, { name: "New Co" }),
+    );
+    await db.boardApprovalPolicy.create({
+      data: {
+        boardId: f.contacts,
+        enabled: true,
+        requireCreation: false,
+        requireChanges: true,
+      },
+    });
+    try {
+      const blocked = { code: "AFFILIATION_APPROVAL_UNSUPPORTED" };
+      await expect(link(ana, extra, f.admin)).rejects.toMatchObject(blocked);
+      await expect(
+        serial((tx) =>
+          updateLinkInTransaction(
+            tx,
+            {
+              linkId: row.id,
+              revision: row.revision,
+              requestKey: key(),
+              changes: { role: "x" },
+            },
+            f.admin,
+          ),
+        ),
+      ).rejects.toMatchObject(blocked);
+      await expect(
+        serial((tx) =>
+          removeLinkInTransaction(
+            tx,
+            {
+              linkId: row.id,
+              revision: row.revision,
+              requestKey: key(),
+              clearPrimary: true,
+              primaryRevision: profile.primaryRevision,
+            },
+            f.admin,
+          ),
+        ),
+      ).rejects.toMatchObject(blocked);
+      await expect(
+        primary(ana, null, profile.primaryRevision, f.admin),
+      ).rejects.toMatchObject(blocked);
+      const page = await crmLinksFor(f.member, { recordId: ana });
+      expect(page.canLink).toBe(false);
+      expect(page.blocked).toMatch(/approvals/);
+      expect(page.links.length).toBeGreaterThan(0);
+    } finally {
+      await db.boardApprovalPolicy.delete({ where: { boardId: f.contacts } });
+    }
+  });
+
+  it("caps links at 100, and says so only when every blocker is visible", async () => {
+    const cara = applied(
+      await create(f.contacts, f.member.id, { name: "Cara" }),
+    );
+    const ids: string[] = [];
+    for (let index = 0; index < 100; index++) {
+      const id = applied(
+        await create(f.companies, f.member.id, { name: `Cap ${index}` }),
+      );
+      ids.push(id);
+      await link(cara, id);
+    }
+    const extra = applied(
+      await create(f.companies, f.member.id, { name: "One too many" }),
+    );
+    await expect(link(cara, extra)).rejects.toMatchObject({
+      code: "TOO_MANY_LINKS",
+    });
+    // An existing pair is still a no-op at the cap.
+    await expect(link(cara, ids[0]!)).resolves.toMatchObject({
+      outcome: "ALREADY_LINKED",
+    });
+    await serial((tx) =>
+      deleteRecordInTransaction(tx, { id: ids[1]! }, f.admin.id),
+    );
+    await expect(link(cara, extra)).rejects.toMatchObject({
+      code: "RESTRICTED_LINKS",
+    });
+    expect(
+      await crmLinksFor(f.member, { recordId: cara, page: 2 }),
+    ).toMatchObject({ total: 100, pageCount: 2, canLink: false });
+    const first = await crmLinksFor(f.member, { recordId: cara });
+    const hidden = first.links.filter((item) => !item.visible);
+    expect(hidden).toHaveLength(1);
+    expect(JSON.stringify(hidden)).not.toContain(ids[1]!);
+  }, 120_000);
+
+  it("keeps links through Trash, hides private ends, and drops them on purge", async () => {
+    const dee = applied(await create(f.contacts, f.member.id, { name: "Dee" }));
+    const gone = applied(
+      await create(f.companies, f.member.id, { name: "Gone Co" }),
+    );
+    const made = await link(dee, gone);
+    await primary(dee, made.linkId, 0);
+    await serial((tx) =>
+      deleteRecordInTransaction(tx, { id: gone }, f.admin.id),
+    );
+    expect((await crmLinksFor(f.member, { recordId: dee })).links).toEqual([
+      { visible: false, key: "private-0", status: "CURRENT" },
+    ]);
+    // The hidden primary can't be cleared by accident, or edited by guessing.
+    await expect(primary(dee, null, 1)).rejects.toMatchObject({
+      code: "RESTRICTED_LINKS",
+    });
+    await expect(
+      serial((tx) =>
+        removeLinkInTransaction(
+          tx,
+          {
+            linkId: made.linkId!,
+            revision: 2,
+            requestKey: key(),
+            clearPrimary: true,
+            primaryRevision: 1,
+          },
+          f.member,
+        ),
+      ),
+    ).rejects.toMatchObject({ status: 404 });
+    const hiddenRow = await crmDirectoryFor(
+      f.member,
+      { type: "CONTACT", q: "Dee" },
+      f.workspace.id,
+    );
+    expect(hiddenRow.records[0]?.primaryCompany).toBeNull();
+    await serial((tx) =>
+      restoreRecordInTransaction(tx, { id: gone }, f.admin.id),
+    );
+    const back = await crmDirectoryFor(
+      f.member,
+      { type: "CONTACT", q: "Dee" },
+      f.workspace.id,
+    );
+    expect(back.records[0]?.primaryCompany).toMatchObject({ name: "Gone Co" });
+    const companies = await crmDirectoryFor(
+      f.member,
+      { type: "COMPANY", q: "Gone Co" },
+      f.workspace.id,
+    );
+    expect(companies.records[0]?.currentPeople).toBe(1);
+    await serial((tx) =>
+      deleteRecordInTransaction(tx, { id: gone }, f.admin.id),
+    );
+    await eraseBatch(
+      null,
+      eraseSelection(new Date(), { kind: "record", id: gone }),
+      "CRM link proof",
+    );
+    expect(await db.contactCompany.count({ where: { contactId: dee } })).toBe(
+      0,
+    );
+    expect(
+      (await db.contactProfile.findUniqueOrThrow({ where: { recordId: dee } }))
+        .primaryRevision,
+    ).toBe(2);
+    // The card still says what happened, without the company's name.
+    const detail = await crmRecordFor(f.member, { recordId: dee });
+    expect(detail.activity.map((entry) => entry.action)).toEqual(
+      expect.arrayContaining([
+        "linked a private company",
+        "made a private company the primary company",
+      ]),
+    );
   });
 });

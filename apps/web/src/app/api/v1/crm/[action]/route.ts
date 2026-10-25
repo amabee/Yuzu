@@ -1,16 +1,58 @@
 import { z } from "zod";
 import { crmDirectory, crmMatches, crmRecord } from "@/server/crm-service";
-import { SetupError } from "@/server/setup/security";
+import {
+  crmLinks,
+  linkCompany,
+  removeLink,
+  setPrimary,
+  updateLink,
+} from "@/server/crm-links-service";
+import { notifyBoardMutation } from "@/server/realtime";
+import { readSetupBody, SetupError } from "@/server/setup/security";
+import type { LinkResult } from "@/lib/crm-contract";
 
-/** Reads for the CRM module. Records are created and changed through the
- *  shared record endpoints under /api/v1/boards. */
+const linkCommand = (action: string) =>
+  action === "link"
+    ? linkCompany
+    : action === "update-link"
+      ? updateLink
+      : action === "remove-link"
+        ? removeLink
+        : action === "primary"
+          ? setPrimary
+          : null;
+
+/** The CRM module's reads and its Contact–Company link commands. Records
+ *  themselves are created and changed through /api/v1/boards. */
 async function handle(request: Request, action: string) {
   const requestId = crypto.randomUUID();
   try {
     const params = new URL(request.url).searchParams;
     const query = () => JSON.parse(params.get("query") ?? "{}");
     let data;
-    if (action === "directory")
+    if (request.method === "POST") {
+      const command = linkCommand(action);
+      if (!command)
+        throw new SetupError(404, "NOT_FOUND", "CRM action not found.");
+      const result: LinkResult = await command(
+        await readSetupBody(request, 16_384),
+        request.headers,
+      );
+      // Both records' boards refresh: the contact's and the company's.
+      await Promise.all([
+        notifyBoardMutation({ boardId: result.contactBoardId }, result),
+        notifyBoardMutation({ boardId: result.companyBoardId }, result),
+      ]);
+      data = result;
+    } else if (action === "links")
+      data = await crmLinks(
+        {
+          recordId: params.get("recordId"),
+          ...(params.get("page") ? { page: Number(params.get("page")) } : {}),
+        },
+        request.headers,
+      );
+    else if (action === "directory")
       data = await crmDirectory(
         query(),
         params.get("workspaceId") ?? "",
@@ -38,7 +80,11 @@ async function handle(request: Request, action: string) {
     return Response.json(
       {
         error: {
-          code: known ? error.code : invalid ? "INVALID_INPUT" : "CRM_REQUEST_FAILED",
+          code: known
+            ? error.code
+            : invalid
+              ? "INVALID_INPUT"
+              : "CRM_REQUEST_FAILED",
           message: known
             ? error.message
             : invalid
@@ -55,6 +101,12 @@ async function handle(request: Request, action: string) {
       },
     );
   }
+}
+export async function POST(
+  request: Request,
+  context: { params: Promise<{ action: string }> },
+) {
+  return handle(request, (await context.params).action);
 }
 export async function GET(
   request: Request,

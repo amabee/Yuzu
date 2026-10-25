@@ -10,8 +10,10 @@ import { ApiError, apiRequest } from "@/lib/api-client";
 import { taskMutationResultSchema } from "@/lib/approval-contract";
 import {
   crmDirectorySchema,
+  crmLinksSchema,
   crmMatchesSchema,
   crmRecordDetailSchema,
+  linkResultSchema,
   type CrmDirectory,
   type CrmRecord,
   type ProfileKey,
@@ -261,4 +263,115 @@ export function saveError(error: unknown) {
   return error instanceof Error
     ? error.message
     : "This change could not be saved.";
+}
+
+/** A record's links: a contact's companies or a company's people. */
+export function useCrmLinks(
+  scope: CrmScope,
+  recordId: string,
+  page: number,
+  syncInterval: number,
+) {
+  return useQuery({
+    queryKey: [...crmKeys.board(scope), "crm-links", recordId, page] as const,
+    placeholderData: keepPreviousData,
+    refetchInterval: syncInterval,
+    refetchIntervalInBackground: false,
+    queryFn: async ({ signal }) =>
+      crmLinksSchema.parse(
+        (
+          await apiRequest(
+            `/api/v1/crm/links?recordId=${recordId}&page=${page}`,
+            { signal, cache: "no-store" },
+          )
+        ).data,
+      ),
+  });
+}
+
+/** Records of one type to pick from when linking, by name, domain or email. */
+export function useCrmPicker(
+  scope: CrmScope,
+  type: CrmType,
+  q: string,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: [...crmKeys.board(scope), "crm-picker", type, q] as const,
+    enabled,
+    staleTime: 10_000,
+    placeholderData: keepPreviousData,
+    queryFn: async ({ signal }) => {
+      const params = new URLSearchParams({
+        workspaceId: scope.workspaceId,
+        query: JSON.stringify({ type, q }),
+      });
+      return crmDirectorySchema.parse(
+        (
+          await apiRequest(`/api/v1/crm/directory?${params}`, {
+            signal,
+            cache: "no-store",
+          })
+        ).data,
+      ).records;
+    },
+  });
+}
+
+export type LinkCommand =
+  | {
+      action: "link";
+      body: {
+        contactId: string;
+        companyId: string;
+        role?: string | null;
+        status?: "CURRENT" | "FORMER";
+      };
+    }
+  | {
+      action: "update-link";
+      body: {
+        linkId: string;
+        revision: number;
+        changes: { role?: string | null; status?: "CURRENT" | "FORMER" };
+        clearPrimary?: boolean;
+        primaryRevision?: number;
+      };
+    }
+  | {
+      action: "remove-link";
+      body: {
+        linkId: string;
+        revision: number;
+        clearPrimary?: boolean;
+        primaryRevision?: number;
+      };
+    }
+  | {
+      action: "primary";
+      body: {
+        contactId: string;
+        linkId: string | null;
+        linkRevision?: number;
+        primaryRevision: number;
+      };
+    };
+
+/** Contact–Company link changes; each carries its own request key. */
+export function useCrmLinkCommand(scope: CrmScope) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationKey: crmKeys.board(scope),
+    mutationFn: async (command: LinkCommand) =>
+      linkResultSchema.parse(
+        (
+          await apiRequest(`/api/v1/crm/${command.action}`, {
+            method: "POST",
+            json: { ...command.body, requestKey: crypto.randomUUID() },
+          })
+        ).data,
+      ),
+    onSettled: () =>
+      client.invalidateQueries({ queryKey: crmKeys.board(scope) }),
+  });
 }

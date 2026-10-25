@@ -17,7 +17,14 @@ import { projectListSchema } from "./project-contract";
 import { notificationActionSchema } from "./notification-contract";
 import { dashboardQuerySchema } from "./dashboard-contract";
 import { exportCsvSchema } from "./csv-export";
-import { crmDirectoryQuerySchema, crmMatchQuerySchema } from "./crm-contract";
+import {
+  crmDirectoryQuerySchema,
+  crmMatchQuerySchema,
+  linkCreateSchema,
+  linkPrimarySchema,
+  linkRemoveSchema,
+  linkUpdateSchema,
+} from "./crm-contract";
 
 /**
  * The public API: every endpoint an API token may call. This one list drives
@@ -353,6 +360,58 @@ export const apiEndpoints: ApiEndpoint[] = [
         ),
     }),
     returns: "Up to five matching records",
+  },
+  {
+    method: "GET",
+    path: "/crm/links",
+    group: "CRM",
+    summary: "A contact's companies or a company's people",
+    description:
+      "One page (50) of links: primary first, then current, then former. Links to records you can't see show as private on contacts and are left out on companies.",
+    access: "read",
+    query: z.object({
+      recordId,
+      page: z.string().optional().describe("Page number, from 1"),
+    }),
+    returns: "Links with roles, status and the primary revision",
+  },
+  {
+    method: "POST",
+    path: "/crm/link",
+    group: "CRM",
+    summary: "Link a contact to a company",
+    description:
+      "Needs edit access to the contact and sight of the company. An existing pair comes back as ALREADY_LINKED, unchanged. Unavailable while the Contacts board requires approvals.",
+    access: "write",
+    body: linkCreateSchema,
+    returns: "The link, with both records' board ids",
+  },
+  {
+    method: "POST",
+    path: "/crm/update-link",
+    group: "CRM",
+    summary: "Change a link's role or status",
+    access: "write",
+    body: linkUpdateSchema,
+    returns: "The link's new revision",
+  },
+  {
+    method: "POST",
+    path: "/crm/remove-link",
+    group: "CRM",
+    summary: "Remove a link",
+    access: "write",
+    body: linkRemoveSchema,
+    returns: "The contact's primary revision",
+  },
+  {
+    method: "POST",
+    path: "/crm/primary",
+    group: "CRM",
+    summary: "Choose or clear a contact's primary company",
+    access: "write",
+    body: linkPrimarySchema,
+    returns: "The new primary revision",
   },
 ];
 

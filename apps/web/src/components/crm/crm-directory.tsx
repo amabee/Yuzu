@@ -287,6 +287,7 @@ export function CrmDirectoryScreen({
               }
               onSave={onSave}
               onOpen={(record) => openRecord(record.id, "fresh")}
+              onOpenLinked={(id) => openRecord(id, "fresh")}
               onBlocked={(message) => toast(message, "info")}
               addRow={
                 query.archived ? null : (
