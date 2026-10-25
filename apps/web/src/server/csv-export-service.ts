@@ -1,4 +1,6 @@
-import { refuseCrmCollection } from "./crm-profile";
+import { profileSnapshot } from "./crm-profile";
+import { crmLinkSummaries } from "./crm-links-service";
+import { isCrmRecordType } from "@/lib/record-types";
 import { getDatabase, createRecordId } from "@yuzu/database";
 import { access, boardRecord, eligiblePeople } from "./board-service";
 import { audit } from "./audit";
@@ -45,7 +47,6 @@ export async function exportBoardCsvForActor(
   actorId: string,
   signal?: AbortSignal,
 ) {
-  await refuseCrmCollection(input, "CSV export");
   const request = exportCsvSchema.parse(input);
   const db = getDatabase();
   const user = await db.user.findUnique({ where: { id: actorId } });
@@ -106,13 +107,17 @@ export async function exportBoardCsvForActor(
             "This view uses a removed status. Choose a current status before exporting.",
           );
         const record = boardRecord(board).config;
+        const crmType = isCrmRecordType(board.recordType)
+          ? board.recordType
+          : undefined;
         const context: CsvContext = {
           record,
+          crmType,
           fields,
           groups: board.groups,
           people: await eligiblePeople(tx, board),
         };
-        const prefix = "\ufeff" + csvLine(csvHeaders(fields, record));
+        const prefix = "\ufeff" + csvLine(csvHeaders(fields, record, crmType));
         let bytes = Buffer.byteLength(prefix);
         if (bytes > MAX_CSV_BYTES)
           throw tooLarge(
@@ -173,6 +178,8 @@ export async function exportBoardCsvForActor(
               checklist: true,
               createdBy: { select: { name: true } },
               assignees: { select: { userId: true } },
+              companyProfile: true,
+              contactProfile: true,
               values: {
                 where: { fieldId: { in: fields.map((field) => field.id) } },
                 select: {
@@ -231,6 +238,16 @@ export async function exportBoardCsvForActor(
           const rollups = new Map(
             rollupValues.map((item) => [item.id, item.fieldValues]),
           );
+          // Readable links for customer records; private ends stay private.
+          const links = crmType
+            ? await crmLinkSummaries(
+                tx,
+                user,
+                crmType,
+                board.workspaceId,
+                batch.map((item) => item.id),
+              )
+            : null;
           for (const record of batch) {
             const task: CsvTask = {
               ...record,
@@ -240,6 +257,13 @@ export async function exportBoardCsvForActor(
               createdByName: record.createdBy.name,
               assigneeIds: record.assignees.map((person) => person.userId),
               checklist: checklistSchema.parse(record.checklist),
+              ...(crmType
+                ? {
+                    profile: profileSnapshot(record, crmType),
+                    links: links?.get(record.id)?.text ?? "",
+                    primaryCompany: links?.get(record.id)?.primary ?? "",
+                  }
+                : {}),
               fieldValues: Object.fromEntries(
                 record.values.map((value) => {
                   const field = fields.find(

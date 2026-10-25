@@ -1,4 +1,5 @@
 "use client";
+import { isCrmRecordType, lower } from "@/lib/record-types";
 import { PauseAlert } from "@/components/pause/pause-alert";
 import { PauseSheetDecor } from "@/components/pause/pause-sheet";
 
@@ -29,6 +30,7 @@ import {
   parseImportCsv,
   suggestImportMapping,
   MAX_IMPORT_BYTES,
+  type ImportContext,
   type ImportMapping,
   type ImportPreview,
   type ImportRow,
@@ -41,10 +43,14 @@ export function ImportCsv({
   onNotice,
   onChanged,
 }: {
-  state: BoardState;
+  /** A board, or a CRM collection with its record type. */
+  state: Pick<BoardState, "boardId" | "readOnly"> & ImportContext;
   onNotice: TransferNoticeHandler;
   onChanged: () => void;
 }) {
+  // Names follow the board: tasks, deals, companies, contacts…
+  const one = lower(state.record?.singular ?? "Task");
+  const many = lower(state.record?.plural ?? "Tasks");
   const { startImport } = useCsvTransfers();
   const [open, setOpen] = useState(false);
   const [fileName, setFileName] = useState("");
@@ -206,7 +212,7 @@ export function ImportCsv({
                 <Table2 size={20} />
               </span>
               <div>
-                <SheetTitle>Bring your tasks into Yuzu</SheetTitle>
+                <SheetTitle>Bring your {many} into Yuzu</SheetTitle>
                 <SheetDescription className="mt-1">
                   Match your columns, review each row, then import into this
                   board.
@@ -247,7 +253,7 @@ export function ImportCsv({
                     onChange={(event) => void readFile(event.target.files?.[0])}
                   />
                   <span className="text-xs leading-relaxed text-muted-foreground">
-                    UTF-8, comma-separated. Up to 25 MB, 25,000 tasks, and 100
+                    UTF-8, comma-separated. Up to 25 MB, 25,000 {many}, and 100
                     columns. A header row is required.
                   </span>
                 </label>
@@ -335,11 +341,24 @@ export function ImportCsv({
                       ))}
                     </div>
                     <PauseAlert intent="info">
-                      Dates use YYYY-MM-DD. Use saved labels or IDs for
-                      statuses, groups, and people. Separate multiple values
-                      with |, or use a JSON array. Checklist cells accept steps
-                      separated by | or JSON objects with text and done.
-                      Existing tasks are never overwritten.
+                      {isCrmRecordType(state.record?.type) ? (
+                        <>
+                          Use a saved name or ID for the owner. Emails and web
+                          addresses are checked as they are in Yuzu. Links
+                          between contacts and companies can&apos;t be imported
+                          yet; unmap those columns. Existing {many} are never
+                          overwritten; matching names, emails and domains are
+                          flagged.
+                        </>
+                      ) : (
+                        <>
+                          Dates use YYYY-MM-DD. Use saved labels or IDs for
+                          statuses, groups, and people. Separate multiple values
+                          with |, or use a JSON array. Checklist cells accept
+                          steps separated by | or JSON objects with text and
+                          done. Existing {many} are never overwritten.
+                        </>
+                      )}
                     </PauseAlert>
                     <Button
                       disabled={
@@ -352,7 +371,7 @@ export function ImportCsv({
                     >
                       {previewMutation.isPending
                         ? "Checking rows…"
-                        : "Preview tasks"}
+                        : `Preview ${many}`}
                     </Button>
                   </>
                 )}
@@ -370,14 +389,14 @@ export function ImportCsv({
                   </p>
                   {preview.requiresApproval && (
                     <p className="rounded-lg bg-primary/10 p-3 text-xs text-foreground">
-                      This board requires creation approval. Imported tasks will
-                      wait in the approval queue.
+                      This board requires creation approval. Imported {many}{" "}
+                      will wait in the approval queue.
                     </p>
                   )}
                   {
                     <p className="text-xs leading-relaxed text-muted-foreground">
                       Possible duplicates start unchecked. Select one to create
-                      another task. Invalid rows must be corrected in the CSV
+                      another {one}. Invalid rows must be corrected in the CSV
                       and previewed again.
                     </p>
                   }
@@ -551,7 +570,7 @@ export function ImportCsv({
                         }}
                       >
                         Import {selected.size}{" "}
-                        {selected.size === 1 ? "task" : "tasks"}
+                        {selected.size === 1 ? one : many}
                       </Button>
                       <Button
                         variant="ghost"

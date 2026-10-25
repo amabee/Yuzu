@@ -6,6 +6,17 @@
   gap: 14px;
   min-width: 0;
 }
+.crm-page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+.crm-page-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
 .crm-page-context {
   font-size: 13px;
   color: var(--muted-foreground);

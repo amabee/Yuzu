@@ -25,6 +25,8 @@ export type CrmScope = {
   workspaceId: string;
   boardId: string;
   type: CrmType;
+  /** The workspace's other collection: links and stacked cards span both. */
+  relatedBoardId: string;
 };
 export type DirectoryQuery = {
   q: string;

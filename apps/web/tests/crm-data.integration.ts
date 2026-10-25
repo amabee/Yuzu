@@ -21,6 +21,7 @@ import {
   restoreRecordInTransaction,
 } from "@/server/trash-service";
 import { refuseCrmCollection } from "@/server/crm-profile";
+import { exportBoardCsvForActor } from "@/server/csv-export-service";
 import {
   crmLinksFor,
   linkCompanyInTransaction,
@@ -1010,5 +1011,116 @@ describe("Contact–Company links", () => {
         "made a private company the primary company",
       ]),
     );
+  });
+});
+
+describe("CRM CSV", () => {
+  let f: Fixture;
+  beforeAll(async () => {
+    f = await fixture();
+  });
+  const key = () => createRecordId();
+
+  it("exports profile fields and readable links, keeping private ends private", async () => {
+    const ana = applied(
+      await create(f.contacts, f.member.id, {
+        name: "Ana Reyes",
+        email: "ana@north.example",
+        description: "=SUM(A1)",
+      }),
+    );
+    const north = applied(
+      await create(f.companies, f.member.id, {
+        name: "Northwind",
+        domain: "north.example",
+      }),
+    );
+    const hidden = applied(
+      await create(f.companies, f.member.id, { name: "Secret Co" }),
+    );
+    for (const [companyId, role] of [
+      [north, "Head of operations"],
+      [hidden, "Advisor"],
+    ] as const)
+      await serial((tx) =>
+        linkCompanyInTransaction(
+          tx,
+          { contactId: ana, companyId, role, requestKey: key() },
+          f.member,
+        ),
+      );
+    const link = await db.contactCompany.findFirstOrThrow({
+      where: { contactId: ana, companyId: north },
+    });
+    await serial((tx) =>
+      setPrimaryInTransaction(
+        tx,
+        {
+          contactId: ana,
+          linkId: link.id,
+          primaryRevision: 0,
+          requestKey: key(),
+        },
+        f.member,
+      ),
+    );
+    await serial((tx) =>
+      deleteRecordInTransaction(tx, { id: hidden }, f.admin.id),
+    );
+    const contacts = await exportBoardCsvForActor(
+      { boardId: f.contacts, scope: "BOARD", includeArchived: false },
+      f.member.id,
+    );
+    const [header, row] = contacts.csv.replace(/^﻿/, "").split("\r\n");
+    expect(header).toBe(
+      '"Contact ID","Contact","Email","Phone","Owner","Owner IDs","Notes","Companies (read-only)","Primary company (read-only)","Archived at","Revision","Created by"',
+    );
+    expect(row).toContain('"ana@north.example"');
+    expect(row).toContain(
+      '"Northwind (Head of operations, Current, Primary); Private company"',
+    );
+    expect(row).toContain(`"'=SUM(A1)"`);
+    expect(row).not.toContain("Secret Co");
+    expect(row).not.toContain("Advisor");
+    const companies = await exportBoardCsvForActor(
+      { boardId: f.companies, scope: "BOARD", includeArchived: false },
+      f.member.id,
+    );
+    expect(companies.filename).toMatch(/^yuzu-Companies-/);
+    expect(companies.csv).toContain(
+      '"Ana Reyes (Head of operations, Current, Primary company)"',
+    );
+    expect(companies.csv).toContain('"north.example"');
+  });
+
+  it("skips import rows that match by email or domain, never updating them", async () => {
+    await create(f.companies, f.member.id, {
+      name: "Bluebird Health",
+      domain: "bluebird.example",
+      email: "hello@bluebird.example",
+    });
+    const imported = (values: Record<string, unknown>) =>
+      serial((tx) =>
+        createTaskInTransaction(
+          tx,
+          { boardId: f.companies, createKey: key(), ...values },
+          f.member.id,
+          { skipDuplicate: true },
+        ),
+      );
+    await expect(
+      imported({ name: "Bluebird (new)", domain: "BLUEBIRD.example" }),
+    ).rejects.toMatchObject({ code: "IMPORT_DUPLICATE" });
+    await expect(
+      imported({ name: "Another", email: "HELLO@bluebird.example" }),
+    ).rejects.toMatchObject({ code: "IMPORT_DUPLICATE" });
+    await expect(
+      imported({ name: "Fresh Co", domain: "fresh.example" }),
+    ).resolves.toMatchObject({ outcome: "APPLIED" });
+    const kept = await db.task.findFirstOrThrow({
+      where: { name: "Bluebird Health", boardId: f.companies },
+      include: { companyProfile: true },
+    });
+    expect(kept.revision).toBe(1);
   });
 });

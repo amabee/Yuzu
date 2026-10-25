@@ -2,8 +2,14 @@ import {
   builtinLabels,
   builtinName,
   type BuiltinKey,
+  type CrmRecordType,
   type RecordConfig,
 } from "./record-types";
+import {
+  profileKeysFor,
+  profileLabel,
+  type ProfileValues,
+} from "./crm-contract";
 import { z } from "zod";
 import { recordId } from "./id-contract";
 import {
@@ -117,8 +123,31 @@ const keepCore = (record: RecordConfig | undefined, index: number) => {
 export function customExportFields(fields: BoardField[]) {
   return fields.filter((field) => !coreKeys.includes(field.key));
 }
-export function csvHeaders(fields: BoardField[], record?: RecordConfig) {
-  const core = coreHeaders(record);
+/** Company/Contact columns: the profile, owner and notes, then link
+ *  summaries marked read-only (imports can't apply them yet). */
+export function crmHeaders(type: CrmRecordType) {
+  const singular = type === "COMPANY" ? "Company" : "Contact";
+  return [
+    `${singular} ID`,
+    singular,
+    ...profileKeysFor[type].map((key) => profileLabel(type, key)),
+    "Owner",
+    "Owner IDs",
+    "Notes",
+    ...(type === "CONTACT"
+      ? ["Companies (read-only)", "Primary company (read-only)"]
+      : ["People (read-only)"]),
+    "Archived at",
+    "Revision",
+    "Created by",
+  ];
+}
+export function csvHeaders(
+  fields: BoardField[],
+  record?: RecordConfig,
+  crmType?: CrmRecordType,
+) {
+  const core = crmType ? crmHeaders(crmType) : coreHeaders(record);
   const used = new Set(core.map((name) => name.toLowerCase()));
   return [
     ...core,
@@ -138,9 +167,14 @@ export type CsvTask = ViewTask & {
   createdByName: string;
   checklist: TaskChecklist;
   fieldValues: Record<string, FieldValue>;
+  /** Company/Contact records: profile values and readable link summaries. */
+  profile?: Partial<ProfileValues>;
+  links?: string;
+  primaryCompany?: string;
 };
 export type CsvContext = {
   record?: RecordConfig;
+  crmType?: CrmRecordType;
   /** Linked records the exporter may see; the rest export as private. */
   linked?: Record<string, { name: string }>;
   fields: BoardField[];
@@ -159,6 +193,23 @@ export function csvTaskCells(task: CsvTask, context: CsvContext): CsvCell[] {
   const person = (id: string) =>
     context.people.find((person) => person.id === id)?.name ?? "Former member";
   const ids = [...task.assigneeIds].sort();
+  if (context.crmType) {
+    const type = context.crmType;
+    return [
+      task.id,
+      task.name,
+      ...profileKeysFor[type].map((key) => task.profile?.[key] ?? ""),
+      JSON.stringify(ids.map(person)),
+      JSON.stringify(ids),
+      task.description,
+      task.links ?? "",
+      ...(type === "CONTACT" ? [task.primaryCompany ?? ""] : []),
+      task.archivedAt,
+      task.revision,
+      task.createdByName,
+      ...customCells(task, context, person),
+    ];
+  }
   const core: CsvCell[] = [
     task.id,
     task.name,
@@ -177,30 +228,36 @@ export function csvTaskCells(task: CsvTask, context: CsvContext): CsvCell[] {
   ];
   return [
     ...core.filter((_, index) => keepCore(context.record, index)),
-    ...customExportFields(context.fields).map((field) => {
-      const value = task.fieldValues[field.id];
-      if (value == null) return "";
-      if (field.type === "PEOPLE")
-        return JSON.stringify((Array.isArray(value) ? value : []).map(person));
-      if (field.type === "RELATION")
-        return (Array.isArray(value) ? value : [])
-          .map((id) => context.linked?.[id]?.name ?? "Private item")
-          .join("; ");
-      if (Array.isArray(value))
-        return JSON.stringify(
-          value.map(
-            (id) =>
-              field.options.find((option) => option.id === id)?.label ?? id,
-          ),
-        );
-      if (field.options.length)
-        return (
-          field.options.find((option) => option.id === value)?.label ??
-          String(value)
-        );
-      return value;
-    }),
+    ...customCells(task, context, person),
   ];
+}
+function customCells(
+  task: CsvTask,
+  context: CsvContext,
+  person: (id: string) => string,
+): CsvCell[] {
+  return customExportFields(context.fields).map((field) => {
+    const value = task.fieldValues[field.id];
+    if (value == null) return "";
+    if (field.type === "PEOPLE")
+      return JSON.stringify((Array.isArray(value) ? value : []).map(person));
+    if (field.type === "RELATION")
+      return (Array.isArray(value) ? value : [])
+        .map((id) => context.linked?.[id]?.name ?? "Private item")
+        .join("; ");
+    if (Array.isArray(value))
+      return JSON.stringify(
+        value.map(
+          (id) => field.options.find((option) => option.id === id)?.label ?? id,
+        ),
+      );
+    if (field.options.length)
+      return (
+        field.options.find((option) => option.id === value)?.label ??
+        String(value)
+      );
+    return value;
+  });
 }
 
 export function csvFilename(boardName: string, calendarDate: string) {
