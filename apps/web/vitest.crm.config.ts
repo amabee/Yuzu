@@ -17,7 +17,10 @@ export default defineConfig({
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   test: {
     environment: "node",
-    include: ["tests/crm-data.integration.ts"],
+    include: [
+      "tests/crm-data.integration.ts",
+      "tests/deals-data.integration.ts",
+    ],
     fileParallelism: false,
     testTimeout: 30_000,
     hookTimeout: 60_000,

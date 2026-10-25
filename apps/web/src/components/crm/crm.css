@@ -1192,6 +1192,769 @@ input.crm-card-name:focus {
   }
 }
 
+/* ---------- Deals ----------
+   Won is green with the yuzu slice; Lost is muted. Open stages use the
+   theme's primary color. */
+.crm-button[data-tone="primary"] {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+.crm-button[data-tone="primary"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--primary) 88%, #000);
+}
+.deal-sums {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.deal-sums span {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+}
+.deal-sums b {
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+.deal-views {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--card);
+}
+.deal-views button {
+  padding: 4px 13px;
+  border: 0;
+  border-radius: calc(var(--radius) - 5px);
+  background: none;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.deal-views button[aria-selected="true"] {
+  background: var(--foreground);
+  color: var(--background);
+}
+.crm-notice b {
+  margin-right: 4px;
+}
+.deal-board {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  padding-bottom: 12px;
+  overflow-x: auto;
+}
+.deal-lane {
+  position: relative;
+  display: flex;
+  flex: 0 0 272px;
+  flex-direction: column;
+  max-height: calc(100svh - 280px);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 4px);
+  background: color-mix(in srgb, var(--muted) 70%, var(--background));
+}
+.deal-lane[data-over] {
+  outline: 2px dashed var(--primary);
+  outline-offset: -4px;
+}
+.deal-lane header {
+  padding: 11px 12px 9px;
+  border-bottom: 1px solid var(--border);
+}
+.deal-lane h2 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--theme-heading, inherit);
+  font-size: 14px;
+  font-weight: 700;
+}
+.deal-lane h2 i {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--primary);
+}
+.deal-lane h2 small {
+  margin-left: auto;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 600;
+}
+.deal-lane header p {
+  margin-top: 2px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.deal-default-tag {
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-family: var(--theme-body, inherit);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.deal-lane[data-category="WON"] {
+  border-color: color-mix(
+    in srgb,
+    var(--intent-success, #1e9e58) 32%,
+    var(--border)
+  );
+  background: color-mix(
+    in srgb,
+    var(--intent-success, #1e9e58) 8%,
+    var(--background)
+  );
+}
+.deal-lane[data-category="WON"] h2 i {
+  background: var(--intent-success, #1e9e58);
+}
+.deal-lane[data-category="WON"]::after {
+  content: "";
+  position: absolute;
+  right: -46px;
+  bottom: -46px;
+  width: 150px;
+  height: 150px;
+  background: url("/toasts/yuzu-lemon-slice.svg") center / contain no-repeat;
+  opacity: 0.16;
+  pointer-events: none;
+}
+.deal-lane[data-category="LOST"] {
+  background: color-mix(in srgb, var(--muted-foreground) 7%, var(--background));
+}
+.deal-lane[data-category="LOST"] h2 i {
+  background: var(--muted-foreground);
+}
+.deal-lane-cards {
+  display: grid;
+  gap: 8px;
+  min-height: 60px;
+  padding: 10px;
+  overflow-y: auto;
+}
+.deal-lane-empty {
+  padding: 14px 6px;
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+  text-align: center;
+}
+.deal-lane footer {
+  padding: 4px 10px 10px;
+}
+.deal-lane footer button,
+.deal-lane footer input {
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: calc(var(--radius) - 4px);
+  background: none;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.deal-lane footer button:hover {
+  background: var(--card);
+}
+.deal-lane footer input {
+  border: 1px solid var(--ring);
+  background: var(--card);
+  color: var(--foreground);
+  cursor: text;
+}
+.deal-tile {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--foreground);
+  font: inherit;
+  text-align: left;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+  cursor: pointer;
+}
+.deal-tile[draggable="true"] {
+  cursor: grab;
+}
+.deal-tile:hover {
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+}
+.deal-lane[data-category="LOST"] .deal-tile {
+  opacity: 0.85;
+}
+.deal-tile-name {
+  font-weight: 600;
+  line-height: 1.3;
+}
+.deal-tile-amount {
+  font-family: var(--theme-heading, inherit);
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.deal-tile-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.deal-tile-meta [data-late] {
+  color: var(--destructive);
+  font-weight: 600;
+}
+.deal-tile-meta .crm-avatar {
+  margin-left: auto;
+}
+.deal-customer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 2px 9px 2px 3px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.deal-customer-pill[data-size="sm"] {
+  border: 0;
+  background: var(--muted);
+  font-size: 12px;
+}
+.deal-customer-pill .crm-mono {
+  width: 20px;
+  height: 20px;
+  font-size: 9px;
+}
+button.deal-customer-pill {
+  cursor: pointer;
+}
+button.deal-customer-pill:hover {
+  border-color: var(--primary);
+}
+.deal-customer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 6px 8px;
+  border: 1px solid var(--input);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--muted);
+}
+.deal-customer-tools {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+}
+.deal-label {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.deal-kind {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--card);
+  border: 1px solid var(--border);
+}
+.deal-kind button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: calc(var(--radius) - 5px);
+  background: none;
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.deal-kind button[aria-checked="true"] {
+  background: var(--foreground);
+  color: var(--background);
+}
+.deal-money {
+  display: grid;
+  grid-template-columns: 1fr 82px;
+  gap: 6px;
+}
+.deal-mono {
+  background: color-mix(in srgb, var(--yuzu, #f6c945) 40%, var(--card));
+  color: var(--foreground);
+}
+/* The stage path: the pipeline as a row of steps. */
+.deal-card-top {
+  background: var(--card);
+}
+.deal-path {
+  display: flex;
+  gap: 4px;
+  padding: 10px 22px 6px;
+  overflow-x: auto;
+}
+.deal-step {
+  flex: 1 1 0;
+  min-width: 92px;
+  height: 34px;
+  padding: 0 16px;
+  border: 0;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  clip-path: polygon(
+    0 0,
+    calc(100% - 10px) 0,
+    100% 50%,
+    calc(100% - 10px) 100%,
+    0 100%,
+    10px 50%
+  );
+}
+.deal-step:first-child {
+  border-radius: 10px 0 0 10px;
+  clip-path: polygon(
+    0 0,
+    calc(100% - 10px) 0,
+    100% 50%,
+    calc(100% - 10px) 100%,
+    0 100%
+  );
+}
+.deal-step[data-done] {
+  background: color-mix(in srgb, var(--primary) 22%, var(--card));
+  color: var(--foreground);
+}
+.deal-step[data-here] {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  cursor: default;
+}
+.deal-step[data-category="WON"][data-here] {
+  background: var(--intent-success, #1e9e58);
+  color: #fff;
+}
+.deal-step[data-category="LOST"][data-here] {
+  background: var(--muted-foreground);
+  color: var(--background);
+}
+.deal-step:hover:not([data-here]):not(:disabled) {
+  filter: brightness(0.95);
+}
+.deal-step:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -4px;
+}
+.deal-step:disabled:not([data-here]) {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.deal-history {
+  padding: 12px 16px 6px;
+  list-style: none;
+}
+.deal-history li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  gap: 10px;
+  padding-bottom: 14px;
+  font-size: 13px;
+}
+.deal-history li::before {
+  content: "";
+  position: absolute;
+  top: 16px;
+  bottom: 0;
+  left: 7px;
+  width: 2px;
+  background: var(--border);
+}
+.deal-history li:last-child::before {
+  display: none;
+}
+.deal-history-dot {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border-radius: 999px;
+  background: var(--primary);
+}
+.deal-history [data-kind="WON"] .deal-history-dot {
+  background: var(--intent-success, #1e9e58);
+}
+.deal-history [data-kind="LOST"] .deal-history-dot {
+  background: var(--muted-foreground);
+}
+.deal-history [data-kind="REOPENED"] .deal-history-dot {
+  background: var(--yuzu, #f6c945);
+}
+.deal-history small {
+  display: block;
+  color: var(--muted-foreground);
+}
+.deal-history blockquote {
+  margin-top: 4px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+}
+.deal-table .deal-row-open {
+  padding: 0 12px;
+  border: 0;
+  background: none;
+  color: var(--foreground);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.deal-table .deal-row-open:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}
+.deal-table td {
+  padding: 0 4px;
+}
+.deal-table td:not(:first-child):not(:nth-child(2)) {
+  padding: 0 12px;
+}
+.deal-stage-select {
+  height: 30px;
+  margin: 0 8px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.deal-stage-select[data-category="WON"] {
+  background: color-mix(
+    in srgb,
+    var(--intent-success, #1e9e58) 16%,
+    var(--card)
+  );
+}
+.deal-stage-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 9px;
+  border-radius: 999px;
+  background: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.deal-stage-chip i {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--primary);
+}
+.deal-stage-chip[data-category="WON"] i {
+  background: var(--intent-success, #1e9e58);
+}
+.deal-stage-chip[data-category="LOST"] i {
+  background: var(--muted-foreground);
+}
+.deal-customer-deals {
+  display: grid;
+  margin: 10px 14px 6px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  list-style: none;
+}
+.deal-customer-deals li + li {
+  border-top: 1px solid var(--border);
+}
+.deal-customer-deals button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.deal-customer-deals button:hover {
+  background: var(--muted);
+}
+/* Dialogs: Won ↔ Lost reason and pipeline settings. */
+.deal-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 71;
+  display: grid;
+  gap: 10px;
+  width: min(560px, calc(100vw - 24px));
+  max-height: calc(100svh - 40px);
+  padding: 20px;
+  overflow: auto;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 6px);
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: 0 30px 80px -30px rgb(0 0 0 / 0.6);
+}
+.deal-dialog form {
+  display: grid;
+  gap: 10px;
+}
+.deal-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.deal-dialog-head .crm-icon-button {
+  margin-left: auto;
+}
+.deal-dialog-title {
+  font-family: var(--theme-heading, inherit);
+  font-size: 21px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.deal-dialog-text,
+.deal-dialog-foot {
+  color: var(--muted-foreground);
+  font-size: 13.5px;
+}
+.deal-dialog textarea {
+  min-height: 90px;
+  padding: 10px 12px;
+  border: 1px solid var(--input);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--foreground);
+  font: inherit;
+}
+.deal-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.deal-settings {
+  width: min(680px, calc(100vw - 24px));
+}
+.deal-problem {
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--pending);
+  color: var(--pending-foreground);
+  font-size: 13px;
+}
+.deal-problem ul {
+  margin-top: 4px;
+  padding-left: 18px;
+}
+.deal-stage-groups {
+  display: grid;
+  gap: 14px;
+}
+.deal-stage-groups h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--theme-heading, inherit);
+  font-size: 14px;
+  font-weight: 700;
+}
+.deal-stage-groups h3 i {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--primary);
+}
+.deal-stage-groups [data-category="WON"] h3 i {
+  background: var(--intent-success, #1e9e58);
+}
+.deal-stage-groups [data-category="LOST"] h3 i {
+  background: var(--muted-foreground);
+}
+.deal-stage-groups h3 small {
+  color: var(--muted-foreground);
+  font-family: var(--theme-body, inherit);
+  font-size: 12px;
+  font-weight: 500;
+}
+.deal-stage-groups ul {
+  margin-top: 6px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  list-style: none;
+}
+.deal-stage-groups li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 104px auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+}
+.deal-stage-groups li + li {
+  border-top: 1px solid var(--border);
+}
+.deal-stage-groups li input,
+.deal-stage-groups li select,
+.deal-add-stage input {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius) - 4px);
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 13px;
+}
+.deal-stage-groups li select {
+  border-color: var(--input);
+  background: var(--card);
+}
+.deal-stage-groups li input:hover,
+.deal-add-stage input {
+  border-color: var(--input);
+}
+.deal-default {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.deal-stage-tools {
+  display: inline-flex;
+  gap: 3px;
+}
+.deal-dialog .deal-add-stage {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.deal-add-stage input {
+  flex: 1;
+  background: var(--card);
+}
+.deal-pipelines {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+  padding: 0;
+  list-style: none;
+}
+.deal-pipelines a {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 4px);
+  background: var(--card);
+  color: var(--foreground);
+  text-decoration: none;
+}
+.deal-pipelines a:hover {
+  border-color: var(--primary);
+}
+.deal-pipelines a > svg {
+  color: var(--primary);
+}
+.deal-pipelines b {
+  display: block;
+  font-family: var(--theme-heading, inherit);
+  font-size: 16px;
+}
+.deal-pipelines small {
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+}
+.deal-new-pipeline {
+  display: grid;
+  gap: 6px;
+  max-width: 520px;
+}
+.deal-new-pipeline label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.deal-new-pipeline div {
+  display: flex;
+  gap: 8px;
+}
+.deal-new-pipeline input {
+  flex: 1;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--input);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--card);
+  color: var(--foreground);
+  font: inherit;
+}
+@media (max-width: 640px) {
+  .deal-lane {
+    flex-basis: 84vw;
+  }
+  .deal-path {
+    padding: 8px 12px 4px;
+  }
+  .deal-stage-groups li {
+    grid-template-columns: 1fr auto;
+  }
+}
+
 @media (max-width: 1100px) {
   .crm-card-body {
     grid-template-columns: minmax(0, 1fr);

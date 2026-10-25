@@ -1,3 +1,4 @@
+import { refusePipelineCsv } from "./crm-profile";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { createRecordId, getDatabase } from "@yuzu/database";
@@ -92,6 +93,7 @@ export async function previewCsvImport(
   headers: Headers,
 ): Promise<ImportPreview> {
   const body = importPreviewSchema.parse(input);
+  await refusePipelineCsv(body);
   const { user } = await requireIdentity(headers);
   let csv;
   try {

@@ -169,7 +169,10 @@ export function CrmDirectoryScreen({
       return false;
     }
   };
-  const onLifecycle = (action: LifecycleAction, record: CrmRecord) =>
+  const onLifecycle = (
+    action: LifecycleAction,
+    record: { id: string; revision: number },
+  ) =>
     lifecycle.mutate(
       { action, record },
       {

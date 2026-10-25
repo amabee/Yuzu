@@ -6,6 +6,8 @@ export class ApiError extends Error {
     public code: string,
     message: string,
     public requestId?: string,
+    /** Extra structure some errors carry, like the deals blocking a change. */
+    public details?: unknown,
   ) {
     super(message);
     this.name = "ApiError";
@@ -75,6 +77,7 @@ export async function apiRequest<T>(
       isRecord(payload) && typeof payload.requestId === "string"
         ? payload.requestId
         : undefined,
+      error.details,
     );
   }
   if (

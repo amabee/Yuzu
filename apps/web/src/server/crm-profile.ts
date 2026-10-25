@@ -127,24 +127,48 @@ export function profileSnapshot(
 export const profileChangeLabel = (type: string, key: ProfileKey) =>
   isCrmRecordType(type) ? profileLabel(type, key) : key;
 
+/** CSV for pipelines comes with a later slice. */
+export async function refusePipelineCsv(input: unknown) {
+  const boardId = (input as { boardId?: unknown } | null)?.boardId;
+  if (typeof boardId !== "string") return;
+  const { getDatabase } = await import("@yuzu/database");
+  if (await getDatabase().pipeline.findUnique({ where: { boardId } }))
+    throw new SetupError(
+      409,
+      "CRM_PIPELINE",
+      "CSV import and export aren't available for CRM pipelines yet.",
+    );
+}
+
 /**
  * Company and Contact collections are system boards: they can't be archived,
  * moved, deleted, reshaped, imported into or automated from Work screens.
  * Their type never changes, so reading it outside the caller's transaction
  * is safe.
  */
-export async function refuseCrmCollection(input: unknown, what: string) {
+export async function refuseCrmCollection(
+  input: unknown,
+  what: string,
+  /** Pipelines can be archived and deleted like other boards. */
+  { pipelines = true }: { pipelines?: boolean } = {},
+) {
   const boardId = (input as { boardId?: unknown } | null)?.boardId;
   if (typeof boardId !== "string") return;
   const { getDatabase } = await import("@yuzu/database");
   const board = await getDatabase().board.findUnique({
     where: { id: boardId },
-    select: { recordType: true },
+    select: { recordType: true, pipeline: { select: { boardId: true } } },
   });
   if (board && isCrmRecordType(board.recordType))
     throw new SetupError(
       409,
       "CRM_COLLECTION",
       `${what} isn't available for Companies and Contacts.`,
+    );
+  if (board?.pipeline && pipelines)
+    throw new SetupError(
+      409,
+      "CRM_PIPELINE",
+      `${what} isn't available for CRM pipelines yet.`,
     );
 }

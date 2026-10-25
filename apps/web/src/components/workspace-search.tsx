@@ -33,6 +33,8 @@ export type NavigationWorkspace = {
   id: string;
   name: string;
   boards: { id: string; name: string; projectId?: string | null }[];
+  /** CRM pipelines, shown under Deals in the CRM module. */
+  pipelines?: { id: string; name: string }[];
 };
 function useNavigationSearch(
   kind: "board" | "project",

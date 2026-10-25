@@ -207,6 +207,7 @@ model Workspace {
   auditEvents  AuditEvent[]
   companyProfiles CompanyProfile[]
   contactProfiles ContactProfile[]
+  dealProfiles    DealProfile[]
   /// Archived workspaces are hidden, with their boards, until restored.
   archivedAt   DateTime?         @db.Timestamptz(3)
   createdAt    DateTime          @default(now())
@@ -360,6 +361,9 @@ model Board {
   groups           BoardGroup[]
   automationRules  AutomationRule[]
   automationEvents AutomationEvent[]
+  /// A DEAL board with a pipeline is a CRM pipeline; without one it is a
+  /// legacy Work Deal board.
+  pipeline         Pipeline?
   /// TASK, DEAL, CUSTOM, or a workspace's COMPANY/CONTACT collection
   /// (lib/record-types.ts). Fixed after creation.
   recordType       String               @default("TASK")
@@ -466,6 +470,9 @@ model Task {
   /// Company/Contact boards only: the record's customer fields.
   companyProfile         CompanyProfile?
   contactProfile         ContactProfile?
+  /// Pipeline Deal boards only: stage, value, customer and closure.
+  dealProfile            DealProfile?
+  stageEvents            DealStageEvent[]
   /// In Trash: hidden everywhere until restored (docs/specs/trash.md).
   deletedAt              DateTime?         @db.Timestamptz(3)
   deletedById            String?
@@ -502,6 +509,7 @@ model CompanyProfile {
   address     String?
   /// People linked to this company; the contact side owns each link.
   people      ContactCompany[]
+  deals       DealProfile[]
   createdAt   DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
 
@@ -523,6 +531,7 @@ model ContactProfile {
   /// record's own revision, so concurrent primary choices can't overwrite.
   primaryRevision Int       @default(0)
   companies   ContactCompany[]
+  deals       DealProfile[]
   createdAt   DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
 
@@ -553,6 +562,92 @@ model ContactCompany {
   @@unique([contactId, companyId])
   @@index([companyId, status, id])
   @@index([contactId, status, id])
+}
+
+/// A CRM sales pipeline: one per pipeline Deal board (docs/specs/deals-pipelines.md).
+/// Stage configuration locks this row; SQL checks keep one stage per category
+/// and an Open default at commit.
+model Pipeline {
+  boardId        String          @id
+  board          Board           @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  /// The stage new Deals start in; always an Open stage.
+  defaultStageId String?
+  stages         PipelineStage[]
+  /// Changes with every stage configuration change.
+  version        Int             @default(1)
+  createdAt      DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime        @updatedAt @db.Timestamptz(3)
+}
+
+model PipelineStage {
+  id        String        @id @default(uuid(7))
+  boardId   String
+  pipeline  Pipeline      @relation(fields: [boardId], references: [boardId], onDelete: Cascade)
+  /// Stable board-local key; names can change.
+  key       String
+  name      String
+  /// OPEN, WON or LOST.
+  category  String
+  position  Int
+  deals     DealProfile[]
+  createdAt DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime      @updatedAt @db.Timestamptz(3)
+
+  @@unique([boardId, id])
+  @@unique([boardId, key])
+  @@index([boardId, position])
+}
+
+/// A Deal's stage, value, customer and closure. The record's due date is its
+/// expected close date, its single assignee the owner, its description notes.
+model DealProfile {
+  recordId          String          @id
+  record            Task            @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  workspaceId       String
+  workspace         Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  boardId           String
+  stageId           String
+  stage             PipelineStage   @relation(fields: [boardId, stageId], references: [boardId, id], onDelete: NoAction)
+  amount            Decimal?        @db.Decimal(20, 4)
+  /// ISO 4217 code; required when there is an amount.
+  currency          String?
+  /// Exactly one explicit customer, or none yet.
+  customerCompanyId String?
+  customerCompany   CompanyProfile? @relation(fields: [customerCompanyId, workspaceId], references: [recordId, workspaceId], onDelete: NoAction)
+  customerContactId String?
+  customerContact   ContactProfile? @relation(fields: [customerContactId, workspaceId], references: [recordId, workspaceId], onDelete: NoAction)
+  /// When the Deal last entered Won or Lost; null while open.
+  closedAt          DateTime?       @db.Timestamptz(3)
+  createdAt         DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime        @updatedAt @db.Timestamptz(3)
+
+  @@index([boardId, stageId])
+  @@index([customerCompanyId])
+  @@index([customerContactId])
+}
+
+/// Immutable stage history: creation, moves, wins, losses and reopenings,
+/// with the stage and value as they were at the time.
+model DealStageEvent {
+  id            String   @id @default(uuid(7))
+  dealId        String
+  deal          Task     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  /// CREATED, MOVED, WON, LOST or REOPENED.
+  kind          String
+  fromStageId   String?
+  fromStageName String?
+  fromCategory  String?
+  toStageId     String
+  toStageName   String
+  toCategory    String
+  amount        Decimal? @db.Decimal(20, 4)
+  currency      String?
+  /// Required when moving directly between Won and Lost.
+  reason        String?
+  actorId       String
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([dealId, createdAt])
 }
 
 /// Replays of link commands: the same key and payload return the recorded

@@ -3,6 +3,7 @@ import { savedViewSchema, type SavedView } from "./saved-view-contract";
 import { z } from "zod";
 import { recordId, personId } from "./id-contract";
 import { profileColumnKeys, profileSchemas } from "./crm-contract";
+import { dealColumnKeys, dealSchemas } from "./deal-contract";
 export { recordId, personId } from "./id-contract";
 import {
   builtinForColumn,
@@ -70,6 +71,8 @@ export const coreKeys = [
   "due_date",
   // Company/Contact profile columns; their values live in the profile.
   ...profileColumnKeys,
+  // Pipeline Deal columns; their values live in the deal profile.
+  ...dealColumnKeys,
 ];
 const names = z.string().trim().min(1).max(200);
 export const checklistSchema = z
@@ -109,6 +112,8 @@ const changes = z
     fieldValues: z.record(recordId, z.unknown()),
     // Company/Contact boards only; the server rejects them elsewhere.
     ...profileSchemas,
+    // Pipeline Deal boards only; the server rejects them elsewhere.
+    ...dealSchemas,
   })
   .strict();
 export const createTaskSchema = changes

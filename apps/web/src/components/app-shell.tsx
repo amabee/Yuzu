@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Building2,
+  Handshake,
   ChevronsUpDown,
   Check,
   Search,
@@ -31,6 +32,9 @@ import {
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
   SidebarProvider,
   SidebarRail,
   SidebarTrigger,
@@ -178,6 +182,7 @@ function WorkspaceSidebar({
         { href: "/crm", label: "CRM overview", icon: Home },
         { href: "/crm/companies", label: "Companies", icon: Building2 },
         { href: "/crm/contacts", label: "Contacts", icon: ContactRound },
+        { href: "/crm/deals", label: "Deals", icon: Handshake },
         ...navigation.filter(
           (item) =>
             item.href === "/approvals" || item.href === "/notifications",
@@ -204,7 +209,11 @@ function WorkspaceSidebar({
   // Overview links match only themselves; sections match their pages too.
   const active = (href: string) =>
     pathname === href ||
-    (href !== "/" && href !== "/crm" && pathname.startsWith(`${href}/`));
+    (href !== "/" &&
+      href !== "/crm" &&
+      href !== "/crm/deals" &&
+      pathname.startsWith(`${href}/`));
+  const pipelines = workspaces.flatMap((item) => item.pipelines ?? []);
   return (
     <Sidebar
       collapsible="icon"
@@ -368,6 +377,26 @@ function WorkspaceSidebar({
                           >
                             {counts[href] > 99 ? "99+" : counts[href]}
                           </SidebarMenuBadge>
+                        )}
+                        {href === "/crm/deals" && pipelines.length > 0 && (
+                          <SidebarMenuSub aria-label="Pipelines">
+                            {pipelines.map((pipeline) => {
+                              const here = active(`/crm/deals/${pipeline.id}`);
+                              return (
+                                <SidebarMenuSubItem key={pipeline.id}>
+                                  <SidebarMenuSubButton asChild isActive={here}>
+                                    <Link
+                                      href={`/crm/deals/${pipeline.id}`}
+                                      onClick={close}
+                                      aria-current={here ? "page" : undefined}
+                                    >
+                                      <span>{pipeline.name}</span>
+                                    </Link>
+                                  </SidebarMenuSubButton>
+                                </SidebarMenuSubItem>
+                              );
+                            })}
+                          </SidebarMenuSub>
                         )}
                       </SidebarMenuItem>
                     ))}

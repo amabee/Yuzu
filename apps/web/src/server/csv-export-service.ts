@@ -1,3 +1,4 @@
+import { refusePipelineCsv } from "./crm-profile";
 import { profileSnapshot } from "./crm-profile";
 import { crmLinkSummaries } from "./crm-links-service";
 import { isCrmRecordType } from "@/lib/record-types";
@@ -48,6 +49,7 @@ export async function exportBoardCsvForActor(
   signal?: AbortSignal,
 ) {
   const request = exportCsvSchema.parse(input);
+  await refusePipelineCsv(request);
   const db = getDatabase();
   const user = await db.user.findUnique({ where: { id: actorId } });
   const settings = await db.installationSettings.findUnique({
