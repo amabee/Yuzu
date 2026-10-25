@@ -1055,7 +1055,12 @@ describe("CRM CSV", () => {
     await serial((tx) =>
       setPrimaryInTransaction(
         tx,
-        { contactId: ana, linkId: link.id, primaryRevision: 0, requestKey: key() },
+        {
+          contactId: ana,
+          linkId: link.id,
+          primaryRevision: 0,
+          requestKey: key(),
+        },
         f.member,
       ),
     );
