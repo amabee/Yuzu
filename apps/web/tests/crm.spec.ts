@@ -477,3 +477,116 @@ test("companies import from CSV with duplicate checks and export with readable l
     "People (read-only)": "Ana Reyes (=Buyer, Current)",
   });
 });
+
+test("CRM screens update live across both collections without a reload", async ({
+  page,
+}) => {
+  const { workspace } = await owner(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const companies = await crmBoard(page, workspace.id, "COMPANY");
+  const contacts = await crmBoard(page, workspace.id, "CONTACT");
+  const make = async (boardId: string, name: string) =>
+    (
+      await (
+        await post(page, "/api/v1/boards/create-task", {
+          boardId,
+          createKey: crypto.randomUUID(),
+          name,
+        })
+      ).json()
+    ).data.taskId as string;
+  const north = await make(companies, "Northwind");
+  const acme = await make(companies, "Acme Labs");
+  const ana = await make(contacts, "Ana Reyes");
+  const linked = (
+    await (
+      await post(page, "/api/v1/crm/link", {
+        contactId: ana,
+        companyId: north,
+        requestKey: crypto.randomUUID(),
+      })
+    ).json()
+  ).data;
+  expect(
+    (
+      await post(page, "/api/v1/crm/primary", {
+        contactId: ana,
+        linkId: linked.linkId,
+        primaryRevision: 0,
+        requestKey: crypto.randomUUID(),
+      })
+    ).status(),
+  ).toBe(200);
+
+  await page.goto("/crm/contacts");
+  // Both subscriptions are live: this collection and the companies.
+  await expect(page.locator('[data-connection="live"]')).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.locator('[data-related-connection="live"]')).toBeVisible({
+    timeout: 15_000,
+  });
+  const contactsGrid = page.getByRole("grid", { name: "Contacts" });
+  const anaRow = contactsGrid.getByRole("row").filter({ hasText: "Ana Reyes" });
+  await expect(anaRow).toContainText("Northwind");
+
+  // Someone renames the company elsewhere: the contact's primary updates.
+  // (Live updates arrive in seconds; the fallback refresh takes a minute.)
+  const live = { timeout: 8_000 };
+  const company = await getDatabase().task.findUniqueOrThrow({
+    where: { id: north },
+  });
+  expect(
+    (
+      await post(page, "/api/v1/boards/update", {
+        taskId: north,
+        revision: company.revision,
+        changes: { name: "Northwind Trading" },
+      })
+    ).status(),
+  ).toBe(200);
+  await expect(anaRow).toContainText("Northwind Trading", live);
+
+  // A new link appears on the open card, and a new contact in the grid.
+  await contactsGrid.getByRole("button", { name: "Open Ana Reyes" }).click();
+  const card = page.getByRole("dialog");
+  const links = card.getByRole("region", { name: "Companies" });
+  await expect(links).toContainText("Northwind Trading");
+  await post(page, "/api/v1/crm/link", {
+    contactId: ana,
+    companyId: acme,
+    role: "Advisor",
+    requestKey: crypto.randomUUID(),
+  });
+  await expect(
+    links.getByRole("button", { name: "Open Acme Labs" }),
+  ).toBeVisible(live);
+  await page.keyboard.press("Escape");
+  await make(contacts, "Leo Tan");
+  await expect(
+    contactsGrid.getByRole("row").filter({ hasText: "Leo Tan" }),
+  ).toBeVisible(live);
+
+  // On Companies, a contact card stacked over a company follows the
+  // contact's own collection too.
+  await page.goto(`/crm/companies?record=${acme}`);
+  await expect(page.locator('[data-related-connection="live"]')).toBeVisible({
+    timeout: 15_000,
+  });
+  const people = card.getByRole("region", { name: "People" });
+  await people.getByRole("button", { name: "Open Ana Reyes" }).click();
+  await expect(card.getByRole("textbox", { name: "Full name" })).toHaveValue(
+    "Ana Reyes",
+  );
+  const person = await getDatabase().task.findUniqueOrThrow({
+    where: { id: ana },
+  });
+  await post(page, "/api/v1/boards/update", {
+    taskId: ana,
+    revision: person.revision,
+    changes: { email: "ana@acme.example" },
+  });
+  await expect(
+    card.getByRole("textbox", { name: "Email", exact: true }),
+  ).toHaveValue("ana@acme.example", live);
+});
