@@ -61,9 +61,9 @@ export default async function CrmPage() {
         <div>
           <h2 id="crm-status">Companies, Contacts and Deals are ready</h2>
           <p>
-            Keep one shared list of the businesses and people you work with,
-            and move deals through your pipelines. Leads and activities are
-            still being planned.
+            Keep one shared list of the businesses and people you work with, and
+            move deals through your pipelines. Leads and activities are still
+            being planned.
           </p>
         </div>
       </section>
