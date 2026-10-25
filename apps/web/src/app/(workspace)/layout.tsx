@@ -33,6 +33,18 @@ export default async function WorkspaceLayout({
     select: { id: true, name: true, workspaceId: true, projectId: true },
     orderBy: { createdAt: "asc" },
   });
+  // CRM pipelines are listed under Deals in the CRM sidebar.
+  const pipelines = await getDatabase().board.findMany({
+    where: {
+      workspaceId: { in: workspaces.map((item) => item.id) },
+      archivedAt: null,
+      pipeline: { isNot: null },
+      ...boardScope(user),
+    },
+    select: { id: true, name: true, workspaceId: true },
+    orderBy: { name: "asc" },
+    take: 100,
+  });
   const projects = await visibleProjects(user, {
     workspaceId: { in: workspaces.map((item) => item.id) },
     archived: false,
@@ -81,6 +93,9 @@ export default async function WorkspaceLayout({
     boards: boards
       .filter((board) => board.workspaceId === item.id)
       .map(({ id, name, projectId }) => ({ id, name, projectId })),
+    pipelines: pipelines
+      .filter((board) => board.workspaceId === item.id)
+      .map(({ id, name }) => ({ id, name })),
   }));
   const sidebarDefaultOpen =
     (await cookies()).get("sidebar_state")?.value !== "false";

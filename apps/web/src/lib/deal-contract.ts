@@ -153,6 +153,8 @@ export const pipelineSummarySchema = z.object({
   defaultStageId: recordId,
   archived: z.boolean(),
   canManage: z.boolean(),
+  /** Stage moves pause while the pipeline needs approvals (slice 2a). */
+  approvals: z.boolean(),
   stages: z.array(pipelineStageSchema),
 });
 export type PipelineSummary = z.infer<typeof pipelineSummarySchema>;

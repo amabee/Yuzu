@@ -16,6 +16,7 @@ import {
   linkResultSchema,
   type CrmDirectory,
   type CrmRecord,
+  profileKeys,
   type ProfileKey,
 } from "@/lib/crm-contract";
 
@@ -39,6 +40,14 @@ export type CrmChanges = Partial<Record<ProfileKey, string | null>> & {
   name?: string;
   description?: string;
   assigneeIds?: string[];
+  /** Deals: expected close date. */
+  dueDate?: string | null;
+  stageId?: string;
+  stageReason?: string;
+  amount?: string | null;
+  currency?: string | null;
+  customerCompanyId?: string | null;
+  customerContactId?: string | null;
 };
 
 // Under the board's key, so live board events and comment/file changes
@@ -144,7 +153,13 @@ function patchCached(
   );
 }
 const applyChanges = (record: CrmRecord, changes: CrmChanges): CrmRecord => {
-  const { name, description, assigneeIds, ...profile } = changes;
+  const { name, description, assigneeIds } = changes;
+  // Only profile fields show in the Companies/Contacts directory.
+  const profile = Object.fromEntries(
+    Object.entries(changes).filter(([key]) =>
+      (profileKeys as string[]).includes(key),
+    ),
+  );
   return {
     ...record,
     ...(name !== undefined ? { name } : {}),

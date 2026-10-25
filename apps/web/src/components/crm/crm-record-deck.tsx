@@ -33,13 +33,26 @@ import {
 } from "./use-crm";
 import { Initials } from "./crm-parts";
 import { CrmLinksPane } from "./crm-links";
+import { TrailItems } from "./crm-trail";
+import { NameField, useDraft } from "./crm-fields";
+import { DealCard } from "./deal-card";
+import { CustomerDealsPane } from "./deal-parts";
+import { dealIdOf } from "./use-deals";
 
 type Handlers = {
   onSave: (record: CrmRecord, changes: CrmChanges) => void;
-  onLifecycle: (action: LifecycleAction, record: CrmRecord) => void;
-  onNotice: (message: string, kind: "success" | "error") => void;
+  onLifecycle: (
+    action: LifecycleAction,
+    record: { id: string; revision: number },
+  ) => void;
+  onNotice: (message: string, kind: "success" | "error" | "info") => void;
   onTransferNotice: TransferNoticeHandler;
 };
+/** What a card needs from the screen it opens over. */
+export type DeckContext = Pick<
+  CrmDirectory,
+  "people" | "records" | "canManage" | "approvals"
+>;
 
 /**
  * Records open as large cards over the directory. Opening a linked record
@@ -54,7 +67,7 @@ export function CrmRecordDeck({
   ...handlers
 }: {
   scope: CrmScope;
-  directory: CrmDirectory;
+  directory: DeckContext;
   syncInterval: number;
   uploads: TaskUploads;
 } & Handlers) {
@@ -106,21 +119,38 @@ export function CrmRecordDeck({
             trim(stack.length - 1);
           }}
         >
-          {stack.map((id, index) => (
+          {stack.map((id, index) => {
+            const dealId = dealIdOf(id);
             // Keyed by position: stepping to the next record keeps the card,
             // its tab and the focused button in place.
-            <RecordCard
-              key={index}
-              id={id}
-              depth={stack.length - 1 - index}
-              stack={stack}
-              scope={scope}
-              directory={directory}
-              syncInterval={syncInterval}
-              uploads={uploads}
-              {...handlers}
-            />
-          ))}
+            return dealId ? (
+              <DealCard
+                key={`${index}:deal`}
+                dealId={dealId}
+                depth={stack.length - 1 - index}
+                stack={stack}
+                scope={scope}
+                people={directory.people}
+                syncInterval={syncInterval}
+                uploads={uploads}
+                onNotice={handlers.onNotice}
+                onTransferNotice={handlers.onTransferNotice}
+                onLifecycle={handlers.onLifecycle}
+              />
+            ) : (
+              <RecordCard
+                key={index}
+                id={id}
+                depth={stack.length - 1 - index}
+                stack={stack}
+                scope={scope}
+                directory={directory}
+                syncInterval={syncInterval}
+                uploads={uploads}
+                {...handlers}
+              />
+            );
+          })}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
@@ -151,7 +181,7 @@ function RecordCard({
   depth: number;
   stack: string[];
   scope: CrmScope;
-  directory: CrmDirectory;
+  directory: DeckContext;
   syncInterval: number;
   uploads: TaskUploads;
 } & Handlers) {
@@ -304,6 +334,7 @@ function RecordCard({
                 syncInterval={syncInterval}
                 onNotice={onNotice}
               />
+              <CustomerDealsPane scope={scope} recordId={record.id} />
               <section className="crm-pane crm-updates" aria-label="Updates">
                 <div className="crm-updates-feed">
                   <TaskComments
@@ -353,104 +384,6 @@ function RecordCard({
         )}
       </div>
     </article>
-  );
-}
-
-function TrailItems({ stack, scope }: { stack: string[]; scope: CrmScope }) {
-  const trim = useUiStore((state) => state.trimCrmStack);
-  return stack.map((id, index) => (
-    <TrailItem
-      key={`${index}:${id}`}
-      id={id}
-      scope={scope}
-      current={index === stack.length - 1}
-      onSelect={() => trim(index + 1)}
-    />
-  ));
-}
-function TrailItem({
-  id,
-  scope,
-  current,
-  onSelect,
-}: {
-  id: string;
-  scope: CrmScope;
-  current: boolean;
-  onSelect: () => void;
-}) {
-  const name = useCrmRecord(scope, id).data?.record.name ?? "…";
-  return current ? (
-    <span className="crm-trail-here" aria-current="page">
-      {name}
-    </span>
-  ) : (
-    <>
-      <button type="button" onClick={onSelect}>
-        {name}
-      </button>
-      <span aria-hidden="true">›</span>
-    </>
-  );
-}
-
-function NameField({
-  label,
-  record,
-  readOnly,
-  onSave,
-}: {
-  label: string;
-  record?: CrmRecord;
-  readOnly: boolean;
-  onSave: (name: string) => void;
-}) {
-  const [draft, setDraft] = useState(record?.name ?? "");
-  const [error, setError] = useState<string | null>(null);
-  // Follow saved changes, including other people's, while not typing.
-  const [seen, setSeen] = useState(record?.name);
-  if (record && record.name !== seen) {
-    setSeen(record.name);
-    setDraft(record.name);
-  }
-  const commit = () => {
-    if (!record) return;
-    const name = draft.trim();
-    if (!name) {
-      setError("A name is required.");
-      return;
-    }
-    setError(null);
-    if (name !== record.name) onSave(name);
-  };
-  return (
-    <div className="crm-card-name-wrap">
-      <input
-        className="crm-card-name"
-        aria-label={label}
-        data-crm-field=""
-        data-dirty={(record && draft !== record.name) || undefined}
-        value={draft}
-        maxLength={200}
-        readOnly={readOnly}
-        aria-invalid={Boolean(error)}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") event.currentTarget.blur();
-          if (event.key === "Escape") {
-            setDraft(record?.name ?? "");
-            setError(null);
-            event.currentTarget.blur();
-          }
-        }}
-      />
-      {error && (
-        <span role="alert" className="crm-field-error">
-          {error}
-        </span>
-      )}
-    </div>
   );
 }
 
@@ -581,18 +514,6 @@ function Details({
       />
     </section>
   );
-}
-
-/** A text box that keeps its draft while focused and saves valid changes. */
-function useDraft(value: string) {
-  const [draft, setDraft] = useState(value);
-  const [focused, setFocused] = useState(false);
-  const [seen, setSeen] = useState(value);
-  if (value !== seen) {
-    setSeen(value);
-    if (!focused) setDraft(value);
-  }
-  return { draft, setDraft, setFocused };
 }
 
 function ProfileField({

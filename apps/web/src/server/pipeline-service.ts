@@ -18,6 +18,7 @@ import {
 import { recordId } from "@/lib/id-contract";
 import { builtinName, resolveRecordConfig } from "@/lib/record-types";
 import { access, serial } from "./board-service";
+import { readApprovalPolicy } from "./approval-policy";
 import { SetupError } from "./setup/security";
 import {
   isAdministrator,
@@ -520,6 +521,7 @@ export async function pipelineSummaryFor(
       defaultStageId: pipeline.defaultStageId!,
       archived: context.readOnly,
       canManage: context.canManage,
+      approvals: (await readApprovalPolicy(tx, context.board)).enabled,
       stages: pipeline.stages.map((stage) => {
         const stageTotals: Record<string, string> = {};
         let count = 0;

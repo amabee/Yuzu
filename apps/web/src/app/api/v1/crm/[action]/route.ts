@@ -7,7 +7,7 @@ import {
   setPrimary,
   updateLink,
 } from "@/server/crm-links-service";
-import { notifyBoardMutation } from "@/server/realtime";
+import { notifyBoardMutation, notifyNavigationChange } from "@/server/realtime";
 import { readSetupBody, SetupError } from "@/server/setup/security";
 import type { LinkResult } from "@/lib/crm-contract";
 import {
@@ -47,8 +47,8 @@ async function handle(request: Request, action: string) {
         await readSetupBody(request, 16_384),
         request.headers,
       );
-      // A new pipeline appears for everyone in the workspace.
-      await notifyBoardMutation({ boardId: data.boardId }, data);
+      // A new pipeline appears in everyone's CRM sidebar.
+      void notifyNavigationChange({ boardId: data.boardId });
     } else if (request.method === "POST" && action === "stages") {
       data = await changeStages(
         await readSetupBody(request, 16_384),

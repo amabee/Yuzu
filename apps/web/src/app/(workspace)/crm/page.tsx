@@ -30,8 +30,9 @@ const areas = [
   },
   {
     name: "Deals",
-    description: "Opportunities, pipelines, and sales outcomes.",
+    description: "Opportunities moving through your sales pipelines.",
     icon: Handshake,
+    href: "/crm/deals",
   },
   {
     name: "Activities",
@@ -58,10 +59,11 @@ export default async function CrmPage() {
       <section aria-labelledby="crm-status" className="crm-module-status">
         <ContactRound size={25} aria-hidden="true" />
         <div>
-          <h2 id="crm-status">Companies and Contacts are ready</h2>
+          <h2 id="crm-status">Companies, Contacts and Deals are ready</h2>
           <p>
-            Keep one shared list of the businesses and people you work with.
-            Leads, deals and activities are still being planned.
+            Keep one shared list of the businesses and people you work with,
+            and move deals through your pipelines. Leads and activities are
+            still being planned.
           </p>
         </div>
       </section>
