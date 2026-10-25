@@ -20,6 +20,7 @@
     "@dnd-kit/utilities": "3.2.2",
     "@hookform/resolvers": "5.9.1",
     "@tanstack/react-query": "5.104.2",
+    "@tanstack/react-table": "8.21.3",
     "@tanstack/react-virtual": "3.14.20",
     "@yuzu/database": "workspace:*",
     "@yuzu/realtime-protocol": "workspace:*",

@@ -314,7 +314,7 @@ export const apiEndpoints: ApiEndpoint[] = [
     group: "CRM",
     summary: "A page of Companies or Contacts",
     description:
-      "One page (50) of the workspace's Companies or Contacts, with whole-collection totals. Create and change them with /boards/create-task and /boards/update, using the returned boardId; profile fields (email, phone, domain, website, legalName, address) go alongside name.",
+      "One page (50) of the workspace's Companies or Contacts, with whole-collection totals. Records are created and changed with the task create and update endpoints, using the returned boardId; profile fields (email, phone, domain, website, legalName, address) go alongside name.",
     access: "read",
     query: z.object({
       workspaceId: recordId,

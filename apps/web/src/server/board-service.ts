@@ -97,6 +97,7 @@ import {
 import {
   aRecord,
   asRecordType,
+  isCrmRecordType,
   builtinKeys,
   builtinName,
   builtinColumnKey,
@@ -1518,7 +1519,10 @@ export async function createTaskInTransaction(
     priority: body.priority ?? "NORMAL",
     startDate: body.startDate ?? null,
     dueDate: body.dueDate ?? null,
-    assigneeIds: body.assigneeIds ?? [],
+    // Customer records belong to whoever adds them until someone changes it.
+    assigneeIds:
+      body.assigneeIds ??
+      (isCrmRecordType(context.board.recordType) ? [actorId] : []),
     fieldValues: body.fieldValues ?? {},
     statusId:
       body.statusId === undefined

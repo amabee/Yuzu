@@ -377,7 +377,11 @@ export async function crmRecordFor(
         const after = (entry.after ?? {}) as Record<string, unknown>;
         return {
           id: entry.id,
-          action: entry.action,
+          // Shared activity says "task"; CRM records use their own noun.
+          action: entry.action.replace(
+            /\btask\b/i,
+            type.data === "COMPANY" ? "company" : "contact",
+          ),
           actor: entry.actor.name,
           createdAt: entry.createdAt.toISOString(),
           changes: entry.before

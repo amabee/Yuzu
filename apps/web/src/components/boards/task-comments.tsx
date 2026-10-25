@@ -282,8 +282,8 @@ export function TaskComments({
   syncInterval,
   composerTarget,
 }: {
-  state: BoardState;
-  task: BoardTask;
+  state: Pick<BoardState, "boardId" | "currentUserId" | "people" | "readOnly">;
+  task: Pick<BoardTask, "id" | "archivedAt" | "commentCount">;
   active: boolean;
   syncInterval: number;
   onNotice: (message: string, kind: "success" | "error") => void;
