@@ -1,5 +1,6 @@
 /** Placeholders a notify message can use, with what each becomes. */
 export const messageFields = [
+  { key: "parent", hint: "the parent task’s name (empty for tasks)" },
   { key: "task", hint: "the task's name" },
   { key: "status", hint: "its status" },
   { key: "priority", hint: "its priority" },

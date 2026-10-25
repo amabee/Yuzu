@@ -1,3 +1,7 @@
+import type { DatabaseTransaction } from "@yuzu/database";
+import { finalizeProposal } from "./proposal-finalization";
+import { lockTaskRoot, checkSubitemCapacity } from "./task-hierarchy";
+import { subitemCreateSchema, prepareSubitemParent } from "./subitem-service";
 import { getDatabase } from "@yuzu/database";
 import { z } from "zod";
 import {
@@ -114,6 +118,7 @@ export async function configureApprovals(input: unknown, headers: Headers) {
       where: { boardId, status: "PENDING" },
       select: {
         id: true,
+        parentTaskId: true,
         operation: true,
         authorId: true,
         taskId: true,
@@ -135,7 +140,7 @@ export async function configureApprovals(input: unknown, headers: Headers) {
       .map((proposal) => proposal.id);
     if (invalid.length)
       await tx.boardProposal.updateMany({
-        where: { id: { in: invalid }, status: "PENDING" },
+        where: { id: { in: invalid }, parentTaskId: null, status: "PENDING" },
         data: {
           status: "STALE",
           reason:
@@ -146,6 +151,17 @@ export async function configureApprovals(input: unknown, headers: Headers) {
       });
     for (const proposal of pending) {
       if (invalid.includes(proposal.id)) {
+        if (proposal.parentTaskId) {
+          await finalizeProposal(
+            tx,
+            { ...proposal, boardId },
+            user.id,
+            null,
+            "STALE",
+            "Approval requirements changed. Submit this request again under the current policy.",
+          );
+          continue;
+        }
         await createNotifications(tx, {
           recipientIds: [proposal.authorId],
           actorId: user.id,
@@ -194,208 +210,190 @@ export async function configureApprovals(input: unknown, headers: Headers) {
   });
 }
 export async function decideApproval(input: unknown, headers: Headers) {
-  const body = proposalDecisionSchema.parse(input);
   const { user } = await requireIdentity(headers);
-  return serial(async (tx) => {
-    const proposal = await tx.boardProposal.findUnique({
-      where: { id: body.proposalId },
-    });
-    if (!proposal) throw missing();
-    const context = await access(tx, user.id, proposal.boardId, true);
-    const policy = await readApprovalPolicy(tx, context.board);
-    const people = new Set(
-      (await eligiblePeople(tx, context.board)).map((person) => person.id),
-    );
-    const reviewerId = eligibleReviewer(policy, proposal.authorId, people);
-    if (
-      body.action === "withdraw"
-        ? proposal.authorId !== user.id
-        : user.id === proposal.authorId || reviewerId !== user.id
-    )
-      throw new SetupError(
-        403,
-        "FORBIDDEN",
-        body.action === "withdraw"
-          ? "Only the author can withdraw this request."
-          : "Only the designated reviewer can decide this request. Self-approval is not allowed.",
-      );
-    if (proposal.status !== "PENDING")
-      throw new SetupError(
-        409,
-        "PROPOSAL_CLOSED",
-        "This request has already been decided.",
-      );
-    const finish = async (
-      status: "APPROVED" | "REJECTED" | "WITHDRAWN" | "STALE",
-      reason?: string,
-      applied?: { taskId: string; revision: number },
-    ) => {
-      const changed = await tx.boardProposal.updateMany({
-        where: { id: proposal.id, status: "PENDING" },
-        data: {
-          status,
-          reason: reason ?? null,
-          decidedById: user.id,
-          decidedAt: new Date(),
-          ...(applied
-            ? { taskId: applied.taskId, appliedRevision: applied.revision }
-            : {}),
-        },
-      });
-      if (!changed.count)
-        throw new SetupError(
-          409,
-          "PROPOSAL_CLOSED",
-          "This request has already been decided.",
-        );
-      await createNotifications(tx, {
-        recipientIds:
-          status === "WITHDRAWN"
-            ? reviewerId
-              ? [reviewerId]
-              : []
-            : [proposal.authorId],
-        actorId: user.id,
-        boardId: proposal.boardId,
-        taskId: applied?.taskId ?? proposal.taskId,
-        proposalId: proposal.id,
-        kind: "APPROVAL_DECISION",
-        message:
-          status === "APPROVED"
-            ? "approved your request"
-            : status === "REJECTED"
-              ? "rejected your request"
-              : status === "WITHDRAWN"
-                ? "withdrew an approval request"
-                : "closed your approval request because it needs to be resubmitted",
-        eventKey: `proposal:${proposal.id}:decision`,
-      });
-      await tx.boardEvent.create({
-        data: {
-          boardId: proposal.boardId,
-          actorId: user.id,
-          action: `${status.charAt(0) + status.slice(1).toLowerCase()} task approval`,
-          subjectId: proposal.id,
-          before: { status: "PENDING" },
-          after: { status, reason: reason ?? null },
-        },
-      });
-      return {
-        boardId: proposal.boardId,
-        proposalId: proposal.id,
-        status,
-        taskId: applied?.taskId ?? proposal.taskId,
-        reason: reason ?? null,
-      };
-    };
-    if (body.action === "withdraw") return finish("WITHDRAWN");
-    let authorContext: Awaited<ReturnType<typeof access>>;
-    try {
-      authorContext = await access(tx, proposal.authorId, proposal.boardId);
-    } catch (error) {
-      if (error instanceof SetupError && [401, 403, 404].includes(error.status))
-        return finish(
-          "STALE",
-          "The author no longer has access to this board. An authorized person must resubmit.",
-        );
-      throw error;
-    }
-    const task = proposal.taskId ? await loadTask(tx, proposal.taskId) : null;
-    if (
-      proposal.operation !== "CREATE" &&
-      (!task ||
-        task.archivedAt ||
-        task.deletedAt ||
-        !canEdit(task, authorContext))
-    )
-      return finish(
-        "STALE",
-        "The task is unavailable or the author no longer has editing access. Resubmit with current permissions.",
-      );
-    if (body.action === "reject") return finish("REJECTED", body.reason);
-    const proposed = proposal.changes as Record<string, unknown>;
-    if (
-      !compatiblePolicy(
-        approvalPolicySchema.parse(proposal.policySnapshot),
-        policy,
-        proposal.operation,
-        proposed,
-        context.board.columns,
-      )
-    )
-      return finish(
-        "STALE",
-        "Approval requirements changed. Submit the request again under the current policy.",
-      );
-    if (
-      task &&
-      approvalConflicts(
-        proposal.baseline as Record<string, unknown>,
-        snapshot(task),
-        proposed,
-        proposal.operation,
-      ).length
-    )
-      return finish(
-        "STALE",
-        "One or more proposed fields changed after submission. Review the latest task and resubmit.",
-      );
-    // Validate before writing. Only validation failures become stale; storage errors roll back.
-    let creation: z.infer<typeof createTaskSchema> | undefined;
-    let changes: z.infer<typeof updateTaskSchema>["changes"] | undefined;
-    try {
-      if (proposal.operation === "CREATE") {
-        creation = createTaskSchema.parse(proposed);
-        if (creation.boardId !== proposal.boardId) throw missing();
-        validateCore(creation, context.board, people);
-        validateValues(creation.fieldValues, context.board, people);
-      }
-      if (proposal.operation === "UPDATE") {
-        changes = updateTaskSchema.parse({
-          taskId: task!.id,
-          revision: task!.revision,
-          changes: proposed,
-        }).changes;
-        validateCore(changes, context.board, people);
-        validateValues(changes.fieldValues, context.board, people);
-      }
-    } catch (error) {
-      if (
-        error instanceof z.ZodError ||
-        (error instanceof SetupError && [404, 422].includes(error.status))
-      )
-        return finish(
-          "STALE",
-          "Fields, options or eligible people changed. Review and resubmit the request.",
-        );
-      throw error;
-    }
-    const applied = creation
-      ? await createTaskRecord(
-          tx,
-          authorContext,
-          people,
-          creation,
-          proposal.authorId,
-          proposal.requestDigest,
-          user.id,
-          "Approved task creation",
-        )
-      : await applyTaskRecord(
-          tx,
-          task!,
-          authorContext,
-          people,
-          user.id,
-          proposal.operation === "ARCHIVE" ? "archive" : "update",
-          changes,
-          undefined,
-          proposal.operation === "ARCHIVE"
-            ? "Approved task archive"
-            : "Approved task change",
-        );
-    return finish("APPROVED", undefined, applied);
+  return serial((tx) => decideApprovalInTransaction(tx, input, user.id, true));
+}
+export async function decideApprovalInTransaction(
+  tx: DatabaseTransaction,
+  input: unknown,
+  userId: string,
+  includeSubitems = false,
+) {
+  const body = proposalDecisionSchema.parse(input);
+  const user = { id: userId };
+  const proposal = await tx.boardProposal.findUnique({
+    where: { id: body.proposalId },
+    include: { task: { select: { parentId: true } } },
   });
+  if (
+    !proposal ||
+    (!includeSubitems && (proposal.parentTaskId || proposal.task?.parentId))
+  )
+    throw missing();
+  if (proposal.parentTaskId)
+    await lockTaskRoot(tx, proposal.parentTaskId, proposal.boardId);
+  const context = await access(tx, user.id, proposal.boardId, true);
+  const policy = await readApprovalPolicy(tx, context.board);
+  const people = new Set(
+    (await eligiblePeople(tx, context.board)).map((person) => person.id),
+  );
+  const reviewerId = eligibleReviewer(policy, proposal.authorId, people);
+  if (
+    body.action === "withdraw"
+      ? proposal.authorId !== user.id
+      : user.id === proposal.authorId || reviewerId !== user.id
+  )
+    throw new SetupError(
+      403,
+      "FORBIDDEN",
+      body.action === "withdraw"
+        ? "Only the author can withdraw this request."
+        : "Only the designated reviewer can decide this request. Self-approval is not allowed.",
+    );
+  if (proposal.status !== "PENDING")
+    throw new SetupError(
+      409,
+      "PROPOSAL_CLOSED",
+      "This request has already been decided.",
+    );
+  const finish = (
+    status: "APPROVED" | "REJECTED" | "WITHDRAWN" | "STALE",
+    reason?: string,
+    applied?: { taskId: string; revision: number },
+  ) =>
+    finalizeProposal(
+      tx,
+      proposal,
+      user.id,
+      reviewerId,
+      status,
+      reason,
+      applied,
+    );
+  if (body.action === "withdraw") return finish("WITHDRAWN");
+  let authorContext: Awaited<ReturnType<typeof access>>;
+  try {
+    authorContext = await access(tx, proposal.authorId, proposal.boardId);
+  } catch (error) {
+    if (error instanceof SetupError && [401, 403, 404].includes(error.status))
+      return finish(
+        "STALE",
+        "The author no longer has access to this board. An authorized person must resubmit.",
+      );
+    throw error;
+  }
+  const task = proposal.taskId
+    ? await loadTask(tx, proposal.taskId, includeSubitems)
+    : null;
+  if (
+    proposal.operation !== "CREATE" &&
+    (!task ||
+      task.archivedAt ||
+      task.deletedAt ||
+      !canEdit(task, authorContext))
+  )
+    return finish(
+      "STALE",
+      "The task is unavailable or the author no longer has editing access. Resubmit with current permissions.",
+    );
+  if (body.action === "reject") return finish("REJECTED", body.reason);
+  const proposed = proposal.changes as Record<string, unknown>;
+  if (
+    !compatiblePolicy(
+      approvalPolicySchema.parse(proposal.policySnapshot),
+      policy,
+      proposal.operation,
+      proposed,
+      context.board.columns,
+    )
+  )
+    return finish(
+      "STALE",
+      "Approval requirements changed. Submit the request again under the current policy.",
+    );
+  if (
+    task &&
+    approvalConflicts(
+      proposal.baseline as Record<string, unknown>,
+      snapshot(task),
+      proposed,
+      proposal.operation,
+    ).length
+  )
+    return finish(
+      "STALE",
+      "One or more proposed fields changed after submission. Review the latest task and resubmit.",
+    );
+  // Validate before writing. Only validation failures become stale; storage errors roll back.
+  let creation: z.infer<typeof createTaskSchema> | undefined;
+  let changes: z.infer<typeof updateTaskSchema>["changes"] | undefined;
+  try {
+    if (proposal.operation === "CREATE") {
+      if (proposal.parentTaskId) {
+        const child = subitemCreateSchema.parse(proposed);
+        if (child.parentId !== proposal.parentTaskId) throw missing();
+        await prepareSubitemParent(
+          tx,
+          proposal.authorId,
+          child.boardId,
+          child.parentId,
+        );
+        await checkSubitemCapacity(tx, child.parentId, true);
+        creation = child;
+      } else creation = createTaskSchema.parse(proposed);
+      if (creation.boardId !== proposal.boardId) throw missing();
+      validateCore(creation, context.board, people);
+      validateValues(creation.fieldValues, context.board, people);
+    }
+    if (proposal.operation === "UPDATE") {
+      changes = updateTaskSchema.parse({
+        taskId: task!.id,
+        revision: task!.revision,
+        changes: proposed,
+      }).changes;
+      validateCore(changes, context.board, people);
+      validateValues(changes.fieldValues, context.board, people);
+    }
+  } catch (error) {
+    if (
+      error instanceof z.ZodError ||
+      (error instanceof SetupError && [403, 404, 422].includes(error.status))
+    )
+      return finish(
+        "STALE",
+        "Fields, options or eligible people changed. Review and resubmit the request.",
+      );
+    throw error;
+  }
+  const applied = creation
+    ? await createTaskRecord(
+        tx,
+        authorContext,
+        people,
+        creation,
+        proposal.authorId,
+        proposal.requestDigest,
+        user.id,
+        "Approved task creation",
+        undefined,
+        proposal.parentTaskId ?? undefined,
+      )
+    : await applyTaskRecord(
+        tx,
+        task!,
+        authorContext,
+        people,
+        user.id,
+        proposal.operation === "ARCHIVE" ? "archive" : "update",
+        changes,
+        undefined,
+        proposal.operation === "ARCHIVE"
+          ? "Approved task archive"
+          : "Approved task change",
+        undefined,
+        (proposal.baseline as { childrenRevision?: number }).childrenRevision,
+      );
+  return finish("APPROVED", undefined, applied);
 }
 export async function approvalQueue(
   headers: Headers,
@@ -439,7 +437,8 @@ export async function approvalQueue(
       include: {
         author: { select: { name: true } },
         decidedBy: { select: { name: true } },
-        task: { select: { name: true } },
+        task: { select: { name: true, parent: { select: { name: true } } } },
+        parentTask: { select: { name: true } },
         board: {
           include: { columns: true, groups: { orderBy: { position: "asc" } } },
         },
@@ -478,9 +477,7 @@ export async function approvalQueue(
         status: proposal.status,
         authorId: proposal.authorId,
         authorName: proposal.author.name,
-        name:
-          proposal.task?.name ??
-          String(changes.name ?? baseline.name ?? "Task request"),
+        name: `${proposal.task?.name ?? String(changes.name ?? baseline.name ?? "Task request")}${proposal.parentTask || proposal.task?.parent ? ` · Subitem of ${proposal.parentTask?.name ?? proposal.task?.parent?.name}` : ""}`,
         createdAt: proposal.createdAt.toISOString(),
         changes,
         baseline,

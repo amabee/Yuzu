@@ -53,6 +53,7 @@ import {
 } from "@/components/pause/pause-dialog";
 
 type Draft = {
+  recordScope?: "ROOTS" | "SUBITEMS" | "BOTH";
   id?: string;
   revision?: number;
   name: string;
@@ -340,6 +341,7 @@ export function BoardAutomations({ state }: { state: BoardState }) {
                         setDraft({
                           id: rule.id,
                           revision: rule.revision,
+                          recordScope: rule.recordScope ?? "ROOTS",
                           name: rule.name,
                           trigger: rule.trigger,
                           match: rule.match,
@@ -889,6 +891,22 @@ function RuleBuilder({
         />
       </label>
 
+      <label className="task-field-label">
+        Applies to
+        <select
+          aria-label="Automation record scope"
+          value={draft.recordScope ?? "ROOTS"}
+          onChange={(e) =>
+            set({
+              recordScope: e.target.value as "ROOTS" | "SUBITEMS" | "BOTH",
+            })
+          }
+        >
+          <option value="ROOTS">Tasks</option>
+          <option value="SUBITEMS">Subitems</option>
+          <option value="BOTH">Tasks and subitems</option>
+        </select>
+      </label>
       <section className="automation-block" data-step="when">
         <h3>
           <i>1</i>When

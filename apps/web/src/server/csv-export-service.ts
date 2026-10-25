@@ -1,3 +1,4 @@
+import { refuseCrmCollection } from "./crm-profile";
 import { getDatabase, createRecordId } from "@yuzu/database";
 import { access, boardRecord, eligiblePeople } from "./board-service";
 import { audit } from "./audit";
@@ -44,6 +45,7 @@ export async function exportBoardCsvForActor(
   actorId: string,
   signal?: AbortSignal,
 ) {
+  await refuseCrmCollection(input, "CSV export");
   const request = exportCsvSchema.parse(input);
   const db = getDatabase();
   const user = await db.user.findUnique({ where: { id: actorId } });
@@ -62,7 +64,10 @@ export async function exportBoardCsvForActor(
       "MAINTENANCE",
       "Exports are paused during maintenance.",
     );
-  const config = request.scope === "VIEW" ? request.config : null;
+  const config =
+    request.scope === "VIEW" && request.config
+      ? { ...request.config, scope: "ROOTS" as const }
+      : null;
   let result;
   try {
     result = await getDatabase().$transaction(
@@ -129,6 +134,7 @@ export async function exportBoardCsvForActor(
           const batch = await tx.task.findMany({
             where: {
               boardId: board.id,
+              parentId: null,
               deletedAt: null,
               archivedAt: config
                 ? config.archived

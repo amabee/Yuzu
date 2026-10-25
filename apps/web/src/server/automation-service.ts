@@ -1,3 +1,11 @@
+import { refuseCrmCollection } from "./crm-profile";
+import { workBoardWhere } from "@/lib/record-types";
+import {
+  taskAvailable,
+  taskArchived,
+  lockTaskRoot,
+  hierarchyScope,
+} from "./task-hierarchy";
 import {
   createRecordId,
   getDatabase,
@@ -263,6 +271,7 @@ function presentRule(
   return {
     id: rule.id,
     boardId: rule.boardId,
+    recordScope: rule.recordScope as "ROOTS" | "SUBITEMS" | "BOTH",
     name: rule.name,
     enabled: rule.enabled,
     trigger,
@@ -345,6 +354,7 @@ export async function listAutomations(boardId: string, headers: Headers) {
       where: {
         id: { not: boardId },
         ...boardScope(user),
+        ...workBoardWhere,
         ...(isAdministrator(user.role)
           ? {}
           : { managers: { some: { userId: user.id } } }),
@@ -421,6 +431,7 @@ export async function mutateAutomation(
   input: unknown,
   headers: Headers,
 ) {
+  await refuseCrmCollection(input, "Automations");
   const { user } = await requireIdentity(headers);
   if (action === "save-automation") {
     const body = automationRuleInputSchema.parse(input);
@@ -467,6 +478,7 @@ export async function mutateAutomation(
       const data = {
         name: body.name,
         enabled: body.enabled,
+        recordScope: body.recordScope ?? "ROOTS",
         trigger: body.trigger,
         match: body.match,
         conditions: body.conditions,
@@ -720,7 +732,17 @@ async function runRule(rule: StoredRule, event: StoredEvent) {
         detail: `Stopped: rules can only trigger each other ${AUTOMATION_MAX_DEPTH} steps deep.`,
       });
     const task = event.taskId ? await loadTask(tx, event.taskId) : null;
-    if (event.taskId && (!task || task.archivedAt || task.deletedAt))
+    if (
+      task &&
+      ((rule.recordScope === "ROOTS" && task.parentId) ||
+        (rule.recordScope === "SUBITEMS" && !task.parentId))
+    )
+      return record({
+        outcome: "SKIPPED",
+        detail: "Record is outside this rule’s scope.",
+      });
+    if (task?.parentId) await lockTaskRoot(tx, task.parentId, task.boardId);
+    if (event.taskId && (!task || !taskAvailable(task) || taskArchived(task)))
       return record({
         outcome: "SKIPPED",
         detail: task?.deletedAt
@@ -766,6 +788,18 @@ async function runRule(rule: StoredRule, event: StoredEvent) {
       return record({
         outcome: "SKIPPED",
         detail: `Uses ${builtinName(boardConfig, blocked)}, which is turned off on this board.`,
+      });
+    if (
+      task?.parentId &&
+      z
+        .array(automationActionSchema)
+        .parse(rule.actions)
+        .some((a) => a.kind === "set.group")
+    )
+      return record({
+        outcome: "SKIPPED",
+        detail:
+          "Subitems inherit their parent’s group; set.group is not supported.",
       });
     const current = task ? (snapshot(task) as RuleTask) : NO_TASK;
     const conditions = z
@@ -916,6 +950,7 @@ async function runRule(rule: StoredRule, event: StoredEvent) {
               ...changes,
               assigneeIds: assignees,
               name: task.name,
+              parentName: task.parent?.name,
               createdById: task.createdById,
             }
           : null,
@@ -975,6 +1010,7 @@ async function runRule(rule: StoredRule, event: StoredEvent) {
               ...changes,
               assigneeIds: assignees,
               name: task.name,
+              parentName: task.parent?.name,
               createdById: task.createdById,
             }
           : null,
@@ -1041,6 +1077,7 @@ async function runRule(rule: StoredRule, event: StoredEvent) {
         ? {
             id: task.id,
             name: task.name,
+            parentName: task.parent?.name,
             statusId: task.statusId,
             priority: task.priority,
             dueDate: task.dueDate?.toISOString().slice(0, 10) ?? null,
@@ -1070,7 +1107,9 @@ async function messageValues(
   input: {
     board: Board;
     rule: { name: string };
-    task: (RuleTask & { name: string; createdById: string }) | null;
+    task:
+      | (RuleTask & { name: string; createdById: string; parentName?: string })
+      | null;
     day: string;
   },
 ) {
@@ -1092,6 +1131,7 @@ async function messageValues(
       ? task.priority.charAt(0) + task.priority.slice(1).toLowerCase()
       : "");
   return {
+    parent: task?.parentName ?? "",
     task: task?.name ?? "",
     status: task
       ? (fieldOptions(
@@ -1275,7 +1315,7 @@ const liveBoard = {
 export async function scanDueAutomations() {
   const rules = await db().automationRule.findMany({
     where: { enabled: true, board: liveBoard },
-    select: { boardId: true, trigger: true },
+    select: { boardId: true, trigger: true, recordScope: true },
   });
   const boards = new Map<string, Set<"due.arrived" | "due.overdue">>();
   for (const rule of rules) {
@@ -1300,6 +1340,22 @@ export async function scanDueAutomations() {
       const tasks = await db().task.findMany({
         where: {
           boardId,
+          AND: [hierarchyScope(false)],
+          ...(rules.some(
+            (r) =>
+              r.boardId === boardId &&
+              (r.trigger as { kind?: string }).kind === kind &&
+              r.recordScope !== "ROOTS",
+          )
+            ? rules.some(
+                (r) =>
+                  r.boardId === boardId &&
+                  (r.trigger as { kind?: string }).kind === kind &&
+                  r.recordScope !== "SUBITEMS",
+              )
+              ? {}
+              : { parentId: { not: null } }
+            : { parentId: null }),
           archivedAt: null,
           deletedAt: null,
           dueDate:

@@ -205,6 +205,8 @@ model Workspace {
   invitations  Invitation[]
   accessEvents AccessEvent[]
   auditEvents  AuditEvent[]
+  companyProfiles CompanyProfile[]
+  contactProfiles ContactProfile[]
   /// Archived workspaces are hidden, with their boards, until restored.
   archivedAt   DateTime?         @db.Timestamptz(3)
   createdAt    DateTime          @default(now())
@@ -358,7 +360,8 @@ model Board {
   groups           BoardGroup[]
   automationRules  AutomationRule[]
   automationEvents AutomationEvent[]
-  /// TASK, DEAL or CUSTOM (lib/record-types.ts). Fixed after creation.
+  /// TASK, DEAL, CUSTOM, or a workspace's COMPANY/CONTACT collection
+  /// (lib/record-types.ts). Fixed after creation.
   recordType       String               @default("TASK")
   /// Names and built-in field switches, validated by recordConfigSchema.
   recordConfig     Json                 @default("{}")
@@ -420,45 +423,56 @@ model BoardGroup {
 }
 
 model Task {
-  id               String            @id @default(uuid(7))
-  boardId          String
-  board            Board             @relation(fields: [boardId], references: [id], onDelete: Cascade)
-  name             String
-  description      String            @default("")
-  checklist        Json              @default("[]")
-  statusId         String?
-  priority         String            @default("NORMAL")
-  startDate        DateTime?         @db.Date
-  dueDate          DateTime?         @db.Date
-  groupId          String?
-  group            BoardGroup?       @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  /// One-level Task-only breakdown. Public creation remains gated.
+  parentId               String?
+  parent                 Task?             @relation("TaskChildren", fields: [boardId, parentId], references: [boardId, id], onDelete: Restrict, onUpdate: Cascade, map: "Task_parent_fk")
+  children               Task[]            @relation("TaskChildren")
+  childrenRevision       Int               @default(0)
+  childCreationProposals BoardProposal[]   @relation("SubitemCreationParent")
+  id                     String            @id @default(uuid(7))
+  boardId                String
+  board                  Board             @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  name                   String
+  description            String            @default("")
+  checklist              Json              @default("[]")
+  statusId               String?
+  priority               String            @default("NORMAL")
+  startDate              DateTime?         @db.Date
+  dueDate                DateTime?         @db.Date
+  groupId                String?
+  group                  BoardGroup?       @relation(fields: [groupId], references: [id], onDelete: Restrict)
   /// Manual order on the board; lanes and lists sort by it.
-  position         Float             @default(0)
-  createdById      String
-  createdBy        User              @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  createKey        String
-  createDigest     String
-  revision         Int               @default(1)
-  archivedAt       DateTime?         @db.Timestamptz(3)
-  createdAt        DateTime          @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime          @updatedAt @db.Timestamptz(3)
-  assignees        TaskAssignee[]
-  editors          TaskEditorGrant[]
-  values           TaskFieldValue[]
-  activity         TaskActivity[]
-  comments         TaskComment[]
-  attachments      TaskAttachment[]
-  proposals        BoardProposal[]
-  notifications    Notification[]
-  automationEvents AutomationEvent[]
-  automationRuns   AutomationRun[]
-  linksFrom        RecordLink[]      @relation("LinkFrom")
-  linksTo          RecordLink[]      @relation("LinkTo")
+  position               Float             @default(0)
+  createdById            String
+  createdBy              User              @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createKey              String
+  createDigest           String
+  revision               Int               @default(1)
+  archivedAt             DateTime?         @db.Timestamptz(3)
+  createdAt              DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime          @updatedAt @db.Timestamptz(3)
+  assignees              TaskAssignee[]
+  editors                TaskEditorGrant[]
+  values                 TaskFieldValue[]
+  activity               TaskActivity[]
+  comments               TaskComment[]
+  attachments            TaskAttachment[]
+  proposals              BoardProposal[]   @relation("TaskProposals")
+  notifications          Notification[]
+  automationEvents       AutomationEvent[]
+  automationRuns         AutomationRun[]
+  linksFrom              RecordLink[]      @relation("LinkFrom")
+  linksTo                RecordLink[]      @relation("LinkTo")
+  /// Company/Contact boards only: the record's customer fields.
+  companyProfile         CompanyProfile?
+  contactProfile         ContactProfile?
   /// In Trash: hidden everywhere until restored (docs/specs/trash.md).
-  deletedAt        DateTime?         @db.Timestamptz(3)
-  deletedById      String?
+  deletedAt              DateTime?         @db.Timestamptz(3)
+  deletedById            String?
 
+  @@unique([boardId, id])
   @@unique([createdById, createKey])
+  @@index([parentId, position, id])
   @@index([boardId, archivedAt, createdAt, id])
   @@index([boardId, archivedAt, position, id])
   @@index([boardId, archivedAt, dueDate, id])
@@ -467,6 +481,47 @@ model Task {
   @@index([description(ops: raw("gin_trgm_ops"))], type: Gin, map: "Task_description_trgm_idx")
   @@index([boardId, statusId])
   @@index([deletedAt])
+}
+
+/// Customer fields of a record on the workspace's Companies collection
+/// (docs/specs/companies-contacts.md). Triggers keep it on a COMPANY board in
+/// the same workspace; the record's board columns are adapters to these values.
+model CompanyProfile {
+  recordId    String    @id
+  record      Task      @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  legalName   String?
+  website     String?
+  /// Lowercase ASCII hostname, without scheme or path.
+  domain      String?
+  email       String?
+  /// Case-folded email: an advisory duplicate key, never a uniqueness rule.
+  emailKey    String?
+  phone       String?
+  address     String?
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@unique([recordId, workspaceId])
+  @@index([workspaceId, domain])
+  @@index([workspaceId, emailKey])
+}
+
+/// Customer fields of a record on the workspace's Contacts collection.
+model ContactProfile {
+  recordId    String    @id
+  record      Task      @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  email       String?
+  emailKey    String?
+  phone       String?
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@unique([recordId, workspaceId])
+  @@index([workspaceId, emailKey])
 }
 
 model TaskAttachment {
@@ -651,7 +706,9 @@ model BoardProposal {
   boardId         String
   board           Board             @relation(fields: [boardId], references: [id], onDelete: Cascade)
   taskId          String?
-  task            Task?             @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  task            Task?             @relation("TaskProposals", fields: [taskId], references: [id], onDelete: SetNull)
+  parentTaskId    String?
+  parentTask      Task?             @relation("SubitemCreationParent", fields: [boardId, parentTaskId], references: [boardId, id], onDelete: Restrict, onUpdate: Cascade, map: "BoardProposal_parent_fk")
   authorId        String
   author          User              @relation("ProposalAuthor", fields: [authorId], references: [id], onDelete: Restrict)
   operation       ApprovalOperation
@@ -672,6 +729,7 @@ model BoardProposal {
   notifications   Notification[]
 
   @@unique([authorId, requestKey])
+  @@index([parentTaskId, status])
   @@index([boardId, status, createdAt])
   @@index([authorId, status, createdAt])
 }
@@ -799,6 +857,7 @@ model AutomationRule {
   board               Board                @relation(fields: [boardId], references: [id], onDelete: Cascade)
   name                String
   enabled             Boolean              @default(true)
+  recordScope         String               @default("ROOTS")
   trigger             Json
   /// "all" or "any": how the conditions combine.
   match               String               @default("all")

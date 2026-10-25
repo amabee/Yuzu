@@ -1,3 +1,6 @@
+import { crmRecordHref } from "@/lib/crm-contract";
+import { isCrmRecordType } from "@/lib/record-types";
+import { hierarchyScope } from "./task-hierarchy";
 import { asRecordType, resolveRecordConfig } from "@/lib/record-types";
 import { getDatabase, type Prisma } from "@yuzu/database";
 import {
@@ -15,9 +18,10 @@ export async function searchTasks(
   const query = taskSearchQuerySchema.parse(input);
   const { user } = await requireIdentity(headers);
   const where: Prisma.TaskWhereInput = {
+    AND: [hierarchyScope(query.archived === "true")],
     board: boardScope(user),
     deletedAt: null,
-    archivedAt: query.archived === "true" ? { not: null } : null,
+
     OR: [
       { name: { contains: escapeLike(query.q), mode: "insensitive" } },
       { description: { contains: escapeLike(query.q), mode: "insensitive" } },
@@ -37,6 +41,8 @@ export async function searchTasks(
           id: true,
           name: true,
           description: true,
+          parentId: true,
+          parent: { select: { name: true, archivedAt: true } },
           dueDate: true,
           archivedAt: true,
           board: {
@@ -61,13 +67,20 @@ export async function searchTasks(
           name: task.name,
           description: task.description.slice(0, 240),
           dueDate: task.dueDate?.toISOString().slice(0, 10) ?? null,
-          archived: Boolean(task.archivedAt),
+          parentId: task.parentId,
+          parentName: task.parent?.name ?? null,
+          archived: Boolean(task.archivedAt || task.parent?.archivedAt),
           boardId: task.board.id,
           boardName: task.board.name,
-          recordName: resolveRecordConfig(
-            asRecordType(task.board.recordType),
-            task.board.recordConfig,
-          ).singular,
+          ...(isCrmRecordType(task.board.recordType)
+            ? { href: crmRecordHref(task.board.recordType, task.id) }
+            : {}),
+          recordName: task.parentId
+            ? "Subitem"
+            : resolveRecordConfig(
+                asRecordType(task.board.recordType),
+                task.board.recordConfig,
+              ).singular,
           workspaceName: task.board.workspace.name,
           projectName: task.board.project?.name ?? null,
         })),

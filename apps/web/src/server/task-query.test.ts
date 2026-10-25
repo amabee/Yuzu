@@ -50,3 +50,14 @@ describe("database task filtering", () => {
     );
   });
 });
+
+it("keeps root-only board predicates flat so large root counts need no ancestor joins", () => {
+  const where = taskWhere("board", defaultViewConfig, "me", "2026-10-25");
+  expect(where).toMatchObject({
+    parentId: null,
+    deletedAt: null,
+    archivedAt: null,
+  });
+  expect(where).not.toHaveProperty("AND");
+  expect(where).not.toHaveProperty("parent");
+});

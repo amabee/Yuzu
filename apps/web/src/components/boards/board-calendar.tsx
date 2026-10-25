@@ -143,7 +143,7 @@ export function BoardCalendarView({
         data-done={task.statusId === COMPLETED_STATUS_ID || undefined}
         data-carried={isCarried || undefined}
         draggable={task.canEdit && !pending}
-        aria-label={`${task.name}${option ? `, ${option.label}` : ""}${task.canEdit ? ". Press Space to move" : ""}`}
+        aria-label={`${task.name}${task.parentName ? `, subitem of ${task.parentName}` : ""}${option ? `, ${option.label}` : ""}${task.canEdit ? ". Press Space to move" : ""}`}
         aria-pressed={isCarried || undefined}
         onClick={() => !carrying && onOpen(task.id)}
         onDragStart={(event) => {
@@ -196,7 +196,14 @@ export function BoardCalendarView({
           className="calendar-chip-dot"
           style={option?.color ? { backgroundColor: option.color } : undefined}
         />
-        <span className="calendar-chip-name">{task.name}</span>
+        <span className="calendar-chip-name">
+          {task.name}
+          {task.parentName ? (
+            <small className="block text-muted-foreground">
+              Subitem of {task.parentName}
+            </small>
+          ) : null}
+        </span>
         {initials(task) && (
           <span className="calendar-chip-people" aria-hidden="true">
             {initials(task)}

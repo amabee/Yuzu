@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { io, type Socket } from "socket.io-client";
 import { z } from "zod";
+import { createLiveRefreshQueue } from "@/lib/live-refresh-queue";
 import { ApiError, apiRequest } from "@/lib/api-client";
 
 const configuration = z.discriminatedUnion("enabled", [
@@ -28,6 +29,35 @@ export function useNavigationLiveSync(principalId: string) {
     let renewal: ReturnType<typeof setInterval> | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined;
     let pending: ReturnType<typeof setTimeout> | undefined;
+    const boardQueue = createLiveRefreshQueue(
+      () =>
+        Boolean(
+          queryClient.isMutating({
+            mutationKey: ["principal", principalId, "boards"],
+          }) ||
+          queryClient.isMutating({
+            mutationKey: ["principal", principalId, "notifications"],
+          }),
+        ),
+      async () => {
+        // A linked child may change while its other board or project is open.
+        await Promise.all(
+          [
+            "boards",
+            "dashboard",
+            "task-search",
+            "approvals",
+            "notifications",
+          ].map((key) =>
+            queryClient.invalidateQueries(
+              { queryKey: ["principal", principalId, key] },
+              { cancelRefetch: false },
+            ),
+          ),
+        );
+        if (location.pathname.startsWith("/projects/")) router.refresh();
+      },
+    );
     const ticket = async () =>
       configuration.parse(
         (
@@ -93,6 +123,17 @@ export function useNavigationLiveSync(principalId: string) {
           reconnectionDelayMax: 10_000,
         });
         socket.on("navigation:changed", refresh);
+        socket.on("board:changed", (value) => {
+          if (
+            z
+              .object({
+                boardId: z.string().uuid(),
+                eventId: z.string().uuid(),
+              })
+              .safeParse(value).success
+          )
+            boardQueue.changed();
+        });
         socket.on("disconnect", (reason) => {
           if (!stopped && reason === "io server disconnect") void renew();
         });
@@ -109,6 +150,7 @@ export function useNavigationLiveSync(principalId: string) {
       stop();
       abort.abort();
       clearTimeout(pending);
+      boardQueue.dispose();
       socket?.removeAllListeners();
     };
   }, [principalId, router, queryClient]);

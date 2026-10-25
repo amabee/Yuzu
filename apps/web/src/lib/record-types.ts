@@ -5,8 +5,25 @@ import { z } from "zod";
  * rules; the client reads the same definitions to show the right fields.
  * See docs/specs/record-foundation.md and docs/specs/record-contract.md.
  */
-export const recordTypes = ["TASK", "DEAL", "CUSTOM"] as const;
+export const recordTypes = [
+  "TASK",
+  "DEAL",
+  "CUSTOM",
+  "COMPANY",
+  "CONTACT",
+] as const;
 export type RecordType = (typeof recordTypes)[number];
+/** Types someone may pick for a new Work board. */
+export const creatableRecordTypes = ["TASK", "DEAL", "CUSTOM"] as const;
+/** CRM collections: one per workspace each, shown only in the CRM module. */
+export const crmRecordTypes = ["COMPANY", "CONTACT"] as const;
+export type CrmRecordType = (typeof crmRecordTypes)[number];
+export const isCrmRecordType = (type: unknown): type is CrmRecordType =>
+  crmRecordTypes.includes(type as CrmRecordType);
+/** Prisma filter for boards that belong to the Work module. */
+export const workBoardWhere = {
+  recordType: { notIn: [...crmRecordTypes] },
+};
 
 export const builtinKeys = [
   "status",
@@ -73,6 +90,19 @@ type Definition = {
 
 const on = (label?: string) => ({ on: true, ...(label ? { label } : {}) });
 const off = { on: false };
+// Customer records have an owner and notes, never task status or dates.
+const crmBuiltins: RecordConfig["builtins"] = {
+  status: off,
+  priority: off,
+  assignees: on("Owner"),
+  startDate: off,
+  dueDate: off,
+  description: on("Notes"),
+  checklist: off,
+};
+const crmLocked = Object.fromEntries(
+  builtinKeys.map((key) => [key, true]),
+) as Record<BuiltinKey, true>;
 const allOn = Object.fromEntries(
   builtinKeys.map((key) => [key, on()]),
 ) as RecordConfig["builtins"];
@@ -114,6 +144,30 @@ export const recordDefinitions: Record<RecordType, Definition> = {
     locked: {},
     renamable: true,
   },
+  COMPANY: {
+    label: "Companies",
+    description: "The businesses you work with",
+    defaults: {
+      singular: "Company",
+      plural: "Companies",
+      builtins: crmBuiltins,
+    },
+    locked: crmLocked,
+    renamable: false,
+    maxAssignees: 1,
+  },
+  CONTACT: {
+    label: "Contacts",
+    description: "The people you work with",
+    defaults: {
+      singular: "Contact",
+      plural: "Contacts",
+      builtins: crmBuiltins,
+    },
+    locked: crmLocked,
+    renamable: false,
+    maxAssignees: 1,
+  },
 };
 
 export const dealStages = [
@@ -146,7 +200,7 @@ export const recordSettingsSchema = z
 
 /** What a new board may choose: its type, and for custom boards the rest. */
 export const recordChoiceSchema = z.object({
-  recordType: z.enum(recordTypes).default("TASK"),
+  recordType: z.enum(creatableRecordTypes).default("TASK"),
   record: z
     .object({
       singular: label,

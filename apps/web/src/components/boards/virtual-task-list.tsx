@@ -1,5 +1,5 @@
 "use client";
-import { useRef, type ReactNode } from "react";
+import { Fragment, useRef, type ReactNode } from "react";
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 
 export function VirtualTaskList<T extends { id: string }>({
@@ -67,10 +67,12 @@ export function VirtualTableBody<T extends { id: string }>({
   items,
   columns,
   children,
+  renderAfter,
 }: {
   items: T[];
   columns: number;
   children: (item: T) => ReactNode;
+  renderAfter?: (item: T) => ReactNode;
 }) {
   const body = useRef<HTMLTableSectionElement>(null);
   // TanStack Virtual exposes mutable measurement functions; React Compiler must not memoize them.
@@ -85,8 +87,19 @@ export function VirtualTableBody<T extends { id: string }>({
     initialRect: { width: 800, height: 650 },
     useFlushSync: false,
   });
-  if (items.length <= 20)
-    return <tbody>{items.map((item) => children(item))}</tbody>;
+  // An expanded breakdown has variable row heights. Render this bounded board
+  // page normally while one parent is open; keep virtualization for flat pages.
+  if (items.length <= 20 || renderAfter)
+    return (
+      <tbody>
+        {items.map((item) => (
+          <Fragment key={item.id}>
+            {children(item)}
+            {renderAfter?.(item)}
+          </Fragment>
+        ))}
+      </tbody>
+    );
   const rows = virtual.getVirtualItems();
   const first = rows[0],
     last = rows.at(-1);

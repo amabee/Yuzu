@@ -7002,3 +7002,111 @@ body:has(.pause-sheet[data-state="open"]) .yuzu-toast-viewport {
     animation: none !important;
   }
 }
+
+/* A task's breakdown shares its paper and typography, with a quiet branch rail. */
+.subitems {
+  margin: 1rem 0;
+  padding: 0.75rem 0 0.75rem 0.85rem;
+  border-inline-start: 2px solid var(--border);
+  min-width: 0;
+}
+.subitems-heading,
+.subitem-row,
+.subitem-create {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.subitems-heading {
+  justify-content: space-between;
+  margin-bottom: 0.4rem;
+}
+.subitems-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+}
+.subitems-toggle span,
+.subitem-date {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.subitem-row {
+  border-bottom: 1px solid var(--border);
+  padding: 0.65rem 0;
+}
+.subitem-open {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+  text-align: start;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+.subitem-status {
+  color: var(--muted-foreground);
+}
+.subitem-status[data-done="true"] {
+  color: var(--primary);
+}
+.subitem-order {
+  display: flex;
+}
+.subitem-order button {
+  width: 1.6rem;
+  height: 1.6rem;
+}
+.subitem-create {
+  margin-top: 0.75rem;
+}
+.subitems-advisory {
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  margin: 0.4rem 0;
+}
+.subitem-context {
+  padding: 0.75rem 1.5rem;
+  font-size: 0.8rem;
+  color: var(--muted-foreground);
+}
+.subitem-context button {
+  color: var(--primary);
+  text-decoration: underline;
+}
+@media (max-width: 640px) {
+  .subitem-date {
+    display: none;
+  }
+  .subitem-row {
+    flex-wrap: wrap;
+  }
+  .subitems {
+    margin-inline: 0.5rem;
+  }
+}
+
+.task-sheet-body > .subitems {
+  margin: 0 1.5rem 1rem;
+  padding-inline-start: 0.75rem;
+}
+
+/* CRM overview: live sections link to their screens. */
+.crm-module-link {
+  color: var(--primary);
+  text-decoration: none;
+}
+.crm-module-link:hover {
+  text-decoration: underline;
+}
+.crm-module-planned {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.crm-module-areas li[data-ready] svg {
+  color: var(--primary);
+}

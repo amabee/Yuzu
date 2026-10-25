@@ -16,11 +16,15 @@ export const taskSearchResultSchema = z.object({
       z.object({
         id: z.string().uuid(),
         name: z.string(),
+        parentId: z.string().uuid().nullable().optional(),
+        parentName: z.string().nullable().optional(),
         description: z.string(),
         boardId: z.string().uuid(),
         boardName: z.string(),
         /** What the board calls one record: "Task", "Deal"… */
         recordName: z.string().default("Task"),
+        /** Set when the record opens outside its board, like CRM records. */
+        href: z.string().startsWith("/").optional(),
         workspaceName: z.string(),
         projectName: z.string().nullable(),
         archived: z.boolean(),

@@ -1,4 +1,5 @@
 "use client";
+import { Subitems } from "./subitems";
 import { LinkPicker } from "./link-picker";
 import { PauseAlert } from "@/components/pause/pause-alert";
 import { useState } from "react";
@@ -81,7 +82,9 @@ export function TaskEditor({
   syncInterval = 15_000,
   defaultDueDate,
   defaultStatusId,
+  onOpenTask,
 }: {
+  onOpenTask?: (id: string) => void;
   state: BoardState;
   task?: BoardTask;
   /** Prefills the due date of a new task, such as a calendar day. */
@@ -186,10 +189,19 @@ export function TaskEditor({
     });
   };
   const [createKey, setCreateKey] = useState(() => crypto.randomUUID());
+  const [confirmCompletion, setConfirmCompletion] = useState(false);
+  const incompleteChildren = Boolean(
+    task?.childSummary && task.childSummary.done < task.childSummary.total,
+  );
   const [tab, setTab] = useState<"comments" | "activity" | "files">("comments");
   const [composerSlot, setComposerSlot] = useState<HTMLDivElement | null>(null);
   const [editorsOpen, setEditorsOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deletePreview, setDeletePreview] = useState<{
+    revision: number;
+    childrenRevision: number;
+    count: number;
+  } | null>(null);
   const [accessPerson, setAccessPerson] = useState("");
   const [newChecklistItem, setNewChecklistItem] = useState("");
   const editable = !state.readOnly && (!task || task.canEdit);
@@ -275,6 +287,14 @@ export function TaskEditor({
     editDraft({ fieldValues: { [fieldId]: value } });
   return (
     <>
+      {task?.parentId && (
+        <div className="subitem-context">
+          Subitem of{" "}
+          <button type="button" onClick={() => onOpenTask?.(task.parentId!)}>
+            {task.parentName}
+          </button>
+        </div>
+      )}
       <header className="task-sheet-header">
         <div className="task-panel-crumbs">
           <span className="task-panel-board">
@@ -314,6 +334,7 @@ export function TaskEditor({
                   disabled={pending}
                   onClick={() =>
                     onAction(task.archivedAt ? "restore" : "archive", {
+                      childrenRevision: task.childrenRevision ?? 0,
                       taskId: task.id,
                       revision: task.revision,
                     })
@@ -344,14 +365,18 @@ export function TaskEditor({
                         disabled={
                           pending || conflicts.length > 0 || dateOrderInvalid
                         }
-                        onSelect={() =>
+                        onSelect={() => {
+                          if (incompleteChildren) {
+                            editDraft({ statusId: "done" });
+                            return;
+                          }
                           onSubmit({
                             taskId: task.id,
                             revision: task.revision,
                             requestKey: createKey,
                             changes: { ...merged?.changes, statusId: "done" },
-                          })
-                        }
+                          });
+                        }}
                       >
                         <Check size={14} />
                         {completionRequiresApproval
@@ -369,7 +394,14 @@ export function TaskEditor({
                       <DropdownMenuItem
                         className="text-destructive"
                         disabled={pending}
-                        onSelect={() => setDeleting(true)}
+                        onSelect={() => {
+                          setDeletePreview({
+                            revision: task.revision,
+                            childrenRevision: task.childrenRevision ?? 0,
+                            count: task.retainedChildCount ?? 0,
+                          });
+                          setDeleting(true);
+                        }}
                       >
                         <Trash2 size={14} />
                         Delete {noun}…
@@ -516,6 +548,9 @@ export function TaskEditor({
             </p>
           </PauseAlert>
         )}
+        {task && !task.parentId && record.type === "TASK" && onOpenTask && (
+          <Subitems state={state} parent={task} onOpen={onOpenTask} />
+        )}
         <form
           id="task-editor-form"
           className="task-sheet-details space-y-5"
@@ -524,6 +559,13 @@ export function TaskEditor({
             if (
               conflicts.length ||
               (task && !Object.keys(merged?.changes ?? {}).length)
+            )
+              return;
+            if (
+              incompleteChildren &&
+              draft.statusId === "done" &&
+              task?.statusId !== "done" &&
+              !confirmCompletion
             )
               return;
             onSubmit(
@@ -538,6 +580,21 @@ export function TaskEditor({
             );
           }}
         >
+          {incompleteChildren &&
+            draft.statusId === "done" &&
+            task?.statusId !== "done" && (
+              <PauseAlert intent="warning" title="Subitems are still open">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={confirmCompletion}
+                    onChange={(e) => setConfirmCompletion(e.target.checked)}
+                  />{" "}
+                  Complete the parent anyway. Subitems will keep their own
+                  status.
+                </label>
+              </PauseAlert>
+            )}
           <fieldset disabled={!editable || pending} className="space-y-5">
             <div
               className="task-props"
@@ -693,9 +750,12 @@ export function TaskEditor({
                 </>
               )}
               <div className="task-prop">
-                <span className="task-prop-label">Group</span>
+                <span className="task-prop-label">
+                  {task?.parentId ? "Group (inherited)" : "Group"}
+                </span>
                 <label className="task-prop-value">
                   <select
+                    disabled={Boolean(task?.parentId)}
                     aria-label={`${record.singular} group`}
                     value={draft.groupId}
                     onChange={(event) =>
@@ -1230,7 +1290,7 @@ export function TaskEditor({
           onOpenChange={setDeleting}
           intent="danger"
           title={`Delete “${task.name}”?`}
-          description={`It moves to Trash and disappears from the board, search, links and rules. Managers can restore it from Trash.`}
+          description={`${deletePreview?.count ? `${deletePreview.count} retained subitems will also be hidden with this task. Their independent Trash state is preserved. ` : ""}It moves to Trash and disappears from the board, search, links and rules. Managers can restore it from Trash.`}
           actions={
             <>
               <PauseClose asChild>
@@ -1242,7 +1302,15 @@ export function TaskEditor({
                 disabled={pending}
                 onClick={() => {
                   setDeleting(false);
-                  onAction("trash/delete-record", { id: task.id });
+                  onAction("trash/delete-record", {
+                    id: task.id,
+                    revision: deletePreview?.revision ?? task.revision,
+                    childrenRevision: task.parentId
+                      ? undefined
+                      : (deletePreview?.childrenRevision ??
+                        task.childrenRevision ??
+                        0),
+                  });
                 }}
               >
                 Delete {noun}

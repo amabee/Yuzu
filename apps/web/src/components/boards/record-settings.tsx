@@ -9,7 +9,7 @@ import {
   builtinKeys,
   builtinName,
   recordDefinitions,
-  recordTypes,
+  creatableRecordTypes,
   resolveRecordConfig,
   type BuiltinKey,
   type RecordConfig,
@@ -38,7 +38,7 @@ export function RecordTypePicker({
       role="radiogroup"
       aria-label="What this board holds"
     >
-      {recordTypes.map((type) => (
+      {creatableRecordTypes.map((type) => (
         <button
           key={type}
           type="button"

@@ -1,3 +1,4 @@
+import { refuseCrmCollection } from "./crm-profile";
 import { randomBytes } from "node:crypto";
 import { hashPassword } from "better-auth/crypto";
 import {
@@ -739,6 +740,7 @@ export async function recoverProject(input: unknown, headers: Headers) {
 /* ---------- Moving boards ---------- */
 
 export async function moveBoard(input: unknown, headers: Headers) {
+  await refuseCrmCollection(input, "Moving the collection");
   const { user } = await requireIdentity(headers);
   const body = moveBoardSchema.parse(input);
   return serial(async (tx) => {

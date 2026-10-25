@@ -35,6 +35,16 @@ const deadline = z.object({
     .default([]),
 });
 export const dashboardSchema = z.object({
+  subitemWorkload: z
+    .array(
+      z.object({ userId: z.string(), name: z.string(), count, overdue: count }),
+    )
+    .max(12)
+    .optional(),
+  subitems: z
+    .object({ total: count, open: count, overdue: count, mine: count })
+    .optional(),
+  subitemDeadlines: z.array(deadline).max(10).optional(),
   calendarDate: z.string(),
   upcomingEnd: z.string(),
   total: count,

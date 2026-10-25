@@ -1,3 +1,4 @@
+import { subitems, reorderSubitem } from "@/server/subitem-service";
 import { setBoardArchived } from "@/server/board-archive-service";
 import { mutateSavedView } from "@/server/saved-view-service";
 import { z } from "zod";
@@ -22,7 +23,18 @@ async function handle(request: Request, action: string) {
   const requestId = crypto.randomUUID();
   try {
     let data;
-    if (request.method === "GET" && action === "state")
+    if (request.method === "GET" && action === "subitems") {
+      const params = new URL(request.url).searchParams;
+      data = await subitems(
+        {
+          boardId: params.get("boardId"),
+          parentId: params.get("parentId"),
+          ...(params.get("cursor") ? { cursor: params.get("cursor") } : {}),
+          archived: params.get("archived") === "true",
+        },
+        request.headers,
+      );
+    } else if (request.method === "GET" && action === "state")
       data = await boardState(
         recordId.parse(new URL(request.url).searchParams.get("boardId")),
         request.headers,
@@ -75,6 +87,8 @@ async function handle(request: Request, action: string) {
         data = await changeComment(body, request.headers);
       else if (action === "create-task")
         data = await createTask(body, request.headers);
+      else if (action === "reorder-subitem")
+        data = await reorderSubitem(body, request.headers);
       else if (action === "reorder")
         data = await reorderTask(body, request.headers);
       else if (["update", "archive", "restore", "editor"].includes(action))

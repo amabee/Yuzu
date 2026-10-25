@@ -1,3 +1,4 @@
+import { hierarchyScope } from "./task-hierarchy";
 import type { Prisma } from "@yuzu/database";
 import type { ViewConfig } from "@/lib/saved-view-contract";
 import { calendarWindow, escapeLike } from "@/lib/board-query";
@@ -9,16 +10,36 @@ export function taskWhere(
   today: string,
 ): Prisma.TaskWhereInput {
   // Records in Trash never show on the board.
-  if (!config) return { boardId, deletedAt: null };
+  if (!config) return { boardId, parentId: null, deletedAt: null };
   const dates = calendarWindow(today);
   return {
     boardId,
-    deletedAt: null,
-    archivedAt: config.archived ? { not: null } : null,
+    ...((config.scope ?? "ROOTS") === "ROOTS"
+      ? {
+          parentId: null,
+          deletedAt: null,
+          archivedAt: config.archived ? { not: null } : null,
+          ...(config.groupId ? { groupId: config.groupId } : {}),
+        }
+      : {
+          ...(config.scope === "SUBITEMS" ? { parentId: { not: null } } : {}),
+          AND: [
+            hierarchyScope(config.archived),
+            ...(config.groupId
+              ? [
+                  {
+                    OR: [
+                      { parentId: null, groupId: config.groupId },
+                      { parent: { groupId: config.groupId } },
+                    ],
+                  },
+                ]
+              : []),
+          ],
+        }),
     ...(config.statusId
       ? { statusId: config.statusId === "__none__" ? null : config.statusId }
       : {}),
-    ...(config.groupId ? { groupId: config.groupId } : {}),
     ...(config.priority !== "all" ? { priority: config.priority } : {}),
     ...(config.assignee === "me"
       ? { assignees: { some: { userId } } }

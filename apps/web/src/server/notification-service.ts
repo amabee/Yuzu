@@ -1,3 +1,4 @@
+import { hierarchyScope } from "./task-hierarchy";
 import { getDatabase } from "@yuzu/database";
 import { z } from "zod";
 import {
@@ -14,7 +15,19 @@ export function visibility(user: { id: string; role: string }) {
     recipientId: user.id,
     board: boardScope(user),
     // Notifications about records in Trash stay hidden until restored.
-    AND: [{ OR: [{ taskId: null }, { task: { deletedAt: null } }] }],
+    AND: [
+      { OR: [{ taskId: null }, { task: hierarchyScope() }] },
+      {
+        OR: [
+          { proposalId: null },
+          {
+            proposal: {
+              OR: [{ parentTaskId: null }, { parentTask: { deletedAt: null } }],
+            },
+          },
+        ],
+      },
+    ],
     ...(isAdministrator(user.role)
       ? {}
       : {
@@ -72,7 +85,7 @@ export async function notificationInbox(
       include: {
         actor: { select: { name: true } },
         board: { select: { name: true, project: { select: { name: true } } } },
-        task: { select: { name: true } },
+        task: { select: { name: true, parent: { select: { name: true } } } },
         proposal: { select: { changes: true } },
       },
     });
@@ -87,7 +100,9 @@ export async function notificationInbox(
         message: row.message,
         actorName: row.actor.name,
         name:
-          row.task?.name ??
+          (row.task
+            ? `${row.task.name}${row.task.parent ? ` · Subitem of ${row.task.parent.name}` : ""}`
+            : undefined) ??
           String(
             (row.proposal?.changes as Record<string, unknown> | undefined)
               ?.name ?? "Task request",

@@ -15,11 +15,13 @@ const areas = [
     name: "Companies",
     description: "The businesses you work with.",
     icon: Building2,
+    href: "/crm/companies",
   },
   {
     name: "Contacts",
-    description: "People, their roles, and their company relationships.",
+    description: "The people you work with, at a company or on their own.",
     icon: ContactRound,
+    href: "/crm/contacts",
   },
   {
     name: "Leads",
@@ -56,26 +58,34 @@ export default async function CrmPage() {
       <section aria-labelledby="crm-status" className="crm-module-status">
         <ContactRound size={25} aria-hidden="true" />
         <div>
-          <h2 id="crm-status">CRM is being prepared</h2>
+          <h2 id="crm-status">Companies and Contacts are ready</h2>
           <p>
-            The module navigation is in place. Customer records and sales tools
-            are still being planned; they are not available yet.
+            Keep one shared list of the businesses and people you work with.
+            Leads, deals and activities are still being planned.
           </p>
         </div>
       </section>
       <section aria-labelledby="crm-areas">
         <div className="crm-module-section-heading">
-          <h2 id="crm-areas">What will live here</h2>
-          <span>Planned</span>
+          <h2 id="crm-areas">What lives here</h2>
         </div>
         <ul className="crm-module-areas">
-          {areas.map(({ name, description, icon: Icon }) => (
-            <li key={name}>
+          {areas.map(({ name, description, icon: Icon, href }) => (
+            <li key={name} data-ready={href ? "" : undefined}>
               <Icon size={19} aria-hidden="true" />
               <div>
-                <h3>{name}</h3>
+                <h3>
+                  {href ? (
+                    <Link href={href} className="crm-module-link">
+                      {name}
+                    </Link>
+                  ) : (
+                    name
+                  )}
+                </h3>
                 <p>{description}</p>
               </div>
+              {!href && <span className="crm-module-planned">Planned</span>}
             </li>
           ))}
         </ul>

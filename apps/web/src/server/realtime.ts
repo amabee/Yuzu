@@ -161,6 +161,7 @@ export async function notifyBoardMutation(input: unknown, result?: unknown) {
           ...(board?.managers.map((manager) => manager.userId) ?? []),
           // Overview and cross-board search also need hints while no board room is open.
           ...(board?.workspace.members.map((member) => member.userId) ?? []),
+          ...(board?.project?.members.map((member) => member.userId) ?? []),
           ...affectedAuthors.map((item) => item.authorId),
           ...administrators.map((item) => item.id),
           ...inboxRecipients.map((item) => item.recipientId),

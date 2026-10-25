@@ -198,6 +198,7 @@ async function renderInstant(notificationId: string, userId: string) {
           statusId: true,
           priority: true,
           dueDate: true,
+          parent: { select: { name: true } },
         },
       },
       proposal: { select: { changes: true } },
@@ -213,7 +214,9 @@ async function renderInstant(notificationId: string, userId: string) {
       note.board.columns.find((column) => column.key === key)?.config,
     ).find((item) => item.id === id)?.label;
   const taskName =
-    note.task?.name ??
+    (note.task
+      ? `${note.task.name}${note.task.parent ? ` · Subitem of ${note.task.parent.name}` : ""}`
+      : undefined) ??
     String(
       (note.proposal?.changes as Record<string, unknown> | undefined)?.name ??
         "Task request",
@@ -424,7 +427,7 @@ export async function scanDigests(now = new Date()) {
       include: {
         actor: { select: { name: true } },
         board: { select: { name: true } },
-        task: { select: { name: true } },
+        task: { select: { name: true, parent: { select: { name: true } } } },
       },
       orderBy: { createdAt: "asc" },
       take: 100,
@@ -444,7 +447,7 @@ export async function scanDigests(now = new Date()) {
           line:
             note.kind === "AUTOMATION"
               ? note.message
-              : `${note.actor.name} ${note.message} ${note.task?.name ?? ""}`.trim(),
+              : `${note.actor.name} ${note.message} ${note.task?.name ?? ""}${note.task?.parent ? ` · Subitem of ${note.task.parent.name}` : ""}`.trim(),
           meta: time.format(note.createdAt),
         },
       ]);

@@ -2,6 +2,7 @@ import { boardPaginationSchema, type BoardPagination } from "./board-query";
 import { savedViewSchema, type SavedView } from "./saved-view-contract";
 import { z } from "zod";
 import { recordId, personId } from "./id-contract";
+import { profileColumnKeys, profileSchemas } from "./crm-contract";
 export { recordId, personId } from "./id-contract";
 import {
   builtinForColumn,
@@ -67,6 +68,8 @@ export const coreKeys = [
   "priority",
   "start_date",
   "due_date",
+  // Company/Contact profile columns; their values live in the profile.
+  ...profileColumnKeys,
 ];
 const names = z.string().trim().min(1).max(200);
 export const checklistSchema = z
@@ -104,11 +107,16 @@ const changes = z
     groupId: recordId.nullable(),
     assigneeIds: ids,
     fieldValues: z.record(recordId, z.unknown()),
+    // Company/Contact boards only; the server rejects them elsewhere.
+    ...profileSchemas,
   })
   .strict();
 export const createTaskSchema = changes
   .partial()
   .extend({ boardId: recordId, createKey: recordId, name: names })
+  .strict();
+export const publicCreateTaskSchema = createTaskSchema
+  .extend({ parentId: recordId.optional() })
   .strict();
 export const updateTaskSchema = z
   .object({
@@ -126,6 +134,7 @@ export const updateTaskSchema = z
 export const taskActionSchema = z
   .object({
     taskId: recordId,
+    childrenRevision: z.number().int().nonnegative().optional(),
     revision: z.number().int().positive(),
     requestKey: recordId.optional(),
   })
@@ -224,6 +233,11 @@ export type BoardField = {
   relation?: { targetBoardId: string; many: boolean };
 };
 export type BoardTask = {
+  parentId?: string | null;
+  parentName?: string | null;
+  childrenRevision?: number;
+  retainedChildCount?: number;
+  childSummary?: { total: number; done: number };
   id: string;
   name: string;
   description: string;
@@ -351,6 +365,16 @@ const baseBoardStateSchema = z.object({
   tasks: z.array(
     z.object({
       id: recordId,
+      parentId: recordId.nullable().optional(),
+      parentName: z.string().nullable().optional(),
+      childrenRevision: z.number().int().nonnegative().optional(),
+      retainedChildCount: z.number().int().nonnegative().optional(),
+      childSummary: z
+        .object({
+          total: z.number().int().nonnegative(),
+          done: z.number().int().nonnegative(),
+        })
+        .optional(),
       name: z.string(),
       description: z.string(),
       checklist: checklistSchema.default([]),

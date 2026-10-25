@@ -3,7 +3,7 @@ import {
   boardArchiveSchema,
   commentChangeSchema,
   commentCreateSchema,
-  createTaskSchema,
+  publicCreateTaskSchema,
   recordId,
   reorderTaskSchema,
   taskActionSchema,
@@ -17,6 +17,7 @@ import { projectListSchema } from "./project-contract";
 import { notificationActionSchema } from "./notification-contract";
 import { dashboardQuerySchema } from "./dashboard-contract";
 import { exportCsvSchema } from "./csv-export";
+import { crmDirectoryQuerySchema, crmMatchQuerySchema } from "./crm-contract";
 
 /**
  * The public API: every endpoint an API token may call. This one list drives
@@ -100,7 +101,7 @@ export const apiEndpoints: ApiEndpoint[] = [
     description:
       "Works for every board type (tasks, deals, custom records). createKey is a UUID you choose; send the same one again to safely retry. Built-in fields a board has turned off are refused, and a deal takes one owner.",
     access: "write",
-    body: createTaskSchema,
+    body: publicCreateTaskSchema,
     returns: "The new task's id",
   },
   {
@@ -133,6 +134,29 @@ export const apiEndpoints: ApiEndpoint[] = [
     returns: "The task's new revision",
   },
   {
+    method: "GET",
+    path: "/boards/subitems",
+    group: "Boards and tasks",
+    summary: "List a task’s subitems",
+    access: "read",
+    query: z.object({
+      boardId: recordId,
+      parentId: recordId,
+      cursor: recordId.optional(),
+      archived: z.enum(["true", "false"]).optional(),
+    }),
+    returns: "A page of 50 subitems, summary and cursor",
+  },
+  {
+    method: "POST",
+    path: "/boards/reorder-subitem",
+    group: "Boards and tasks",
+    summary: "Reorder siblings",
+    access: "write",
+    body: reorderTaskSchema,
+    returns: "The subitem’s board and id",
+  },
+  {
     method: "POST",
     path: "/boards/reorder",
     group: "Boards and tasks",
@@ -163,7 +187,11 @@ export const apiEndpoints: ApiEndpoint[] = [
     description:
       "Board managers and admins only. The record disappears everywhere until restored.",
     access: "write",
-    body: z.object({ id: recordId }),
+    body: z.object({
+      id: recordId,
+      revision: z.number().int().positive().optional(),
+      childrenRevision: z.number().int().nonnegative().optional(),
+    }),
     returns: "The board and record ids",
   },
   {
@@ -279,6 +307,52 @@ export const apiEndpoints: ApiEndpoint[] = [
     summary: "Download a task's file",
     access: "read",
     returns: "The file",
+  },
+  {
+    method: "GET",
+    path: "/crm/directory",
+    group: "CRM",
+    summary: "A page of Companies or Contacts",
+    description:
+      "One page (50) of the workspace's Companies or Contacts, with whole-collection totals. Records are created and changed with the task create and update endpoints, using the returned boardId; profile fields (email, phone, domain, website, legalName, address) go alongside name.",
+    access: "read",
+    query: z.object({
+      workspaceId: recordId,
+      query: z
+        .string()
+        .optional()
+        .describe(
+          `Optional JSON object with: ${Object.keys(crmDirectoryQuerySchema.shape).join(", ")}`,
+        ),
+    }),
+    returns: "The collection's board id, people and a page of records",
+  },
+  {
+    method: "GET",
+    path: "/crm/record",
+    group: "CRM",
+    summary: "One Company or Contact",
+    access: "read",
+    query: id("recordId"),
+    returns: "The record, its profile and recent changes",
+  },
+  {
+    method: "GET",
+    path: "/crm/matches",
+    group: "CRM",
+    summary: "Records that look like a new one",
+    description:
+      "Duplicate suggestions by email, domain and similar name, among records you can see. Suggestions never block creating a record.",
+    access: "read",
+    query: z.object({
+      workspaceId: recordId,
+      query: z
+        .string()
+        .describe(
+          `JSON object with: ${Object.keys(crmMatchQuerySchema.shape).join(", ")}`,
+        ),
+    }),
+    returns: "Up to five matching records",
   },
 ];
 

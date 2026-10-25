@@ -1,3 +1,4 @@
+import { hierarchyScope } from "./task-hierarchy";
 import { getDatabase, type Prisma } from "@yuzu/database";
 import { fieldOptions } from "@/lib/board-contract";
 import { calendarWindow } from "@/lib/board-query";
@@ -33,6 +34,7 @@ export async function workspaceDashboard(
     ...(query.projectId ? { projectId: query.projectId } : {}),
   };
   const active: Prisma.TaskWhereInput = {
+    parentId: null,
     board: visibleBoards,
     archivedAt: null,
     deletedAt: null,
@@ -167,7 +169,64 @@ export async function workspaceDashboard(
         assignees: task.assignees.map((person) => person.user),
         dueDate: task.dueDate!.toISOString().slice(0, 10),
       });
+      const subitemWhere: Prisma.TaskWhereInput = {
+        board: visibleBoards,
+        parentId: { not: null },
+        AND: [hierarchyScope(false)],
+      };
+      const subitemOpen: Prisma.TaskWhereInput = {
+        ...subitemWhere,
+        OR: [{ statusId: null }, { statusId: { not: COMPLETED_STATUS_ID } }],
+      };
+      const subitems = {
+        total: await tx.task.count({ where: subitemWhere }),
+        open: await tx.task.count({ where: subitemOpen }),
+        overdue: await tx.task.count({
+          where: { ...subitemOpen, dueDate: { lt: start } },
+        }),
+        mine: await tx.task.count({
+          where: { ...subitemOpen, ...assignedToMe },
+        }),
+      };
+      const childLoad = await tx.taskAssignee.groupBy({
+        by: ["userId"],
+        where: { task: subitemOpen },
+        _count: true,
+        orderBy: [{ _count: { userId: "desc" } }, { userId: "asc" }],
+        take: 12,
+      });
+      const childPeople = await tx.user.findMany({
+        where: { id: { in: childLoad.map((p) => p.userId) } },
+        select: { id: true, name: true },
+      });
+      const childOverdue = await tx.taskAssignee.groupBy({
+        by: ["userId"],
+        where: {
+          userId: { in: childLoad.map((p) => p.userId) },
+          task: { ...subitemOpen, dueDate: { lt: start } },
+        },
+        _count: true,
+      });
+      const subitemWorkload = childLoad.map((p) => ({
+        userId: p.userId,
+        name:
+          childPeople.find((u) => u.id === p.userId)?.name ?? "Former member",
+        count: p._count,
+        overdue: childOverdue.find((u) => u.userId === p.userId)?._count ?? 0,
+      }));
+      const subitemDeadlines = await tx.task.findMany({
+        where: { ...subitemOpen, ...listScope, dueDate: { lte: end } },
+        select: { ...deadlineSelect, parent: { select: { name: true } } },
+        orderBy: [{ dueDate: "asc" }, { id: "asc" }],
+        take: 10,
+      });
       return {
+        subitems,
+        subitemWorkload,
+        subitemDeadlines: subitemDeadlines.map((t) => ({
+          ...deadline(t),
+          name: `${t.name} · Subitem of ${t.parent!.name}`,
+        })),
         calendarDate,
         upcomingEnd: end.toISOString().slice(0, 10),
         total,

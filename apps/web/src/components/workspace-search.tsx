@@ -305,9 +305,14 @@ export function WorkspaceSearch({ principalId }: { principalId: string }) {
                     <CommandItem
                       key={task.id}
                       value={`task:${task.id}`}
-                      data-href={`/boards/${task.boardId}?task=${task.id}`}
+                      data-href={
+                        task.href ?? `/boards/${task.boardId}?task=${task.id}`
+                      }
                       onSelect={() =>
-                        navigate(`/boards/${task.boardId}?task=${task.id}`)
+                        navigate(
+                          task.href ??
+                            `/boards/${task.boardId}?task=${task.id}`,
+                        )
                       }
                     >
                       <CheckCheck size={17} aria-hidden="true" />
@@ -320,6 +325,7 @@ export function WorkspaceSearch({ principalId }: { principalId: string }) {
                           {task.recordName !== "Task"
                             ? ` · ${task.recordName}`
                             : ""}
+                          {task.parentName ? ` / ${task.parentName}` : ""}
                           {task.archived ? " / Archived" : ""}
                         </small>
                         {task.description && (

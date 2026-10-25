@@ -41,8 +41,18 @@ export async function recordAutomationEvent(
     automation?: AutomationContext;
   },
 ) {
+  const task = await tx.task.findUnique({
+    where: { id: input.taskId },
+    select: { parentId: true },
+  });
   const rules = await tx.automationRule.count({
-    where: { boardId: input.boardId, enabled: true },
+    where: {
+      boardId: input.boardId,
+      enabled: true,
+      recordScope: {
+        in: task?.parentId ? ["SUBITEMS", "BOTH"] : ["ROOTS", "BOTH"],
+      },
+    },
   });
   if (!rules) return;
   await tx.automationEvent.create({

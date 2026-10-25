@@ -606,3 +606,641 @@ test("boards archive independently, preserve task states and restore without byp
   });
   expect((await archive(true)).status()).toBe(503);
 });
+
+test("subitems create, edit, search and inherit parent lifecycle without changing task totals", async ({
+  page,
+}) => {
+  const { owner, workspace, board } = await setup(page);
+  const db = getDatabase();
+  const root = await ok(
+    await post(page, "/api/v1/boards/create-task", {
+      boardId: board,
+      name: "Ship the website",
+      createKey: createRecordId(),
+    }),
+  );
+  let childId: string | undefined;
+  try {
+    await page.goto(`/boards/${board}?task=${root.taskId}`);
+    const sheet = page.getByRole("dialog");
+    await sheet
+      .getByRole("textbox", { name: "Subitem name", exact: true })
+      .fill("Design the header");
+    await sheet
+      .getByRole("button", { name: "Add subitem", exact: true })
+      .click();
+    await expect(
+      sheet.locator(".subitem-open").filter({ hasText: "Design the header" }),
+    ).toBeVisible();
+    await page.screenshot({ path: "../../artifacts/subitems-desktop.png" });
+    childId = (
+      await db.task.findFirstOrThrow({ where: { parentId: root.taskId } })
+    ).id;
+    const state = await ok(
+      await page.request.get(
+        `/api/v1/boards/state?boardId=${board}&query=${encodeURIComponent(JSON.stringify({ taskId: childId }))}`,
+      ),
+    );
+    expect(state.tasks.map((t: { id: string }) => t.id)).toEqual([root.taskId]);
+    expect(state.focusedTask.parentName).toBe("Ship the website");
+    expect(state.tasks[0].childSummary).toEqual({ total: 1, done: 0 });
+    await sheet
+      .locator(".subitem-open")
+      .filter({ hasText: "Design the header" })
+      .click();
+    await expect(
+      sheet.getByText("Subitem of", { exact: false }).first(),
+    ).toBeVisible();
+    await expect(
+      sheet.getByRole("combobox", { name: "Task group", exact: true }),
+    ).toBeDisabled();
+    await ok(
+      await post(page, "/api/v1/boards/update", {
+        taskId: childId,
+        revision: 1,
+        changes: {
+          name: "Design the navigation",
+          assigneeIds: [owner.id],
+          startDate: "2026-10-25",
+          dueDate: "2026-10-31",
+        },
+      }),
+    );
+    const search = await ok(
+      await page.request.get("/api/v1/search/tasks?q=navigation"),
+    );
+    expect(search.tasks[0]).toMatchObject({
+      id: childId,
+      parentId: root.taskId,
+      recordName: "Subitem",
+    });
+    await ok(
+      await post(page, "/api/v1/boards/comment", {
+        taskId: childId,
+        createKey: createRecordId(),
+        body: "Ready for review",
+        mentionIds: [],
+      }),
+    );
+    expect(
+      (
+        await ok(
+          await page.request.get(`/api/v1/boards/comments?taskId=${childId}`),
+        )
+      )[0].body,
+    ).toBe("Ready for review");
+    expect(
+      (
+        await page.request.get(`/api/v1/attachments?taskId=${childId}`)
+      ).status(),
+    ).toBe(200);
+    const upload = await page.request.post(
+      `/api/v1/attachments?taskId=${childId}`,
+      {
+        headers: {
+          origin: ORIGIN,
+          "content-type": "text/plain",
+          "x-yuzu-file-name": "subitem-notes.txt",
+          "x-yuzu-upload-key": createRecordId(),
+        },
+        data: Buffer.from("Notes attached to this subitem.\n"),
+      },
+    );
+    expect(upload.status(), await upload.text()).toBe(201);
+    const fileId = (await upload.json()).data.id;
+    expect(
+      (await page.request.get(`/api/v1/attachments/${fileId}`)).status(),
+    ).toBe(200);
+    const config = {
+      layout: "table",
+      scope: "SUBITEMS",
+      search: "navigation",
+      groupId: null,
+      statusId: null,
+      sort: "created",
+      archived: false,
+      assignee: "me",
+      priority: "all",
+      due: "all",
+    };
+    const children = await ok(
+      await page.request.get(
+        `/api/v1/boards/state?boardId=${board}&query=${encodeURIComponent(JSON.stringify({ config }))}`,
+      ),
+    );
+    expect(children.tasks.map((t: { id: string }) => t.id)).toEqual([childId]);
+    const range = { config, from: "2026-10-01", to: "2026-11-01" };
+    const calendar = await ok(
+      await page.request.get(
+        `/api/v1/boards/calendar?boardId=${board}&query=${encodeURIComponent(JSON.stringify(range))}`,
+      ),
+    );
+    expect(calendar.tasks.map((t: { id: string }) => t.id)).toEqual([childId]);
+    const timeline = await ok(
+      await page.request.get(
+        `/api/v1/boards/timeline?boardId=${board}&query=${encodeURIComponent(JSON.stringify(range))}`,
+      ),
+    );
+    expect(timeline.tasks.map((t: { id: string }) => t.id)).toEqual([childId]);
+    const dashboard = await ok(
+      await page.request.get(`/api/v1/dashboard?workspaceId=${workspace.id}`),
+    );
+    expect(dashboard.total).toBe(1);
+    expect(dashboard.subitems).toMatchObject({ total: 1, mine: 1 });
+    expect(
+      (
+        await post(page, "/api/v1/boards/update", {
+          taskId: childId,
+          revision: 2,
+          changes: { groupId: null },
+        })
+      ).status(),
+    ).toBe(422);
+    expect(
+      (
+        await post(page, "/api/v1/boards/create-task", {
+          boardId: board,
+          parentId: childId,
+          name: "Nested",
+          createKey: createRecordId(),
+        })
+      ).status(),
+    ).toBe(404);
+    const csv = await post(page, "/api/v1/boards/export", {
+      boardId: board,
+      scope: "BOARD",
+      includeArchived: false,
+    });
+    expect(csv.status()).toBe(200);
+    expect(await csv.text()).not.toContain("Design the navigation");
+    const readToken = await ok(
+      await post(page, "/api/v1/tokens/create", {
+        name: "Subitem read",
+        access: "READ",
+        expires: "30",
+      }),
+    );
+    expect(
+      (
+        await page.request.get(
+          `/api/v1/boards/subitems?boardId=${board}&parentId=${root.taskId}`,
+          { headers: { authorization: `Bearer ${readToken.token}` } },
+        )
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await page.request.post("/api/v1/boards/update", {
+          headers: { authorization: `Bearer ${readToken.token}` },
+          data: {
+            taskId: childId,
+            revision: 2,
+            changes: { name: "No read-token write" },
+          },
+        })
+      ).status(),
+    ).toBe(403);
+    const writeToken = await ok(
+      await post(page, "/api/v1/tokens/create", {
+        name: "Subitem write",
+        access: "WRITE",
+        expires: "30",
+      }),
+    );
+    const tokenInput = {
+      boardId: board,
+      parentId: root.taskId,
+      name: "Token subitem",
+      createKey: createRecordId(),
+    };
+    const tokenCreate = await page.request.post("/api/v1/boards/create-task", {
+      headers: { authorization: `Bearer ${writeToken.token}` },
+      data: tokenInput,
+    });
+    const tokenChild = await ok(tokenCreate);
+    expect(
+      (
+        await ok(
+          await page.request.post("/api/v1/boards/create-task", {
+            headers: { authorization: `Bearer ${writeToken.token}` },
+            data: tokenInput,
+          }),
+        )
+      ).taskId,
+    ).toBe(tokenChild.taskId);
+    await page.goto(`/boards/${board}?layout=table`);
+    await page
+      .getByRole("button", {
+        name: "Subitems of Ship the website",
+        exact: true,
+      })
+      .click();
+    await expect(
+      page.locator(`tr[data-subitem="true"][data-task-id="${childId}"]`),
+    ).toContainText("Design the navigation");
+    await page
+      .getByRole("combobox", { name: "Record scope" })
+      .selectOption("SUBITEMS");
+    await expect(page.locator(`tr[data-task-id="${root.taskId}"]`)).toHaveCount(
+      0,
+    );
+    await expect(page.locator(`tr[data-task-id="${childId}"]`)).toHaveCount(1);
+    await page
+      .getByRole("combobox", { name: "Record scope" })
+      .selectOption("BOTH");
+    await expect(page.locator(`tr[data-task-id="${root.taskId}"]`)).toHaveCount(
+      1,
+    );
+    await expect(page.locator(`tr[data-task-id="${childId}"]`)).toHaveCount(1);
+    const viewId = createRecordId();
+    await ok(
+      await post(page, "/api/v1/boards/save-view", {
+        boardId: board,
+        id: viewId,
+        revision: 0,
+        name: "My subitems",
+        visibility: "PERSONAL",
+        config,
+      }),
+    );
+    const saved = await ok(
+      await page.request.get(`/api/v1/boards/state?boardId=${board}`),
+    );
+    expect(
+      saved.savedViews.find((v: { id: string }) => v.id === viewId).config
+        .scope,
+    ).toBe("SUBITEMS");
+    const parent = await db.task.findUniqueOrThrow({
+      where: { id: root.taskId },
+    });
+    expect(
+      (
+        await post(page, "/api/v1/boards/archive", {
+          taskId: root.taskId,
+          revision: parent.revision,
+        })
+      ).status(),
+    ).toBe(409);
+    await ok(
+      await post(page, "/api/v1/boards/archive", {
+        taskId: root.taskId,
+        revision: parent.revision,
+        childrenRevision: parent.childrenRevision,
+      }),
+    );
+    expect(
+      (await ok(await page.request.get("/api/v1/search/tasks?q=navigation")))
+        .total,
+    ).toBe(0);
+    expect(
+      (
+        await ok(
+          await page.request.get(
+            "/api/v1/search/tasks?q=navigation&archived=true",
+          ),
+        )
+      ).total,
+    ).toBe(1);
+    expect(
+      (
+        await post(page, "/api/v1/boards/update", {
+          taskId: childId,
+          revision: 2,
+          changes: { name: "Forbidden" },
+        })
+      ).status(),
+    ).toBe(403);
+    await page.goto(`/boards/${board}?task=${childId}`);
+    await expect(
+      page.getByRole("dialog").getByText("Ship the website", { exact: true }),
+    ).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByRole("dialog")).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: "../../artifacts/subitems-mobile-light.png",
+    });
+    await page
+      .context()
+      .addCookies([{ name: "yuzu-mode", value: "dark", url: ORIGIN }]);
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(
+      page.getByRole("dialog").getByText("Ship the website", { exact: true }),
+    ).toBeVisible();
+    await page.screenshot({
+      path: "../../artifacts/subitems-mobile-dark.png",
+      animations: "disabled",
+    });
+  } finally {
+    await db.boardProposal.deleteMany({ where: { parentTaskId: root.taskId } });
+    await db.task.deleteMany({ where: { parentId: root.taskId } });
+  }
+});
+
+test("subitem Trash preserves independent flags and restores ancestors only with confirmation", async ({
+  page,
+}) => {
+  const { board } = await setup(page);
+  const db = getDatabase();
+  const root = await ok(
+    await post(page, "/api/v1/boards/create-task", {
+      boardId: board,
+      name: "Parent for Trash",
+      createKey: createRecordId(),
+    }),
+  );
+  const child = await ok(
+    await post(page, "/api/v1/boards/create-task", {
+      boardId: board,
+      parentId: root.taskId,
+      name: "Independent child Trash",
+      createKey: createRecordId(),
+    }),
+  );
+  try {
+    await ok(
+      await post(page, "/api/v1/trash/delete-record", {
+        id: child.taskId,
+        revision: 1,
+      }),
+    );
+    const parent = await db.task.findUniqueOrThrow({
+      where: { id: root.taskId },
+    });
+    await ok(
+      await post(page, "/api/v1/trash/delete-record", {
+        id: root.taskId,
+        revision: parent.revision,
+        childrenRevision: parent.childrenRevision,
+      }),
+    );
+    const trash = await ok(
+      await page.request.get(`/api/v1/trash/list?boardId=${board}`),
+    );
+    expect(
+      trash.records.find((r: { id: string }) => r.id === root.taskId),
+    ).toMatchObject({ childCount: 1 });
+    expect(
+      trash.records.find((r: { id: string }) => r.id === child.taskId),
+    ).toMatchObject({ parentId: root.taskId, parentDeleted: true });
+    expect(
+      (
+        await post(page, "/api/v1/trash/restore-record", {
+          id: child.taskId,
+          withParents: false,
+        })
+      ).status(),
+    ).toBe(409);
+    await ok(
+      await post(page, "/api/v1/trash/restore-record", {
+        id: child.taskId,
+        withParents: true,
+      }),
+    );
+    expect(
+      (await db.task.findUniqueOrThrow({ where: { id: root.taskId } }))
+        .deletedAt,
+    ).toBeNull();
+    expect(
+      (await db.task.findUniqueOrThrow({ where: { id: child.taskId } }))
+        .deletedAt,
+    ).toBeNull();
+  } finally {
+    await db.task.deleteMany({ where: { parentId: root.taskId } });
+  }
+});
+
+test("protected child requests retain parent context and linked rollups refresh on inherited archive", async ({
+  page,
+  browser,
+}) => {
+  const { workspace, board } = await setup(page);
+  const db = getDatabase();
+  const root = await ok(
+    await post(page, "/api/v1/boards/create-task", {
+      boardId: board,
+      name: "Parent with approvals",
+      createKey: createRecordId(),
+    }),
+  );
+  const reviewerId = createRecordId();
+  const reviewer = await db.user.create({
+    data: {
+      id: reviewerId,
+      accounts: {
+        create: {
+          accountId: reviewerId,
+          providerId: "credential",
+          password: await (
+            await import("better-auth/crypto")
+          ).hashPassword("subitem-reviewer-password-123"),
+        },
+      },
+      name: "Subitem reviewer",
+      email: "reviewer@example.test",
+      emailVerified: true,
+      role: "MEMBER",
+      memberships: { create: { workspaceId: workspace.id } },
+    },
+  });
+  const reviewerContext = await browser.newContext({ baseURL: ORIGIN });
+  expect(
+    (
+      await reviewerContext.request.post("/api/v1/session/sign-in", {
+        headers: { origin: ORIGIN },
+        data: {
+          email: reviewer.email,
+          password: "subitem-reviewer-password-123",
+        },
+      })
+    ).status(),
+  ).toBe(200);
+  const nameField = await db.boardColumn.findFirstOrThrow({
+    where: { boardId: board, key: "name" },
+  });
+  await ok(
+    await post(page, "/api/v1/approvals/configure", {
+      boardId: board,
+      version: 0,
+      enabled: true,
+      requireCreation: true,
+      requireChanges: true,
+      requireArchive: false,
+      protectedFieldIds: [nameField.id],
+      primaryApproverId: reviewer.id,
+      backupApproverId: null,
+    }),
+  );
+  const decide = (proposalId: string) =>
+    reviewerContext.request.post("/api/v1/approvals/decide", {
+      headers: { origin: ORIGIN },
+      data: { proposalId, action: "approve" },
+    });
+  try {
+    await page.goto(`/boards/${board}?task=${root.taskId}`);
+    const sheet = page.getByRole("dialog");
+    await sheet
+      .getByRole("textbox", { name: "Subitem name", exact: true })
+      .fill("Protected child");
+    await sheet
+      .getByRole("button", { name: "Add subitem", exact: true })
+      .click();
+    await expect(
+      sheet.getByRole("link", { name: "View requests", exact: true }),
+    ).toBeVisible();
+    await expect(
+      sheet
+        .getByRole("status")
+        .filter({ hasText: "Subitem sent for approval." }),
+    ).toContainText("Subitem sent for approval.");
+    const pending = {
+      proposalId: (
+        await db.boardProposal.findFirstOrThrow({
+          where: { parentTaskId: root.taskId, status: "PENDING" },
+        })
+      ).id,
+    };
+    expect(await db.task.count({ where: { parentId: root.taskId } })).toBe(0);
+    const queue = await ok(
+      await reviewerContext.request.get("/api/v1/approvals/queue"),
+    );
+    expect(
+      queue.proposals.find((p: { id: string }) => p.id === pending.proposalId),
+    ).toMatchObject({
+      canDecide: true,
+      name: "Protected child · Subitem of Parent with approvals",
+    });
+    expect(
+      (
+        await post(page, "/api/v1/approvals/decide", {
+          proposalId: pending.proposalId,
+          action: "approve",
+        })
+      ).status(),
+    ).toBe(403);
+    const applied = await ok(await decide(pending.proposalId));
+    const childId = applied.taskId;
+    expect((await decide(pending.proposalId)).status()).toBe(409);
+    const change = await ok(
+      await post(page, "/api/v1/boards/update", {
+        taskId: childId,
+        revision: 1,
+        changes: { name: "Accepted child edit" },
+      }),
+    );
+    await ok(
+      await post(page, "/api/v1/boards/update", {
+        taskId: root.taskId,
+        revision: 1,
+        changes: { description: "Unrelated parent notes" },
+      }),
+    );
+    expect((await ok(await decide(change.proposalId))).status).toBe("APPROVED");
+    expect(
+      (await db.task.findUniqueOrThrow({ where: { id: childId } })).name,
+    ).toBe("Accepted child edit");
+    const linkedBoard = await ok(
+      await post(page, "/api/v1/boards/create-board", {
+        workspaceId: workspace.id,
+        name: "Linked workload",
+      }),
+    );
+    const linkedRoot = await ok(
+      await post(page, "/api/v1/boards/create-task", {
+        boardId: linkedBoard.id,
+        name: "Linked record",
+        createKey: createRecordId(),
+      }),
+    );
+    const relation = await ok(
+      await post(page, "/api/v1/boards/field", {
+        boardId: linkedBoard.id,
+        name: "Work links",
+        type: "RELATION",
+        relation: {
+          targetBoardId: board,
+          many: true,
+          mirrorMany: true,
+          mirrorName: "Related records",
+        },
+      }),
+    );
+    const rollup = await ok(
+      await post(page, "/api/v1/boards/field", {
+        boardId: linkedBoard.id,
+        name: "Linked count",
+        type: "ROLLUP",
+        rollup: {
+          relationFieldId: relation.id,
+          aggregate: "count",
+          targetFieldId: null,
+        },
+      }),
+    );
+    await ok(
+      await post(page, "/api/v1/boards/update", {
+        taskId: linkedRoot.taskId,
+        revision: 1,
+        changes: { fieldValues: { [relation.id]: [childId] } },
+      }),
+    );
+    const mirror = await db.boardColumn.findFirstOrThrow({
+      where: { boardId: board, type: "RELATION", name: "Related records" },
+    });
+    const childRollup = await ok(
+      await post(page, "/api/v1/boards/field", {
+        boardId: board,
+        name: "Child linked count",
+        type: "ROLLUP",
+        rollup: {
+          relationFieldId: mirror.id,
+          aggregate: "count",
+          targetFieldId: null,
+        },
+      }),
+    );
+    const breakdown = await ok(
+      await page.request.get(
+        `/api/v1/boards/subitems?boardId=${board}&parentId=${root.taskId}`,
+      ),
+    );
+    expect(breakdown.items[0].fieldValues[childRollup.id]).toBe(1);
+    expect(breakdown.linked[linkedRoot.taskId].name).toBe("Linked record");
+    await page.goto(`/boards/${linkedBoard.id}?layout=table`);
+    await expect(page.locator(".board-surface")).toHaveAttribute(
+      "data-connection",
+      "live",
+    );
+    const row = page.locator(`tr[data-task-id="${linkedRoot.taskId}"]`);
+    await expect(
+      row.getByRole("cell", { name: "1", exact: true }),
+    ).toBeVisible();
+    const parent = await db.task.findUniqueOrThrow({
+      where: { id: root.taskId },
+    });
+    await ok(
+      await post(page, "/api/v1/boards/archive", {
+        taskId: root.taskId,
+        revision: parent.revision,
+        childrenRevision: parent.childrenRevision,
+      }),
+    );
+    await expect(row.getByRole("cell", { name: "0", exact: true })).toBeVisible(
+      { timeout: 10000 },
+    );
+    const linked = await ok(
+      await page.request.get(`/api/v1/boards/state?boardId=${linkedBoard.id}`),
+    );
+    expect(linked.tasks[0].fieldValues[rollup.id]).toBe(0);
+  } finally {
+    await reviewerContext.close();
+    await db.boardProposal.deleteMany({ where: { boardId: board } });
+    await db.task.deleteMany({ where: { parentId: root.taskId } });
+  }
+});
