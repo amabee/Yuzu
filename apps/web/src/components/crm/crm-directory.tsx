@@ -74,6 +74,13 @@ export function CrmDirectoryScreen({
   const toast = (message: string, kind: YuzuToastNotice["kind"] = "success") =>
     setNotice({ id: crypto.randomUUID(), kind, message });
   const live = useBoardLiveSync(scope.boardId, scope.principalId);
+  // Changes on the other collection (a renamed company, a contact's links,
+  // a stacked card of the other type) refresh this screen live as well.
+  const related = useBoardLiveSync(
+    scope.relatedBoardId,
+    scope.principalId,
+    crmKeys.board(scope),
+  );
   const directory = useCrmDirectory(scope, query, live.syncInterval);
   const save = useCrmSave(scope);
   const create = useCrmCreate(scope);
@@ -190,7 +197,11 @@ export function CrmDirectoryScreen({
   const first = data && data.total ? (data.page - 1) * CRM_PAGE_SIZE + 1 : 0;
   const last = data ? first + data.records.length - (data.total ? 1 : 0) : 0;
   return (
-    <div className="crm-page">
+    <div
+      className="crm-page"
+      data-connection={live.status}
+      data-related-connection={related.status}
+    >
       <PageCrumbs
         items={[{ label: "CRM", href: "/crm" }, { label: text.title }]}
       />

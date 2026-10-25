@@ -43,9 +43,14 @@ export async function CrmPage({
       `${title} aren't available to you`,
       "CRM is shared by workspace members. Ask an administrator to add you to a workspace.",
     );
-  let boardId: string;
+  let boardId: string, relatedBoardId: string;
   try {
     boardId = await crmCollection(user, workspace.id, type);
+    relatedBoardId = await crmCollection(
+      user,
+      workspace.id,
+      type === "COMPANY" ? "CONTACT" : "COMPANY",
+    );
   } catch (error) {
     if (error instanceof SetupError)
       return unavailable(`${title} couldn't open`, error.message);
@@ -54,7 +59,13 @@ export async function CrmPage({
   return (
     <CrmDirectoryScreen
       key={`${workspace.id}:${type}`}
-      scope={{ principalId: user.id, workspaceId: workspace.id, boardId, type }}
+      scope={{
+        principalId: user.id,
+        workspaceId: workspace.id,
+        boardId,
+        relatedBoardId,
+        type,
+      }}
       workspaceName={workspace.name}
       initialRecord={recordId.safeParse(params.record).data ?? null}
     />
