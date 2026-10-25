@@ -492,7 +492,9 @@ describe("real gated subitem services", () => {
         where: taskWhere(f.boardId, null, f.owner.id, "2026-10-24"),
       }),
     ).toBe(1);
-    expect(await serial((tx) => loadTask(tx, first.items[0].id))).toBeNull();
+    expect(
+      await serial((tx) => loadTask(tx, first.items[0].id, false)),
+    ).toBeNull();
   });
   it("does not allow writes through maintenance, deactivation or archived containers", async () => {
     const f = await fixture();
@@ -850,5 +852,32 @@ describe("real gated subitem services", () => {
         },
       }),
     ).rejects.toThrow();
+  });
+  it("purging an independent child advances the retained parent’s hierarchy token", async () => {
+    const f = await fixture();
+    const child = appliedId(await create(f));
+    await serial((tx) =>
+      changeSubitemTrashInTransaction(
+        tx,
+        { taskId: child, revision: 1 },
+        f.reviewer.id,
+      ),
+    );
+    const before = await db.task.findUniqueOrThrow({
+      where: { id: f.parentId },
+    });
+    await eraseBatch(
+      f.reviewer.id,
+      eraseSelection(new Date(Date.now() + 1000), {
+        kind: "record",
+        id: child,
+      }),
+      "test child retention",
+    );
+    expect(await db.task.findUnique({ where: { id: child } })).toBeNull();
+    expect(
+      (await db.task.findUniqueOrThrow({ where: { id: f.parentId } }))
+        .childrenRevision,
+    ).toBeGreaterThan(before.childrenRevision);
   });
 });

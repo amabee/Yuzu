@@ -166,6 +166,16 @@ export function parseImportCsv(
   if (records.length < 2)
     throw new Error("Include a header row and at least one task.");
   const [headers, ...rows] = records;
+  if (
+    headers.some((h) =>
+      /^(parent[ _-]?(id|task|name)?|subitems?|hierarchy|depth|level)$/i.test(
+        h.trim(),
+      ),
+    )
+  )
+    throw new Error(
+      "Subitems are not supported in CSV imports. Remove hierarchy columns and import tasks only.",
+    );
   if (headers.some((header) => !header.trim()))
     throw new Error("Give every CSV column a header.");
   if (rows.some((row) => row.length !== headers.length))

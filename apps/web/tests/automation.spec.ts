@@ -1032,3 +1032,116 @@ test("archived boards skip queued rules without pausing them and resume after re
     )
     .toBe("URGENT");
 });
+
+test("subitem automation is opt-in, renders parent context and cannot set inherited groups", async ({
+  page,
+}) => {
+  const { boardId } = await ownerBoard(page);
+  const db = getDatabase();
+  const ok = async (response: Awaited<ReturnType<typeof post>>) => {
+    expect(response.status(), await response.text()).toBe(200);
+    return (await response.json()).data;
+  };
+  const root = await ok(
+    await post(page, "/api/v1/boards/create-task", {
+      boardId,
+      name: "Campaign",
+      createKey: crypto.randomUUID(),
+    }),
+  );
+  try {
+    await ok(
+      await post(page, "/api/v1/automations/save", {
+        boardId,
+        name: "Legacy roots",
+        trigger: { kind: "task.created" },
+        actions: [{ kind: "set.priority", value: "URGENT" }],
+      }),
+    );
+    const opted = await ok(
+      await post(page, "/api/v1/automations/save", {
+        boardId,
+        name: "Child notification",
+        recordScope: "SUBITEMS",
+        trigger: { kind: "task.created" },
+        actions: [
+          { kind: "set.priority", value: "HIGH" },
+          {
+            kind: "notify",
+            to: "creator",
+            message: "${task} belongs to ${parent}",
+          },
+        ],
+      }),
+    );
+    const child = await ok(
+      await post(page, "/api/v1/boards/create-task", {
+        boardId,
+        parentId: root.taskId,
+        name: "Write copy",
+        createKey: crypto.randomUUID(),
+      }),
+    );
+    await expect
+      .poll(
+        async () =>
+          (await db.task.findUniqueOrThrow({ where: { id: child.taskId } }))
+            .priority,
+        { timeout: 20000 },
+      )
+      .toBe("HIGH");
+    await expect
+      .poll(
+        async () =>
+          Boolean(
+            await db.notification.findFirst({
+              where: {
+                taskId: child.taskId,
+                kind: "AUTOMATION",
+                message: "Write copy belongs to Campaign",
+              },
+            }),
+          ),
+        { timeout: 20000 },
+      )
+      .toBe(true);
+    const unsafe = await ok(
+      await post(page, "/api/v1/automations/save", {
+        boardId,
+        name: "Child group forbidden",
+        recordScope: "SUBITEMS",
+        trigger: { kind: "task.created" },
+        actions: [{ kind: "set.group", value: null }],
+      }),
+    );
+    const next = await ok(
+      await post(page, "/api/v1/boards/create-task", {
+        boardId,
+        parentId: root.taskId,
+        name: "Design artwork",
+        createKey: crypto.randomUUID(),
+      }),
+    );
+    await expect
+      .poll(
+        async () =>
+          (
+            await db.automationRun.findFirst({
+              where: { ruleId: unsafe.id, taskId: next.taskId },
+            })
+          )?.outcome,
+        { timeout: 20000 },
+      )
+      .toBe("SKIPPED");
+    expect(
+      (await db.task.findUniqueOrThrow({ where: { id: next.taskId } })).groupId,
+    ).toBeNull();
+    expect(
+      (await db.automationRule.findUniqueOrThrow({ where: { id: opted.id } }))
+        .recordScope,
+    ).toBe("SUBITEMS");
+  } finally {
+    await db.boardProposal.deleteMany({ where: { parentTaskId: root.taskId } });
+    await db.task.deleteMany({ where: { parentId: root.taskId } });
+  }
+});

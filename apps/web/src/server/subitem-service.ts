@@ -1,3 +1,4 @@
+import { linkedRecords, fillRollups } from "./record-links-service";
 import type { DatabaseTransaction } from "@yuzu/database";
 import {
   createTaskSchema,
@@ -36,7 +37,7 @@ import {
   taskAvailable,
 } from "./task-hierarchy";
 
-// No HTTP handler imports this contract. The ordinary task schema stays strict.
+// The root-only domain contract remains strict for imports and automation actions.
 export const subitemCreateSchema = createTaskSchema
   .omit({ groupId: true })
   .extend({ parentId: recordId })
@@ -78,7 +79,7 @@ export async function prepareSubitemParent(
   await internalSubitemWrite(tx);
   return { context, parent };
 }
-/** Authenticated server callers only; deliberately not reachable from public routes. */
+/** The public create dispatcher supplies the current authenticated principal. */
 export async function createSubitemInTransaction(
   tx: DatabaseTransaction,
   input: unknown,
@@ -192,7 +193,13 @@ export async function listSubitemsInTransaction(
       parentId: null,
       deletedAt: null,
     },
-    select: { id: true, archivedAt: true, childrenRevision: true },
+    select: {
+      id: true,
+      archivedAt: true,
+      childrenRevision: true,
+      startDate: true,
+      dueDate: true,
+    },
   });
   if (!parent) throw unavailableTask();
   const where = {
@@ -208,6 +215,30 @@ export async function listSubitemsInTransaction(
         select: { maintenanceMode: true },
       })
     )?.maintenanceMode ?? true;
+  const activeWhere = {
+    boardId: body.boardId,
+    parentId: parent.id,
+    deletedAt: null,
+    archivedAt: null,
+  };
+  const summary = {
+    total: await tx.task.count({ where: activeWhere }),
+    done: await tx.task.count({ where: { ...activeWhere, statusId: "done" } }),
+  };
+  const outsideParentDates = Boolean(
+    (parent.startDate || parent.dueDate) &&
+    (await tx.task.count({
+      where: {
+        ...activeWhere,
+        OR: [
+          ...(parent.startDate
+            ? [{ startDate: { lt: parent.startDate } }]
+            : []),
+          ...(parent.dueDate ? [{ dueDate: { gt: parent.dueDate } }] : []),
+        ],
+      },
+    })),
+  );
   const total = await tx.task.count({ where });
   const done = await tx.task.count({ where: { ...where, statusId: "done" } });
   const cursor = body.cursor
@@ -242,11 +273,40 @@ export async function listSubitemsInTransaction(
   const items = page.map((task) => ({
     id: task.id,
     ...snapshot(task),
+    parentId: task.parentId,
+    parentName: task.parent?.name ?? null,
+    createdById: task.createdById,
+    createdByName: task.createdBy.name,
+    position: task.position,
+    commentCount: task._count.comments,
+    attachmentCount: task._count.attachments,
+    activity: task.activity.map((e) => ({
+      id: e.id,
+      action: e.action,
+      actor: e.actor.name,
+      createdAt: e.createdAt.toISOString(),
+    })),
     revision: task.revision,
     canEdit: !maintenance && !task.archivedAt && canEdit(task, context),
   }));
+  const relationIds = context.board.columns
+    .filter((c) => c.type === "RELATION")
+    .map((c) => c.id);
+  const linked = await linkedRecords(
+    tx,
+    context.user,
+    items.flatMap((item) =>
+      relationIds.flatMap((id) =>
+        Array.isArray(item.fieldValues[id]) ? item.fieldValues[id] : [],
+      ),
+    ),
+  );
+  await fillRollups(tx, context.board.columns, items, linked);
   return {
+    linked,
     items,
+    summary,
+    outsideParentDates,
     total,
     done,
     childrenRevision: parent.childrenRevision,
@@ -395,4 +455,17 @@ export async function changeSubitemTrashInTransaction(
     },
   });
   return { boardId: task.boardId, taskId: task.id };
+}
+
+export async function subitems(input: unknown, headers: Headers) {
+  const { requireIdentity } = await import("./team-access");
+  const { serial } = await import("./board-service");
+  const { user } = await requireIdentity(headers);
+  return serial((tx) => listSubitemsInTransaction(tx, input, user.id));
+}
+export async function reorderSubitem(input: unknown, headers: Headers) {
+  const { requireIdentity } = await import("./team-access");
+  const { serial } = await import("./board-service");
+  const { user } = await requireIdentity(headers);
+  return serial((tx) => reorderSubitemInTransaction(tx, input, user.id));
 }

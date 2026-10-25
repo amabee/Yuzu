@@ -1,3 +1,4 @@
+import { hierarchyScope } from "./task-hierarchy";
 import { after } from "next/server";
 import {
   createRecordId,
@@ -91,11 +92,16 @@ export async function syncLinks(
         where: {
           id: { in: [...new Set([...requested, ...existing])] },
           boardId: config.targetBoardId,
-          parentId: null,
+          AND: [hierarchyScope()],
           board: boardScope(user),
           deletedAt: null,
         },
-        select: { id: true, name: true, archivedAt: true },
+        select: {
+          id: true,
+          name: true,
+          archivedAt: true,
+          parent: { select: { name: true, archivedAt: true } },
+        },
       })
     ).map((task) => [task.id, task]),
   );
@@ -105,7 +111,7 @@ export async function syncLinks(
     if (!target && existing.has(id)) continue;
     if (!target)
       throw invalid("Choose records you can see on the linked board.");
-    if (!existing.has(id) && target.archivedAt)
+    if (!existing.has(id) && (target.archivedAt || target.parent?.archivedAt))
       throw invalid(`${target.name} is archived. Restore it before linking.`);
   }
   // Links the viewer can't see stay as they are.
@@ -186,19 +192,35 @@ export async function linkedRecords(
   const rows = await tx.task.findMany({
     where: {
       id: { in: [...new Set(ids)].slice(0, 5000) },
-      parentId: null,
+      AND: [hierarchyScope()],
       board: boardScope(user),
       deletedAt: null,
     },
-    select: { id: true, name: true, boardId: true, archivedAt: true },
+    select: {
+      id: true,
+      name: true,
+      boardId: true,
+      archivedAt: true,
+      parent: { select: { name: true, archivedAt: true } },
+      board: {
+        select: { archivedAt: true, project: { select: { archivedAt: true } } },
+      },
+    },
   });
   return Object.fromEntries(
     rows.map((row) => [
       row.id,
       {
-        name: row.name,
+        name: row.parent
+          ? `${row.name} · Subitem of ${row.parent.name}`
+          : row.name,
         boardId: row.boardId,
-        archived: Boolean(row.archivedAt),
+        archived: Boolean(
+          row.archivedAt ||
+          row.parent?.archivedAt ||
+          row.board.archivedAt ||
+          row.board.project?.archivedAt,
+        ),
       },
     ]),
   );
@@ -272,7 +294,7 @@ export async function linkOptions(
     const options = await tx.task.findMany({
       where: {
         boardId: config.targetBoardId,
-        parentId: null,
+        AND: [hierarchyScope(false)],
         board: boardScope(user),
         archivedAt: null,
         deletedAt: null,

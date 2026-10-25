@@ -1,3 +1,4 @@
+import { hierarchyScope } from "@/server/task-hierarchy";
 import Link from "next/link";
 import { PageCrumbs } from "@/components/page-crumbs";
 import { notFound } from "next/navigation";
@@ -112,6 +113,15 @@ export default async function ProjectPage({
       _count: true,
     }),
   ]);
+  const subitemCounts = await db.task.groupBy({
+    by: ["boardId"],
+    where: {
+      boardId: { in: boardIds },
+      parentId: { not: null },
+      AND: [hierarchyScope(false)],
+    },
+    _count: true,
+  });
   const count = (rows: typeof totals, id: string) =>
     rows.find((row) => row.boardId === id)?._count ?? 0;
   const memberIds = project.members.map((item) => item.user.id);
@@ -250,6 +260,7 @@ export default async function ProjectPage({
       ) : (
         <section aria-label="Boards" className="project-boards">
           {project.boards.map((board) => {
+            const childTotal = count(subitemCounts, board.id);
             const total = count(totals, board.id);
             const done = count(completed, board.id);
             const percent = total ? Math.round((done / total) * 100) : 0;
@@ -260,7 +271,7 @@ export default async function ProjectPage({
                   <small>
                     {total === 0
                       ? "No tasks yet"
-                      : `${done} of ${total} tasks done`}
+                      : `${done} of ${total} tasks done${childTotal ? ` · ${childTotal} subitems (separate)` : ""}`}
                   </small>
                 </div>
                 <div className="project-progress-cell">

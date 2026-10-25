@@ -3,7 +3,7 @@ import {
   boardArchiveSchema,
   commentChangeSchema,
   commentCreateSchema,
-  createTaskSchema,
+  publicCreateTaskSchema,
   recordId,
   reorderTaskSchema,
   taskActionSchema,
@@ -100,7 +100,7 @@ export const apiEndpoints: ApiEndpoint[] = [
     description:
       "Works for every board type (tasks, deals, custom records). createKey is a UUID you choose; send the same one again to safely retry. Built-in fields a board has turned off are refused, and a deal takes one owner.",
     access: "write",
-    body: createTaskSchema,
+    body: publicCreateTaskSchema,
     returns: "The new task's id",
   },
   {
@@ -133,6 +133,29 @@ export const apiEndpoints: ApiEndpoint[] = [
     returns: "The task's new revision",
   },
   {
+    method: "GET",
+    path: "/boards/subitems",
+    group: "Boards and tasks",
+    summary: "List a task’s subitems",
+    access: "read",
+    query: z.object({
+      boardId: recordId,
+      parentId: recordId,
+      cursor: recordId.optional(),
+      archived: z.enum(["true", "false"]).optional(),
+    }),
+    returns: "A page of 50 subitems, summary and cursor",
+  },
+  {
+    method: "POST",
+    path: "/boards/reorder-subitem",
+    group: "Boards and tasks",
+    summary: "Reorder siblings",
+    access: "write",
+    body: reorderTaskSchema,
+    returns: "The subitem’s board and id",
+  },
+  {
     method: "POST",
     path: "/boards/reorder",
     group: "Boards and tasks",
@@ -163,7 +186,11 @@ export const apiEndpoints: ApiEndpoint[] = [
     description:
       "Board managers and admins only. The record disappears everywhere until restored.",
     access: "write",
-    body: z.object({ id: recordId }),
+    body: z.object({
+      id: recordId,
+      revision: z.number().int().positive().optional(),
+      childrenRevision: z.number().int().nonnegative().optional(),
+    }),
     returns: "The board and record ids",
   },
   {

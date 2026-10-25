@@ -1,3 +1,10 @@
+import {
+  parentTaskSelect,
+  parentCanEdit,
+  taskAvailable,
+  taskArchived,
+  lockTaskRoot,
+} from "./task-hierarchy";
 import { getDatabase, type DatabaseTransaction } from "@yuzu/database";
 import {
   storageProvider,
@@ -31,12 +38,19 @@ async function taskAccess(
   write = false,
 ) {
   const task = await tx.task.findUnique({
-    where: { id: taskId, parentId: null },
-    include: { assignees: true, editors: true },
+    where: { id: taskId },
+    include: {
+      assignees: true,
+      editors: true,
+      parent: { select: parentTaskSelect },
+    },
   });
-  if (!task || task.deletedAt) throw missing();
+  if (!task || !taskAvailable(task)) throw missing();
+  if (write && task.parentId)
+    await lockTaskRoot(tx, task.parentId, task.boardId);
   const context = await access(tx, userId, task.boardId, write);
   const canEdit =
+    parentCanEdit(task, userId) ||
     context.canManage ||
     task.createdById === userId ||
     task.assignees.some((person) => person.userId === userId) ||
@@ -46,13 +60,13 @@ async function taskAccess(
   });
   return {
     task,
-    canEdit: !context.readOnly && !task.archivedAt && canEdit,
+    canEdit: !context.readOnly && !taskArchived(task) && canEdit,
     canManage: context.canManage,
     settings,
   };
 }
 function allowWrite(context: Awaited<ReturnType<typeof taskAccess>>) {
-  if (context.task.archivedAt)
+  if (taskArchived(context.task))
     throw new SetupError(
       409,
       "TASK_ARCHIVED",

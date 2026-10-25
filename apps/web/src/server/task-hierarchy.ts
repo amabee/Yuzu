@@ -3,6 +3,7 @@ import { SetupError } from "./setup/security";
 
 export const parentTaskSelect = {
   id: true,
+  name: true,
   boardId: true,
   parentId: true,
   groupId: true,
@@ -125,4 +126,33 @@ export async function guardRootLifecycle(
       "This breakdown changed. Refresh and review it before continuing.",
     );
   return root;
+}
+
+/** Effective lifecycle for the fixed, one-level hierarchy; compose with boardScope. */
+export function hierarchyScope(archived?: boolean): Prisma.TaskWhereInput {
+  const available: Prisma.TaskWhereInput = {
+    deletedAt: null,
+    OR: [{ parentId: null }, { parent: { deletedAt: null, parentId: null } }],
+  };
+  if (archived === undefined) return available;
+  if (!archived)
+    return {
+      deletedAt: null,
+      archivedAt: null,
+      OR: [
+        { parentId: null },
+        { parent: { deletedAt: null, parentId: null, archivedAt: null } },
+      ],
+    };
+  return {
+    AND: [
+      available,
+      {
+        OR: [
+          { archivedAt: { not: null } },
+          { parent: { archivedAt: { not: null } } },
+        ],
+      },
+    ],
+  };
 }

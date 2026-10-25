@@ -62,7 +62,10 @@ export async function exportBoardCsvForActor(
       "MAINTENANCE",
       "Exports are paused during maintenance.",
     );
-  const config = request.scope === "VIEW" ? request.config : null;
+  const config =
+    request.scope === "VIEW" && request.config
+      ? { ...request.config, scope: "ROOTS" as const }
+      : null;
   let result;
   try {
     result = await getDatabase().$transaction(

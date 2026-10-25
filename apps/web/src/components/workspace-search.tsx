@@ -320,6 +320,7 @@ export function WorkspaceSearch({ principalId }: { principalId: string }) {
                           {task.recordName !== "Task"
                             ? ` · ${task.recordName}`
                             : ""}
+                          {task.parentName ? ` / ${task.parentName}` : ""}
                           {task.archived ? " / Archived" : ""}
                         </small>
                         {task.description && (

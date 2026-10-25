@@ -28,3 +28,29 @@ export function mergeBoardState(
       : current.focusedTask,
   };
 }
+
+/** Update only existing copies; paged child lists share the board query prefix. */
+export function mapBoardTaskCopies<T>(
+  current: T,
+  update: (task: BoardState["tasks"][number]) => BoardState["tasks"][number],
+): T {
+  if (!current || typeof current !== "object") return current;
+  const value = current as Record<string, unknown>;
+  const next = { ...value };
+  for (const key of ["tasks", "items", "undated", "unscheduled"]) {
+    if (Array.isArray(value[key]))
+      next[key] = value[key].map((task) =>
+        task &&
+        typeof task === "object" &&
+        typeof task.id === "string" &&
+        typeof task.revision === "number"
+          ? update(task)
+          : task,
+      );
+  }
+  if (value.focusedTask && typeof value.focusedTask === "object")
+    next.focusedTask = update(value.focusedTask as BoardState["tasks"][number]);
+  if (Array.isArray(value.pages))
+    next.pages = value.pages.map((page) => mapBoardTaskCopies(page, update));
+  return next as T;
+}

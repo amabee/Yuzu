@@ -178,6 +178,7 @@ export const automationRuleInputSchema = z
     revision: z.number().int().positive().optional(),
     name: z.string().trim().min(1).max(80),
     enabled: z.boolean().default(true),
+    recordScope: z.enum(["ROOTS", "SUBITEMS", "BOTH"]).optional(),
     trigger: automationTriggerSchema,
     /** Whether every condition must match, or any one. */
     match: z.enum(["all", "any"]).default("all"),
@@ -221,6 +222,7 @@ export const automationOutcomes = [
 ] as const;
 
 export const automationRuleSchema = z.object({
+  recordScope: z.enum(["ROOTS", "SUBITEMS", "BOTH"]).optional(),
   id: recordId,
   boardId: recordId,
   name: z.string(),

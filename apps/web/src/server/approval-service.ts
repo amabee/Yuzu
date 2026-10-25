@@ -211,7 +211,7 @@ export async function configureApprovals(input: unknown, headers: Headers) {
 }
 export async function decideApproval(input: unknown, headers: Headers) {
   const { user } = await requireIdentity(headers);
-  return serial((tx) => decideApprovalInTransaction(tx, input, user.id));
+  return serial((tx) => decideApprovalInTransaction(tx, input, user.id, true));
 }
 export async function decideApprovalInTransaction(
   tx: DatabaseTransaction,
@@ -407,8 +407,6 @@ export async function approvalQueue(
   return getDatabase().$transaction(async (tx) => {
     const rows = await tx.boardProposal.findMany({
       where: {
-        parentTaskId: null,
-        AND: [{ OR: [{ taskId: null }, { task: { parentId: null } }] }],
         ...(requestId ? { id: recordId.parse(requestId) } : {}),
         board: boardScope(user),
         ...(isAdministrator(user.role)
@@ -439,7 +437,8 @@ export async function approvalQueue(
       include: {
         author: { select: { name: true } },
         decidedBy: { select: { name: true } },
-        task: { select: { name: true } },
+        task: { select: { name: true, parent: { select: { name: true } } } },
+        parentTask: { select: { name: true } },
         board: {
           include: { columns: true, groups: { orderBy: { position: "asc" } } },
         },
@@ -478,9 +477,7 @@ export async function approvalQueue(
         status: proposal.status,
         authorId: proposal.authorId,
         authorName: proposal.author.name,
-        name:
-          proposal.task?.name ??
-          String(changes.name ?? baseline.name ?? "Task request"),
+        name: `${proposal.task?.name ?? String(changes.name ?? baseline.name ?? "Task request")}${proposal.parentTask || proposal.task?.parent ? ` · Subitem of ${proposal.parentTask?.name ?? proposal.task?.parent?.name}` : ""}`,
         createdAt: proposal.createdAt.toISOString(),
         changes,
         baseline,

@@ -1,4 +1,5 @@
 "use client";
+import { SubitemTableRows } from "./subitem-table-rows";
 import { PauseSheetDecor } from "@/components/pause/pause-sheet";
 import { BoardArchiveControls } from "./board-archive-controls";
 import { ExportCsv } from "./export-csv";
@@ -7,10 +8,11 @@ import {
   PauseButton,
   PauseClose,
   PauseModal,
+  PauseDialog,
 } from "@/components/pause/pause-dialog";
 import { ImportCsv } from "./import-csv";
 import { matchesBoardView } from "@/lib/board-view";
-import { mergeBoardState } from "@/lib/board-cache";
+import { mapBoardTaskCopies, mergeBoardState } from "@/lib/board-cache";
 import { VirtualTableBody } from "./virtual-task-list";
 import { BoardFilters, BoardFilterSelect } from "./board-filters";
 import { SavedViewControls } from "./saved-view-controls";
@@ -415,7 +417,31 @@ export function BoardSurface({
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: boardKey }),
   });
+  const [archivePreview, setArchivePreview] = useState<{
+    task: BoardTask;
+    input: unknown;
+  } | null>(null);
+  const [completionPreview, setCompletionPreview] = useState<{
+    task: BoardTask;
+    changes: Partial<
+      Pick<BoardTask, "statusId" | "priority" | "startDate" | "dueDate">
+    >;
+    placement?: KanbanPlacement;
+  } | null>(null);
   const act = (action: string, input: unknown, base?: BoardTask) => {
+    if (action === "archive") {
+      const target = [
+        ...state.tasks,
+        ...(state.focusedTask ? [state.focusedTask] : []),
+      ].find((t) => t.id === (input as { taskId?: string }).taskId);
+      if (target && !target.parentId && (target.retainedChildCount ?? 0) > 0) {
+        setArchivePreview({
+          task: target,
+          input: { ...(input as object), requestKey: crypto.randomUUID() },
+        });
+        return;
+      }
+    }
     if (!mutation.isPending && !inlineMutation.isPending) {
       inlineMutation.reset();
       mutation.mutate({
@@ -507,16 +533,8 @@ export function BoardSurface({
         task.id === result.taskId && task.revision <= result.revision
           ? { ...task, ...variables.changes, revision: result.revision }
           : task;
-      queryClient.setQueriesData<BoardState>(
-        { queryKey: boardKey },
-        (current) =>
-          current && {
-            ...current,
-            tasks: current.tasks.map(update),
-            focusedTask: current.focusedTask
-              ? update(current.focusedTask)
-              : current.focusedTask,
-          },
+      queryClient.setQueriesData({ queryKey: boardKey }, (current) =>
+        mapBoardTaskCopies(current, update),
       );
     },
     onError: (error, _variables, context) => {
@@ -535,6 +553,16 @@ export function BoardSurface({
       Pick<BoardTask, "statusId" | "priority" | "startDate" | "dueDate">
     >,
   ) => {
+    if (
+      !busy &&
+      changes.statusId === "done" &&
+      !task.parentId &&
+      task.childSummary &&
+      task.childSummary.done < task.childSummary.total
+    ) {
+      setCompletionPreview({ task, changes });
+      return;
+    }
     if (!busy) inlineMutation.mutate({ task, changes });
   };
   const manualOrder = viewConfig.sort === "created";
@@ -552,6 +580,20 @@ export function BoardSurface({
   }) => {
     if (busy) return false;
     const changes = statusChanged ? { statusId: lane.statusId } : {};
+    if (
+      statusChanged &&
+      lane.statusId === "done" &&
+      !task.parentId &&
+      task.childSummary &&
+      task.childSummary.done < task.childSummary.total
+    ) {
+      setCompletionPreview({
+        task,
+        changes,
+        placement: placement ?? undefined,
+      });
+      return false;
+    }
     const waits =
       statusChanged &&
       needsApproval(state.approvalPolicy, "UPDATE", changes, state.fields);
@@ -649,6 +691,7 @@ export function BoardSurface({
     configureView("layout", value);
     linkView({ layout: value === "board" ? "kanban" : value });
   };
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const visibleStatuses = (statuses.length ? statuses : [group]).filter(
@@ -873,6 +916,31 @@ export function BoardSurface({
           record={record}
         />
       )}
+      {record.type === "TASK" && (
+        <p className="text-xs text-muted-foreground py-1">
+          CSV import/export includes tasks only. Subitems are not included.
+        </p>
+      )}
+      {record.type === "TASK" && (
+        <label className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
+          Show
+          <select
+            aria-label="Record scope"
+            className="rounded-md border bg-background px-3 py-1 text-foreground"
+            value={viewConfig.scope ?? "ROOTS"}
+            onChange={(e) =>
+              configureView(
+                "scope",
+                e.target.value as "ROOTS" | "SUBITEMS" | "BOTH",
+              )
+            }
+          >
+            <option value="ROOTS">Tasks</option>
+            <option value="SUBITEMS">Subitems</option>
+            <option value="BOTH">Both</option>
+          </select>
+        </label>
+      )}
       {view === "board" && !record.builtins.status.on ? (
         <p role="status" className="audit-empty">
           The Kanban view groups {nouns} by {builtinName(record, "status")},
@@ -974,7 +1042,7 @@ export function BoardSurface({
           })}
           state={state}
           busy={busy || archived}
-          manualOrder={manualOrder}
+          manualOrder={manualOrder && (viewConfig.scope ?? "ROOTS") === "ROOTS"}
           canAdd={!archived && !state.readOnly}
           formatCustom={formatCustom}
           onOpen={(task) => {
@@ -982,7 +1050,11 @@ export function BoardSurface({
             setSelectedId(task.id);
           }}
           onArchive={(task) =>
-            act("archive", { taskId: task.id, revision: task.revision })
+            act("archive", {
+              taskId: task.id,
+              revision: task.revision,
+              childrenRevision: task.childrenRevision ?? 0,
+            })
           }
           onAdd={(lane) => {
             mutation.reset();
@@ -1028,6 +1100,23 @@ export function BoardSurface({
             <VirtualTableBody
               items={tasks}
               columns={Math.max(fields.length, 1) + (checklistOn ? 1 : 0)}
+              renderAfter={
+                record.type === "TASK" &&
+                (viewConfig.scope ?? "ROOTS") === "ROOTS" &&
+                expandedTaskId
+                  ? (task) =>
+                      task.id === expandedTaskId ? (
+                        <SubitemTableRows
+                          state={state}
+                          parent={task}
+                          fields={fields}
+                          checklist={checklistOn}
+                          onOpen={setSelectedId}
+                          formatCustom={formatCustom}
+                        />
+                      ) : null
+                  : undefined
+              }
             >
               {(task) => (
                 <tr key={task.id} data-task-id={task.id}>
@@ -1046,15 +1135,40 @@ export function BoardSurface({
                   ).map((field) => (
                     <td key={field.id} className="border-b px-4 py-3">
                       {field.key === "name" ? (
-                        <button
-                          className="text-left font-medium text-primary"
-                          onClick={() => {
-                            mutation.reset();
-                            setSelectedId(task.id);
-                          }}
-                        >
-                          {task.name}
-                        </button>
+                        <>
+                          <button
+                            className="text-left font-medium text-primary"
+                            onClick={() => {
+                              mutation.reset();
+                              setSelectedId(task.id);
+                            }}
+                          >
+                            {task.name}
+                            {task.parentName && (
+                              <small className="block text-muted-foreground">
+                                Subitem of {task.parentName}
+                              </small>
+                            )}
+                          </button>
+                          {!task.parentId &&
+                            record.type === "TASK" &&
+                            (viewConfig.scope ?? "ROOTS") === "ROOTS" && (
+                              <button
+                                type="button"
+                                className="ml-3 text-xs text-muted-foreground"
+                                aria-label={`Subitems of ${task.name}`}
+                                aria-expanded={expandedTaskId === task.id}
+                                onClick={() =>
+                                  setExpandedTaskId(
+                                    expandedTaskId === task.id ? null : task.id,
+                                  )
+                                }
+                              >
+                                {expandedTaskId === task.id ? "▾" : "▸"}{" "}
+                                {task.childSummary?.total ?? 0} subitems
+                              </button>
+                            )}
+                        </>
                       ) : field.key === "status" ? (
                         <select
                           aria-label={`Status for ${task.name}`}
@@ -1352,6 +1466,62 @@ export function BoardSurface({
           </div>
         </SheetContent>
       </Sheet>
+      <PauseDialog
+        open={Boolean(archivePreview)}
+        onOpenChange={(open) => {
+          if (!open) setArchivePreview(null);
+        }}
+        intent="warning"
+        title={`Archive “${archivePreview?.task.name ?? "task"}”?`}
+        description={`${archivePreview?.task.retainedChildCount ?? 0} retained subitems will become read-only with this task. Their independent archive and Trash flags are preserved.`}
+        actions={
+          <>
+            <PauseClose asChild>
+              <PauseButton>Cancel</PauseButton>
+            </PauseClose>
+            <PauseButton
+              tone="primary"
+              disabled={busy}
+              onClick={() => {
+                if (archivePreview)
+                  mutation.mutate({
+                    action: "archive",
+                    input: archivePreview.input,
+                  });
+                setArchivePreview(null);
+              }}
+            >
+              Archive task
+            </PauseButton>
+          </>
+        }
+      />
+      <PauseDialog
+        open={Boolean(completionPreview)}
+        onOpenChange={(open) => {
+          if (!open) setCompletionPreview(null);
+        }}
+        intent="warning"
+        title="Subitems are still open"
+        description="Complete this parent anyway? Subitems keep their own status and dates."
+        actions={
+          <>
+            <PauseClose asChild>
+              <PauseButton>Cancel</PauseButton>
+            </PauseClose>
+            <PauseButton
+              tone="primary"
+              disabled={busy}
+              onClick={() => {
+                if (completionPreview) inlineMutation.mutate(completionPreview);
+                setCompletionPreview(null);
+              }}
+            >
+              Complete parent
+            </PauseButton>
+          </>
+        }
+      />
       <PauseModal
         open={trashOpen}
         onOpenChange={setTrashOpen}
@@ -1372,7 +1542,7 @@ export function BoardSurface({
         )}
       </PauseModal>
       <Sheet
-        open={creating || Boolean(selected)}
+        open={creating || Boolean(selectedId)}
         onOpenChange={(open) => {
           if (!open) {
             setCreating(false);
@@ -1395,27 +1565,39 @@ export function BoardSurface({
           <span className="pause-clip" aria-hidden="true">
             <PauseSlice />
           </span>
-          <TaskEditor
-            key={
-              selected?.id ??
-              `create-${createDueDate ?? ""}-${createStatusId ?? ""}`
-            }
-            defaultDueDate={selected ? undefined : createDueDate}
-            defaultStatusId={selected ? undefined : createStatusId}
-            state={state}
-            task={selected}
-            boardName={name}
-            syncInterval={live.syncInterval}
-            onNotice={notify}
-            onTransferNotice={transferNotice}
-            uploads={uploads}
-            pending={busy}
-            error={mutation.error?.message}
-            onSubmit={(input) =>
-              act(selected ? "update" : "create-task", input, selected)
-            }
-            onAction={act}
-          />
+          {creating || selected ? (
+            <TaskEditor
+              key={
+                selected?.id ??
+                `create-${createDueDate ?? ""}-${createStatusId ?? ""}`
+              }
+              defaultDueDate={selected ? undefined : createDueDate}
+              defaultStatusId={selected ? undefined : createStatusId}
+              state={state}
+              task={selected}
+              boardName={name}
+              syncInterval={live.syncInterval}
+              onNotice={notify}
+              onTransferNotice={transferNotice}
+              uploads={uploads}
+              pending={busy}
+              error={mutation.error?.message}
+              onSubmit={(input) =>
+                act(selected ? "update" : "create-task", input, selected)
+              }
+              onAction={act}
+              onOpenTask={setSelectedId}
+            />
+          ) : (
+            <div className="p-6">
+              <SheetTitle>Task</SheetTitle>
+              <SheetDescription>
+                {query.isError
+                  ? "This task is unavailable. Close the panel and refresh the board."
+                  : "Loading task…"}
+              </SheetDescription>
+            </div>
+          )}
         </SheetContent>
       </Sheet>
     </section>

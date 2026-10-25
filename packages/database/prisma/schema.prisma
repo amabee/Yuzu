@@ -810,6 +810,7 @@ model AutomationRule {
   board               Board                @relation(fields: [boardId], references: [id], onDelete: Cascade)
   name                String
   enabled             Boolean              @default(true)
+  recordScope         String               @default("ROOTS")
   trigger             Json
   /// "all" or "any": how the conditions combine.
   match               String               @default("all")

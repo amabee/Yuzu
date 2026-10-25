@@ -163,6 +163,30 @@ export function TrashManager({
             <li key={item.id}>
               <div className="min-w-0">
                 <b>{item.name}</b>
+                {item.parentName && <small>Subitem of {item.parentName}</small>}
+                {item.childCount > 0 && (
+                  <details className="text-xs text-muted-foreground">
+                    <summary>
+                      {item.childCount} retained subitems · restore parent first
+                    </summary>
+                    <ul>
+                      {item.children.map((child) => (
+                        <li key={child.id}>
+                          {child.name}
+                          {child.independentlyDeleted
+                            ? " (independently in Trash)"
+                            : " (hidden with parent)"}
+                        </li>
+                      ))}
+                    </ul>
+                    {item.childCount > item.children.length && (
+                      <p>
+                        And {item.childCount - item.children.length} more.
+                        Restore the parent to review the full breakdown.
+                      </p>
+                    )}
+                  </details>
+                )}
                 <small>
                   {item.recordName} ·{" "}
                   {item.projectName ? `${item.projectName} / ` : ""}
@@ -171,7 +195,9 @@ export function TrashManager({
               </div>
               <span className="trash-meta">
                 {item.parentDeleted
-                  ? "Its board is in Trash too"
+                  ? item.parentName
+                    ? "Restore its parent task and other deleted ancestors first"
+                    : "Its board is in Trash too"
                   : `${item.comments} comments · ${item.files} files`}
               </span>
               <span className="trash-actions">
@@ -296,7 +322,7 @@ export function TrashManager({
             ? `Erase ${total} ${total === 1 ? "item" : "items"} for good?`
             : `Erase “${erasing?.name ?? ""}” for good?`
         }
-        description="This removes them with their comments, history and files. It can't be undone."
+        description="This removes them with all retained subitems, comments, history and files. It can't be undone."
         actions={
           <>
             <PauseClose asChild>

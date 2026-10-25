@@ -755,6 +755,29 @@ function TaskCard({
           onClick={() => onOpen?.(task)}
         >
           {task.name}
+          {task.parentName ? (
+            <small className="block text-muted-foreground">
+              Subitem of {task.parentName}
+            </small>
+          ) : null}
+          {task.childSummary?.total ? (
+            <span
+              className="ml-2 text-xs text-muted-foreground"
+              aria-label={
+                state.fields
+                  .find((f) => f.key === "status")
+                  ?.options.some((o) => o.id === "done")
+                  ? `${task.childSummary.done} of ${task.childSummary.total} subitems done`
+                  : `${task.childSummary.total} subitems`
+              }
+            >
+              {state.fields
+                .find((f) => f.key === "status")
+                ?.options.some((o) => o.id === "done")
+                ? `${task.childSummary.done}/${task.childSummary.total}`
+                : `${task.childSummary.total} subitems`}
+            </span>
+          ) : null}
         </button>
       </div>
       <div className="task-card-meta">

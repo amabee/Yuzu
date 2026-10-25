@@ -3,6 +3,7 @@ import { dueMatches, type ViewConfig } from "./saved-view-contract";
 
 export type ViewTask = Pick<
   BoardTask,
+  | "parentId"
   | "id"
   | "name"
   | "description"
@@ -21,6 +22,10 @@ export function matchesBoardView(
   calendarDate: string,
 ) {
   return (
+    ((config.scope ?? "ROOTS") === "BOTH" ||
+      ((config.scope ?? "ROOTS") === "SUBITEMS"
+        ? Boolean(task.parentId)
+        : !task.parentId)) &&
     Boolean(task.archivedAt) === config.archived &&
     (!config.statusId ||
       (config.statusId === "__none__"

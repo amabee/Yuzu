@@ -46,8 +46,6 @@ export default async function WorkspaceLayout({
   // Requests from other people that this user may be able to decide.
   const approvalCount = await getDatabase().boardProposal.count({
     where: {
-      parentTaskId: null,
-      AND: [{ OR: [{ taskId: null }, { task: { parentId: null } }] }],
       status: "PENDING",
       authorId: { not: user.id },
       board: {

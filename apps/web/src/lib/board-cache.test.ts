@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mergeBoardState } from "./board-cache";
+import { mapBoardTaskCopies, mergeBoardState } from "./board-cache";
 import type { BoardState, BoardTask } from "./board-contract";
 
 describe("board page cache consistency", () => {
@@ -42,4 +42,31 @@ describe("board page cache consistency", () => {
         .tasks[0],
     ).toBe(old);
   });
+});
+
+it("updates child and date-window copies without treating infinite pages as a board page", () => {
+  const child = { id: "child", revision: 2, name: "Before" } as BoardTask;
+  const other = { id: "other", revision: 3, name: "Unrelated" } as BoardTask;
+  const pages = {
+    pages: [{ items: [child, other], total: 12, nextCursor: "next" }],
+    pageParams: [null],
+  };
+  const update = (task: BoardTask) =>
+    task.id === "child" ? { ...task, revision: 3, name: "Saved" } : task;
+  const next = mapBoardTaskCopies(pages, update);
+  expect(next.pages[0]).toMatchObject({ total: 12, nextCursor: "next" });
+  expect(next.pages[0].items).toEqual([
+    { ...child, revision: 3, name: "Saved" },
+    other,
+  ]);
+  expect(next.pageParams).toBe(pages.pageParams);
+  expect(pages.pages[0].items[0].name).toBe("Before");
+  expect(
+    mapBoardTaskCopies({ tasks: [other], undated: [child], total: 20 }, update),
+  ).toEqual({
+    tasks: [other],
+    undated: [{ ...child, revision: 3, name: "Saved" }],
+    total: 20,
+  });
+  expect(mapBoardTaskCopies(undefined, update)).toBeUndefined();
 });

@@ -251,7 +251,7 @@ export function BoardTimelineView({
       !preview || preview.id !== task.id
         ? (taskSpan(datesOf(task))?.marker ?? false)
         : false;
-    const label = `${task.name}, ${spanLabel(span)}${option ? `, ${option.label}` : ""}`;
+    const label = `${task.name}${task.parentName ? `, subitem of ${task.parentName}` : ""}, ${spanLabel(span)}${option ? `, ${option.label}` : ""}`;
     const editable = task.canEdit && !pending;
     const style = {
       left: start * width,
@@ -291,7 +291,14 @@ export function BoardTimelineView({
             onPointerUp={endDrag}
           />
         )}
-        <span className="timeline-bar-name">{task.name}</span>
+        <span className="timeline-bar-name">
+          {task.name}
+          {task.parentName ? (
+            <small className="ml-1 text-muted-foreground">
+              Subitem of {task.parentName}
+            </small>
+          ) : null}
+        </span>
         {editable && !marker && (
           <span
             className="timeline-handle"
@@ -471,6 +478,11 @@ export function BoardTimelineView({
                         onClick={() => onOpen(task.id)}
                       >
                         {task.name}
+                        {task.parentName ? (
+                          <small className="block text-muted-foreground">
+                            Subitem of {task.parentName}
+                          </small>
+                        ) : null}
                       </button>
                       <div className="timeline-track">
                         {days.map((date, index) =>
@@ -519,7 +531,7 @@ export function BoardTimelineView({
                 key={task.id}
                 type="button"
                 className="calendar-chip timeline-unscheduled-chip"
-                aria-label={`${task.name}. Opens the task to set dates; drag onto the timeline to schedule it`}
+                aria-label={`${task.name}${task.parentName ? `, subitem of ${task.parentName}` : ""}. Opens the task to set dates; drag onto the timeline to schedule it`}
                 onClick={() => {
                   // A drop onto the timeline also ends in a click; skip it.
                   if (droppedChip.current) droppedChip.current = false;
@@ -552,7 +564,14 @@ export function BoardTimelineView({
                       : undefined
                   }
                 />
-                <span className="calendar-chip-name">{task.name}</span>
+                <span className="calendar-chip-name">
+                  {task.name}
+                  {task.parentName ? (
+                    <small className="block text-muted-foreground">
+                      Subitem of {task.parentName}
+                    </small>
+                  ) : null}
+                </span>
               </button>
             ))}
           </div>

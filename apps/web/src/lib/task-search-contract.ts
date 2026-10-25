@@ -16,6 +16,8 @@ export const taskSearchResultSchema = z.object({
       z.object({
         id: z.string().uuid(),
         name: z.string(),
+        parentId: z.string().uuid().nullable().optional(),
+        parentName: z.string().nullable().optional(),
         description: z.string(),
         boardId: z.string().uuid(),
         boardName: z.string(),

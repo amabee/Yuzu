@@ -110,6 +110,9 @@ export const createTaskSchema = changes
   .partial()
   .extend({ boardId: recordId, createKey: recordId, name: names })
   .strict();
+export const publicCreateTaskSchema = createTaskSchema
+  .extend({ parentId: recordId.optional() })
+  .strict();
 export const updateTaskSchema = z
   .object({
     taskId: recordId,
@@ -225,6 +228,11 @@ export type BoardField = {
   relation?: { targetBoardId: string; many: boolean };
 };
 export type BoardTask = {
+  parentId?: string | null;
+  parentName?: string | null;
+  childrenRevision?: number;
+  retainedChildCount?: number;
+  childSummary?: { total: number; done: number };
   id: string;
   name: string;
   description: string;
@@ -352,6 +360,16 @@ const baseBoardStateSchema = z.object({
   tasks: z.array(
     z.object({
       id: recordId,
+      parentId: recordId.nullable().optional(),
+      parentName: z.string().nullable().optional(),
+      childrenRevision: z.number().int().nonnegative().optional(),
+      retainedChildCount: z.number().int().nonnegative().optional(),
+      childSummary: z
+        .object({
+          total: z.number().int().nonnegative(),
+          done: z.number().int().nonnegative(),
+        })
+        .optional(),
       name: z.string(),
       description: z.string(),
       checklist: checklistSchema.default([]),

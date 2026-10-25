@@ -90,6 +90,27 @@ export async function deleteRecordInTransaction(
       revision: z.number().int().positive().optional(),
     })
     .parse(input);
+  const child = await tx.task.findUnique({
+    where: { id },
+    select: { parentId: true, boardId: true },
+  });
+  if (child?.parentId) {
+    const scope = await access(tx, userId, child.boardId, true);
+    if (!scope.canManage) throw managersOnly("records");
+    if (revision === undefined)
+      throw new SetupError(
+        409,
+        "TASK_CHANGED",
+        "Reload this subitem before deleting it.",
+      );
+    const { changeSubitemTrashInTransaction } =
+      await import("./subitem-service");
+    return changeSubitemTrashInTransaction(
+      tx,
+      { taskId: id, revision },
+      userId,
+    );
+  }
   const task = await loadTask(tx, id);
   if (!task || task.deletedAt) throw notFound();
   const context = await access(tx, user.id, task.boardId, true);
@@ -156,6 +177,63 @@ export async function restoreRecordInTransaction(
 ) {
   const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });
   const body = restoreInput.parse(input);
+  const child = await tx.task.findFirst({
+    where: { id: body.id, parentId: { not: null }, board: managedBoards(user) },
+    include: {
+      parent: { select: { id: true, deletedAt: true } },
+      board: {
+        select: {
+          id: true,
+          deletedAt: true,
+          projectId: true,
+          project: { select: { deletedAt: true } },
+        },
+      },
+    },
+  });
+  if (child?.parentId) {
+    if (!child.deletedAt) throw notFound();
+    if (child.parent?.deletedAt) {
+      if (!body.withParents)
+        throw new SetupError(
+          409,
+          "PARENT_DELETED",
+          "Restore its parent task first, or confirm restoring its ancestors too.",
+        );
+      await restoreRecordInTransaction(
+        tx,
+        { id: child.parentId, withParents: true },
+        userId,
+      );
+    } else {
+      if (child.board.project?.deletedAt) {
+        if (!body.withParents)
+          throw new SetupError(
+            409,
+            "PROJECT_DELETED",
+            "Restore its project first.",
+          );
+        await restoreProjectIn(tx, user, child.board.projectId!);
+      }
+      if (child.board.deletedAt) {
+        if (!body.withParents)
+          throw new SetupError(
+            409,
+            "BOARD_DELETED",
+            "Restore its board first.",
+          );
+        await restoreBoardIn(tx, user, child.board.id);
+      }
+    }
+    const { changeSubitemTrashInTransaction } =
+      await import("./subitem-service");
+    return changeSubitemTrashInTransaction(
+      tx,
+      { taskId: body.id, revision: child.revision },
+      userId,
+      true,
+    );
+  }
   const task = await tx.task.findFirst({
     // Check Trash visibility before even returning a parent name.
     where: { id: body.id, parentId: null, board: managedBoards(user) },
@@ -366,7 +444,6 @@ export async function trashState(
     const [records, boards, projects] = await Promise.all([
       tx.task.findMany({
         where: {
-          parentId: null,
           deletedAt: { not: null },
           ...(boardId ? { boardId } : {}),
           board: managedBoards(user),
@@ -378,6 +455,12 @@ export async function trashState(
           name: true,
           deletedAt: true,
           deletedById: true,
+          parent: { select: { id: true, name: true, deletedAt: true } },
+          children: {
+            select: { id: true, name: true, deletedAt: true },
+            orderBy: { position: "asc" },
+            take: 5,
+          },
           board: {
             select: {
               id: true,
@@ -388,7 +471,9 @@ export async function trashState(
               project: { select: { name: true, deletedAt: true } },
             },
           },
-          _count: { select: { comments: true, attachments: true } },
+          _count: {
+            select: { comments: true, attachments: true, children: true },
+          },
         },
       }),
       boardId
@@ -450,15 +535,27 @@ export async function trashState(
       records: records.map((task) => ({
         id: task.id,
         name: task.name,
-        recordName: resolveRecordConfig(
-          asRecordType(task.board.recordType),
-          task.board.recordConfig,
-        ).singular,
+        parentId: task.parent?.id ?? null,
+        parentName: task.parent?.name ?? null,
+        childCount: task._count.children,
+        children: task.children.map((c) => ({
+          id: c.id,
+          name: c.name,
+          independentlyDeleted: Boolean(c.deletedAt),
+        })),
+        recordName: task.parent
+          ? "Subitem"
+          : resolveRecordConfig(
+              asRecordType(task.board.recordType),
+              task.board.recordConfig,
+            ).singular,
         boardId: task.board.id,
         boardName: task.board.name,
         projectName: task.board.project?.name ?? null,
         parentDeleted: Boolean(
-          task.board.deletedAt || task.board.project?.deletedAt,
+          task.parent?.deletedAt ||
+          task.board.deletedAt ||
+          task.board.project?.deletedAt,
         ),
         deletedAt: task.deletedAt!.toISOString(),
         deletedBy: who(task.deletedById),
@@ -541,10 +638,15 @@ export async function eraseBatch(
   const { files, erased, remaining } = await serial(async (tx) => {
     const tasks = await tx.task.findMany({
       where: { AND: [selection.tasks, { children: { none: {} } }] },
-      select: { id: true },
+      select: { id: true, parentId: true, boardId: true },
       orderBy: { id: "asc" },
       take: ERASE_RECORD_LIMIT,
     });
+    const roots = [
+      ...new Set(tasks.map((task) => task.parentId ?? task.id)),
+    ].sort();
+    if (roots.length)
+      await tx.$queryRaw`SELECT "id" FROM "Task" WHERE "id" = ANY(${roots}::text[]) ORDER BY "id" FOR UPDATE`;
     const ids = tasks.map((task) => task.id);
     const files = await tx.taskAttachment.findMany({
       where: { taskId: { in: ids } },
@@ -565,6 +667,26 @@ export async function eraseBatch(
     const records = await tx.task.deleteMany({
       where: { id: { in: ids }, attachments: { none: {} } },
     });
+    const kept = new Set(
+      (
+        await tx.task.findMany({
+          where: { id: { in: ids } },
+          select: { id: true },
+        })
+      ).map((t) => t.id),
+    );
+    const changedParents = [
+      ...new Set(
+        tasks
+          .filter((t) => t.parentId && !kept.has(t.id))
+          .map((t) => t.parentId!),
+      ),
+    ];
+    if (changedParents.length)
+      await tx.task.updateMany({
+        where: { id: { in: changedParents } },
+        data: { childrenRevision: { increment: 1 } },
+      });
     const boards = await tx.board.findMany({
       where: { AND: [selection.boards, { tasks: { none: {} } }] },
       select: { id: true },

@@ -415,6 +415,42 @@ export function WorkspaceDashboard({
               </div>
             )}
           </section>
+          {data.subitems && data.subitems.total > 0 && (
+            <section
+              className="overview-card bg-card"
+              aria-label="Subitem workload"
+            >
+              <header className="overview-card-head">
+                <div>
+                  <h2>Subitems</h2>
+                  <p className="overview-card-sub">
+                    {data.subitems.open} open · {data.subitems.overdue} overdue
+                    · {data.subitems.mine} assigned to you. Counted separately
+                    from tasks.
+                  </p>
+                </div>
+              </header>
+              <div className="p-4 space-y-2">
+                {data.subitemWorkload?.map((p) => (
+                  <p key={p.userId} className="flex justify-between text-sm">
+                    <span>{p.name}</span>
+                    <span className="text-muted-foreground">
+                      {p.count} subitems · {p.overdue} overdue
+                    </span>
+                  </p>
+                ))}
+                {data.subitemDeadlines?.map((t) => (
+                  <Link
+                    className="block text-sm text-primary"
+                    key={t.id}
+                    href={`/boards/${t.boardId}?task=${t.id}`}
+                  >
+                    {t.name}
+                  </Link>
+                ))}
+              </div>
+            </section>
+          )}
           <section
             aria-label="Board status breakdown"
             className="overview-card bg-card"

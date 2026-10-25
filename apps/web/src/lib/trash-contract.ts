@@ -12,6 +12,19 @@ export const trashStateSchema = z.object({
       id: z.string(),
       name: z.string(),
       recordName: z.string(),
+      parentId: z.string().nullable().optional(),
+      parentName: z.string().nullable().optional(),
+      childCount: z.number().default(0),
+      children: z
+        .array(
+          z.object({
+            id: z.string(),
+            name: z.string(),
+            independentlyDeleted: z.boolean(),
+          }),
+        )
+        .max(5)
+        .default([]),
       boardId: z.string(),
       boardName: z.string(),
       projectName: z.string().nullable(),

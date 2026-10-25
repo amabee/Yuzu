@@ -1,4 +1,6 @@
 import {
+  taskArchived,
+  hierarchyScope,
   parentTaskSelect,
   parentCanEdit,
   taskAvailable,
@@ -507,6 +509,27 @@ export async function saveValues(
       });
   }
 }
+// Fetch bounded link IDs first; ancestor joins in the relation WHERE can make
+// PostgreSQL scan an entire large board even when there are no links.
+const linkedTaskLifecycleSelect = {
+  deletedAt: true,
+  parentId: true,
+  parent: { select: { deletedAt: true, parentId: true } },
+  board: { select: { deletedAt: true } },
+} as const;
+function linkedTaskAvailable(task: {
+  deletedAt: Date | null;
+  parentId: string | null;
+  parent: { deletedAt: Date | null; parentId: string | null } | null;
+  board: { deletedAt: Date | null };
+}) {
+  return (
+    !task.deletedAt &&
+    !task.board.deletedAt &&
+    (!task.parentId ||
+      Boolean(task.parent && !task.parent.deletedAt && !task.parent.parentId))
+  );
+}
 export const taskInclude = {
   parent: { select: parentTaskSelect },
   _count: {
@@ -521,18 +544,20 @@ export const taskInclude = {
   values: { include: { people: true, field: true } },
   // Both directions of "Link to board" fields, bounded per record.
   linksFrom: {
-    where: {
-      to: { parentId: null, deletedAt: null, board: { deletedAt: null } },
+    select: {
+      fieldId: true,
+      toId: true,
+      to: { select: linkedTaskLifecycleSelect },
     },
-    select: { fieldId: true, toId: true },
     orderBy: { createdAt: "asc" as const },
     take: 200,
   },
   linksTo: {
-    where: {
-      from: { parentId: null, deletedAt: null, board: { deletedAt: null } },
+    select: {
+      fromId: true,
+      field: { select: { config: true } },
+      from: { select: linkedTaskLifecycleSelect },
     },
-    select: { fromId: true, field: { select: { config: true } } },
     orderBy: { createdAt: "asc" as const },
     take: 200,
   },
@@ -551,7 +576,7 @@ type LoadedTask = NonNullable<Awaited<ReturnType<typeof loadTask>>>;
 export async function loadTask(
   tx: DatabaseTransaction,
   id: string,
-  includeSubitems = false,
+  includeSubitems = true,
 ) {
   return tx.task.findFirst({
     where: { id, ...(includeSubitems ? {} : { parentId: null }) },
@@ -576,7 +601,9 @@ export function canEdit(
 export function snapshot(task: LoadedTask) {
   return JSON.parse(
     JSON.stringify({
-      ...(task.parentId ? { parentId: task.parentId } : {}),
+      ...(task.parentId
+        ? { parentId: task.parentId, parentName: task.parent?.name ?? null }
+        : {}),
       ...(task.childrenRevision
         ? { childrenRevision: task.childrenRevision }
         : {}),
@@ -591,15 +618,18 @@ export function snapshot(task: LoadedTask) {
       assigneeIds: task.assignees.map((person) => person.userId),
       editorIds: task.editors.map((person) => person.userId),
       fieldValues: valueMap(task),
-      archivedAt: task.archivedAt?.toISOString() ?? null,
+      archivedAt:
+        (task.archivedAt ?? task.parent?.archivedAt)?.toISOString() ?? null,
     }),
   );
 }
 function valueMap(task: LoadedTask): Record<string, FieldValue> {
   const links: Record<string, string[]> = {};
   for (const link of task.linksFrom)
-    (links[link.fieldId] ??= []).push(link.toId);
+    if (linkedTaskAvailable(link.to))
+      (links[link.fieldId] ??= []).push(link.toId);
   for (const link of task.linksTo) {
+    if (!linkedTaskAvailable(link.from)) continue;
     const mirror = relationConfig(link.field.config)?.mirrorFieldId;
     if (mirror) (links[mirror] ??= []).push(link.fromId);
   }
@@ -659,8 +689,6 @@ export async function boardState(
       const visiblePending = await tx.boardProposal.findMany({
         where: {
           boardId,
-          parentTaskId: null,
-          AND: [{ OR: [{ taskId: null }, { task: { parentId: null } }] }],
           status: "PENDING",
           ...(context.canManage ||
           [policy.primaryApproverId, policy.backupApproverId].includes(user.id)
@@ -700,8 +728,7 @@ export async function boardState(
             where: {
               id: query.taskId,
               boardId,
-              parentId: null,
-              deletedAt: null,
+              AND: [hierarchyScope()],
             },
             include: taskInclude,
           })
@@ -764,8 +791,6 @@ export async function boardState(
       const pendingApprovalCount = await tx.boardProposal.count({
         where: {
           boardId,
-          parentTaskId: null,
-          AND: [{ OR: [{ taskId: null }, { task: { parentId: null } }] }],
           status: "PENDING",
           ...(context.canManage ||
           [policy.primaryApproverId, policy.backupApproverId].includes(user.id)
@@ -795,7 +820,41 @@ export async function boardState(
         const name = (otherId && linked[otherId]?.name) || "a private item";
         return `${event.action === "Linked record" ? "Linked" : "Unlinked"} ${name}`;
       };
+      const rootIds = [...tasks, ...(focused ? [focused] : [])]
+        .filter((t) => !t.parentId)
+        .map((t) => t.id);
+      const childCounts = rootIds.length
+        ? await tx.task.groupBy({
+            by: ["parentId", "statusId"],
+            where: {
+              parentId: { in: rootIds },
+              deletedAt: null,
+              archivedAt: null,
+            },
+            _count: true,
+          })
+        : [];
+      const retainedCounts = rootIds.length
+        ? await tx.task.groupBy({
+            by: ["parentId"],
+            where: { parentId: { in: rootIds } },
+            _count: true,
+          })
+        : [];
       const presentTask = (task: LoadedTask): BoardTask => ({
+        retainedChildCount:
+          retainedCounts.find((c) => c.parentId === task.id)?._count ?? 0,
+        parentId: task.parentId,
+        parentName: task.parent?.name ?? null,
+        childrenRevision: task.childrenRevision,
+        childSummary: {
+          total: childCounts
+            .filter((c) => c.parentId === task.id)
+            .reduce((n, c) => n + c._count, 0),
+          done: childCounts
+            .filter((c) => c.parentId === task.id && c.statusId === "done")
+            .reduce((n, c) => n + c._count, 0),
+        },
         id: task.id,
         ...snapshot(task),
         createdById: task.createdById,
@@ -1350,6 +1409,10 @@ export async function createTask(
   importOptions?: { skipDuplicate: boolean; sourceId?: string },
 ): Promise<TaskMutationResult> {
   const { user } = await requireIdentity(headers);
+  if (input && typeof input === "object" && "parentId" in input) {
+    const { createSubitemInTransaction } = await import("./subitem-service");
+    return serial((tx) => createSubitemInTransaction(tx, input, user.id));
+  }
   return serial((tx) =>
     createTaskInTransaction(tx, input, user.id, importOptions),
   );
@@ -1490,9 +1553,9 @@ export async function reorderTask(input: unknown, headers: Headers) {
   const body = reorderTaskSchema.parse(input);
   const { user } = await requireIdentity(headers);
   return serial(async (tx) => {
-    const task = await loadTask(tx, body.taskId);
+    const task = await loadTask(tx, body.taskId, false);
     // Records in Trash are restored from Trash, not changed in place.
-    if (!task || task.deletedAt) throw notFound();
+    if (!task || !taskAvailable(task)) throw notFound();
     const context = await access(tx, user.id, task.boardId, true);
     if (!canEdit(task, context))
       throw new SetupError(
@@ -1500,7 +1563,7 @@ export async function reorderTask(input: unknown, headers: Headers) {
         "FORBIDDEN",
         "You do not have permission to change this task.",
       );
-    if (task.archivedAt)
+    if (taskArchived(task))
       throw new SetupError(
         409,
         "TASK_ARCHIVED",
@@ -1570,9 +1633,11 @@ export async function mutateTask(
   headers: Headers,
 ): Promise<TaskMutationResult> {
   const { user } = await requireIdentity(headers);
-  return serial((tx) => mutateTaskInTransaction(tx, action, input, user.id));
+  return serial((tx) =>
+    mutateTaskInTransaction(tx, action, input, user.id, true),
+  );
 }
-/** Internal service; no public JSON option enables subitems. */
+/** Shared mutation entry point; public callers revalidate the current principal. */
 export async function mutateTaskInTransaction(
   tx: DatabaseTransaction,
   action: string,
@@ -1616,6 +1681,12 @@ export async function mutateTaskInTransaction(
       409,
       "TASK_ARCHIVED",
       "Archived tasks are read-only. Ask a board manager to restore it first.",
+    );
+  if (task.parent?.archivedAt)
+    throw new SetupError(
+      409,
+      "PARENT_ARCHIVED",
+      "Restore the parent task first.",
     );
   if (task.revision !== body.revision) throw conflict();
   if (action === "archive" && !task.parentId)
@@ -2335,11 +2406,8 @@ export async function manageBoard(
 export async function taskComments(taskId: string, headers: Headers) {
   const { user } = await requireIdentity(headers);
   return db().$transaction(async (tx) => {
-    const task = await tx.task.findUnique({
-      where: { id: taskId, parentId: null },
-      select: { boardId: true, archivedAt: true, deletedAt: true },
-    });
-    if (!task || task.deletedAt) throw notFound();
+    const task = await loadTask(tx, taskId);
+    if (!task || !taskAvailable(task)) throw notFound();
     const context = await access(tx, user.id, task.boardId);
     const comments = await tx.taskComment.findMany({
       where: { taskId },
@@ -2358,12 +2426,12 @@ export async function taskComments(taskId: string, headers: Headers) {
       deletedAt: comment.deletedAt?.toISOString() ?? null,
       canEdit:
         !context.readOnly &&
-        !task.archivedAt &&
+        !taskArchived(task) &&
         !comment.deletedAt &&
         comment.authorId === user.id,
       canRemove:
         !context.readOnly &&
-        !task.archivedAt &&
+        !taskArchived(task) &&
         !comment.deletedAt &&
         (comment.authorId === user.id || context.canManage),
     }));
@@ -2373,13 +2441,11 @@ export async function createComment(input: unknown, headers: Headers) {
   const body = commentCreateSchema.parse(input);
   const { user } = await requireIdentity(headers);
   return serial(async (tx) => {
-    const task = await tx.task.findUnique({
-      where: { id: body.taskId, parentId: null },
-      select: { boardId: true, archivedAt: true, deletedAt: true },
-    });
-    if (!task || task.deletedAt) throw notFound();
+    const task = await loadTask(tx, body.taskId);
+    if (!task || !taskAvailable(task)) throw notFound();
     const context = await access(tx, user.id, task.boardId, true);
-    if (task.archivedAt)
+    if (task.parentId) await lockTaskRoot(tx, task.parentId, task.boardId);
+    if (taskArchived(task))
       throw new SetupError(
         409,
         "TASK_ARCHIVED",
@@ -2493,12 +2559,12 @@ export async function changeComment(input: unknown, headers: Headers) {
   const { user } = await requireIdentity(headers);
   return serial(async (tx) => {
     const comment = await tx.taskComment.findUnique({
-      where: { id: body.commentId, task: { parentId: null } },
+      where: { id: body.commentId },
       include: {
-        task: { select: { boardId: true, archivedAt: true, deletedAt: true } },
+        task: { include: taskInclude },
       },
     });
-    if (!comment || comment.task.deletedAt) throw notFound();
+    if (!comment || !taskAvailable(comment.task)) throw notFound();
     const context = await access(tx, user.id, comment.task.boardId, true);
     if (
       body.action === "edit"
@@ -2510,7 +2576,9 @@ export async function changeComment(input: unknown, headers: Headers) {
         "FORBIDDEN",
         "Only the author may edit a comment. The author or a board manager may remove it.",
       );
-    if (comment.task.archivedAt)
+    if (comment.task.parentId)
+      await lockTaskRoot(tx, comment.task.parentId, comment.task.boardId);
+    if (taskArchived(comment.task))
       throw new SetupError(
         409,
         "TASK_ARCHIVED",
@@ -2631,10 +2699,10 @@ export async function commentHistory(commentId: string, headers: Headers) {
   const { user } = await requireIdentity(headers);
   return db().$transaction(async (tx) => {
     const comment = await tx.taskComment.findUnique({
-      where: { id: commentId, task: { parentId: null } },
-      include: { task: { select: { boardId: true, deletedAt: true } } },
+      where: { id: commentId },
+      include: { task: { include: taskInclude } },
     });
-    if (!comment || comment.task.deletedAt) throw notFound();
+    if (!comment || !taskAvailable(comment.task)) throw notFound();
     await access(tx, user.id, comment.task.boardId);
     if (comment.deletedAt) return []; // Removal hides the content, including old versions.
     const rows = await tx.commentRevision.findMany({
